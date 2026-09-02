@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+auth_data.json
+*.token
+*.cookie
+.codexia/
+data/sessions/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

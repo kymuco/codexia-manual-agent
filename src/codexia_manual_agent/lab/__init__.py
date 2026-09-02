@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from codexia_manual_agent.lab.errors import (
+    EvidenceBindingError,
+    InvalidLabRecordError,
+    LabError,
+    LabIdentityConflictError,
+    LabPersistenceError,
+    LabPersistenceIntegrityError,
+    LabRegistryStateError,
+)
+from codexia_manual_agent.lab.models import (
+    LAB_SCHEMA_VERSION,
+    ArtifactRecord,
+    Conclusion,
+    ConclusionVerdict,
+    ExperimentManifest,
+    ExperimentRun,
+    Hypothesis,
+    MetricRecord,
+)
+from codexia_manual_agent.lab.registry import (
+    LAB_REGISTRY_EVENT_SCHEMA_VERSION,
+    LabRegistryEventKind,
+    LabRegistryEventReceipt,
+    LabRegistryRecovery,
+    RegisteredRunSnapshot,
+    SqliteLabRegistry,
+    apply_lab_registry_event,
+    canonical_registry_json,
+    validate_lab_registry_event_payload,
+)
+from codexia_manual_agent.lab.serialization import (
+    artifact_record_from_dict,
+    conclusion_from_dict,
+    experiment_manifest_from_dict,
+    experiment_run_from_dict,
+    hypothesis_from_dict,
+    metric_record_from_dict,
+)
+
+__all__ = [
+    "LAB_REGISTRY_EVENT_SCHEMA_VERSION",
+    "LAB_SCHEMA_VERSION",
+    "ArtifactRecord",
+    "Conclusion",
+    "ConclusionVerdict",
+    "EvidenceBindingError",
+    "ExperimentManifest",
+    "ExperimentRun",
+    "Hypothesis",
+    "InvalidLabRecordError",
+    "LabError",
+    "LabIdentityConflictError",
+    "LabPersistenceError",
+    "LabPersistenceIntegrityError",
+    "LabRegistryEventKind",
+    "LabRegistryEventReceipt",
+    "LabRegistryRecovery",
+    "LabRegistryStateError",
+    "MetricRecord",
+    "RegisteredRunSnapshot",
+    "SqliteLabRegistry",
+    "apply_lab_registry_event",
+    "artifact_record_from_dict",
+    "canonical_registry_json",
+    "conclusion_from_dict",
+    "experiment_manifest_from_dict",
+    "experiment_run_from_dict",
+    "hypothesis_from_dict",
+    "metric_record_from_dict",
+    "validate_lab_registry_event_payload",
+]

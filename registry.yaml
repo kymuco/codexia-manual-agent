@@ -1,0 +1,26 @@
+schema_version: 1
+project:
+  name: Codexia Manual Agent
+  slug: codexia-manual-agent
+  status: experimental-runtime
+  independent_from:
+    - HDE
+components:
+  - id: manual-agent
+    version: "0.3"
+    status: core-prompt
+    path: prompts/manual-agent/v0.3.txt
+    evaluation: evaluations/manual-agent/v0.3/scenarios_ru.txt
+  - id: context-summarizer
+    version: 0.2.1d
+    status: experimental
+    path: experimental/context-summarizer/versions/v0.2.1d.txt
+  - id: checkpoint-intake
+    version: 0.1a
+    status: experimental
+    path: experimental/checkpoint-intake/versions/v0.1a.txt
+runtime:
+  current_milestone: M2
+  runtime_version: 0.4.0a0
+  transport: chatgpt-web-adapter
+  execution_state: human-authorized-bounded-process-model-read-only
