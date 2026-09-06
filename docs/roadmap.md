@@ -159,16 +159,55 @@ Complete.
 
 See `docs/m4_2_durable_experiment_registry.md` and `docs/m4_2_source_audit.md`.
 
-## Next work
+### M4.3 — Governed Experiment Execution
 
-Later M4.x work may add explicit run comparison, metric aggregation/statistical policy, stronger artifact verification, and additional evidence-bounded conclusion policy without silently widening execution authority.
+**Next active milestone.**
+
+Primary invariant:
+
+```text
+declared run != executed run
+```
+
+M4.3 must close the first real end-to-end scientific loop by binding an M4 run to one actual M2-governed execution and to the physical evidence produced by that execution.
+
+The first vertical slice is intentionally narrow:
+
+- one admitted local Python experiment profile rather than generic arbitrary execution;
+- run registration before execution;
+- existing M2 proposal/authorization/one-shot receipt remains the only execution authority;
+- exact executable, argv, cwd, declared inputs, and execution outcome are bound as durable execution evidence;
+- produced artifacts are verified from physical bytes before `ArtifactRecord` registration;
+- at least one bounded machine-readable metric is derived from the actual run output and registered to that run;
+- the run is sealed only after the execution/evidence chain is internally consistent;
+- recovery reconstructs the chain and never replays the experiment automatically.
+
+M4.3 is complete only when Codexia can execute one real experiment from a registered hypothesis/manifest through governed execution to sealed durable evidence, and negative tests prove that drift, missing/mutated outputs, mismatched execution evidence, or restart cannot be misrepresented as a valid completed run.
+
+See `docs/m4_3_governed_experiment_execution_plan.md`.
+
+### M4.4 — Comparison and Falsification
+
+Planned after M4.3.
+
+Freeze comparison policy before opening the evidence it will judge: target metric, direction, threshold, repetition/seeds, aggregation, and failure/missing-run policy. Compare multiple verified runs or baselines and produce an evidence-bounded supported/refuted/inconclusive result without choosing the criterion after seeing the outcome.
+
+### M4.5 — Conclusion Adjudication
+
+Planned after M4.4 if the comparison slice demonstrates value.
+
+Turn frozen comparison policy and verified evidence into reproducible conclusion adjudication. This milestone must not claim scientific truth beyond the declared policy and evidence lineage.
+
+## Near-term anti-drift rule
+
+The next work should increase Codexia's ability to conduct and falsify real computational experiments. Security, persistence, and transport hardening remain important, but should interrupt the M4.3 line only for a concrete blocker, demonstrated vulnerability, or invariant violation rather than becoming the product goal themselves.
 
 ## M5 — Bounded automation
 
-Planned.
+Planned after the manual experiment loop is proven.
 
-Support limited autonomous exploration with explicit budgets, stop policies, and the existing authority boundaries. No unattended destructive or external write authority.
+Support limited autonomous exploration with explicit budgets, stop policies, and the existing authority boundaries. No unattended destructive or external write authority. M5 should automate an already-proven M4 research loop rather than invent a second execution architecture.
 
 ## M6 — Optional TUI
 
-Planned only after CLI/runtime contracts are stable.
+Planned only after CLI/runtime contracts are stable and the computational-research loop has demonstrated practical value.
