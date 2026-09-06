@@ -515,6 +515,10 @@ def _credential_response_bytes(binding: HttpsTransportBinding, payload: bytes) -
 def _write_credential_response_file(target: Path, payload: bytes) -> None:
     if os.name == "nt":
         with target.open("xb") as handle:
+            # Intentional M2.5.1 frozen credential-protocol response in the
+            # proposal-bound private bundle; the sink is narrower than replacing
+            # it with an ambient credential-manager/OAuth authority path.
+            # codeql[py/clear-text-storage-sensitive-data]
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
@@ -531,6 +535,10 @@ def _write_credential_response_file(target: Path, payload: bytes) -> None:
         os.close(fd)
         raise
     with handle:
+        # Intentional M2.5.1 frozen credential-protocol response in the
+        # proposal-bound private bundle. POSIX permissions are fixed at 0600
+        # before this first credential byte is written.
+        # codeql[py/clear-text-storage-sensitive-data]
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
