@@ -72,6 +72,8 @@ See [`docs/roadmap.md`](docs/roadmap.md) and [`CHANGELOG.md`](CHANGELOG.md) for 
 - Windows or Linux, depending on the capability being exercised
 - Bubblewrap for Linux process containment where required
 
+On Windows, the M2.5.1 HTTPS credential transport requires patched CPython with private `tempfile.mkdtemp()` directory semantics: CPython **3.11.10+**, **3.12.4+**, or **3.13+**. Older 3.11/3.12 patch releases and unproven alternative Python implementations fail closed for that transport rather than materializing a credential response in a namespace whose confidentiality is not established.
+
 Some mutation primitives are intentionally platform-constrained. Codexia does not silently fall back to a weaker backend when a required security primitive is unavailable.
 
 ## Install
