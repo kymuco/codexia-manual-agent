@@ -13,8 +13,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          # M2.5.1 HTTPS depends on the CPython Windows tempfile 0o700 fix.
+          # Exercise the exact minimum supported patch releases, not whatever
+          # stale 3.11/3.12 interpreter happens to be pre-cached on the runner.
+          - os: windows-latest
+            python-version: "3.11.10"
+          - os: windows-latest
+            python-version: "3.12.4"
+          - os: windows-latest
+            python-version: "3.13"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
