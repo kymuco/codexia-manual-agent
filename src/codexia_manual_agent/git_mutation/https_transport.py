@@ -431,7 +431,13 @@ def _bind_https_git_helper(
     return identity, str(resolved_target)
 
 
-def _windows_private_temp_namespace_supported(version: tuple[int, int, int]) -> bool:
+def _windows_private_temp_namespace_supported(
+    version: tuple[int, int, int],
+    *,
+    implementation: str,
+) -> bool:
+    if implementation != "cpython":
+        return False
     major, minor, micro = version
     if (major, minor) == (3, 11):
         return micro >= 10
@@ -444,11 +450,15 @@ def _require_private_https_temp_namespace() -> None:
     if os.name != "nt":
         return
     version = sys.version_info[:3]
-    if not _windows_private_temp_namespace_supported(version):
+    if not _windows_private_temp_namespace_supported(
+        version,
+        implementation=sys.implementation.name,
+    ):
         rendered = ".".join(str(part) for part in version)
         raise InvalidGitMutationError(
-            "M2.5.1 HTTPS requires CPython 3.11.10+, 3.12.4+, or 3.13+ on Windows "
-            f"for a private temporary credential namespace; running {rendered}"
+            "M2.5.1 HTTPS requires patched CPython 3.11.10+, 3.12.4+, or 3.13+ on Windows "
+            f"for a private temporary credential namespace; running "
+            f"{sys.implementation.name} {rendered}"
         )
 
 
