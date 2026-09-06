@@ -236,6 +236,7 @@ class HttpsNetworkGitPushLoopbackTests(unittest.TestCase):
 
             cert, key = _generate_tls_identity(openssl, trust)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(certfile=str(cert), keyfile=str(key))
 
             git = shutil.which("git")
