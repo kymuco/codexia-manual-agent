@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import codexia_manual_agent.git_mutation.https_transport as https_transport
 from codexia_manual_agent.domain.errors import (
     GitMutationPreconditionChangedError,
     InvalidGitMutationError,
@@ -140,6 +141,68 @@ class GitHttpsTransportBindingTests(unittest.TestCase):
             self.assertNotIn("exact-secret", rendered_public)
             self.assertNotIn(binding.credential_source.secret_sha256, rendered_public)
             self.assertNotIn("credential_store_helper", public)
+
+    def test_windows_private_temp_namespace_requires_patched_cpython(self) -> None:
+        cases = (
+            ((3, 11, 0), False),
+            ((3, 11, 9), False),
+            ((3, 11, 10), True),
+            ((3, 12, 0), False),
+            ((3, 12, 3), False),
+            ((3, 12, 4), True),
+            ((3, 13, 0), True),
+            ((3, 14, 0), True),
+        )
+        for version, expected in cases:
+            with self.subTest(version=version):
+                self.assertEqual(
+                    https_transport._windows_private_temp_namespace_supported(version),
+                    expected,
+                )
+
+    def test_binding_checks_private_temp_namespace_before_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as trust_raw:
+            root, trust = Path(raw), Path(trust_raw)
+            _init_repo(root)
+            with mock.patch.object(
+                https_transport,
+                "_require_private_https_temp_namespace",
+                side_effect=InvalidGitMutationError("private temporary credential namespace"),
+            ) as admission:
+                with self.assertRaisesRegex(
+                    InvalidGitMutationError,
+                    "private temporary credential namespace",
+                ):
+                    _binding(root, trust)
+            admission.assert_called_once_with()
+
+    @unittest.skipIf(os.name == "nt", "POSIX credential mode regression")
+    def test_posix_credential_response_is_private_and_empty_before_first_write(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as trust_raw:
+            root, trust = Path(raw), Path(trust_raw)
+            _init_repo(root)
+            _snapshot, binding, _ca, _credential = _binding(root, trust)
+            self.addCleanup(close_https_transport, binding)
+            original_open = https_transport._open_exclusive_credential_response
+            observed_targets: list[Path] = []
+
+            def checked_open(target: Path):
+                handle = original_open(target)
+                metadata = os.fstat(handle.fileno())
+                self.assertEqual(metadata.st_mode & 0o777, 0o600)
+                self.assertEqual(metadata.st_size, 0)
+                observed_targets.append(target)
+                return handle
+
+            with mock.patch.object(
+                https_transport,
+                "_open_exclusive_credential_response",
+                side_effect=checked_open,
+            ) as opener:
+                materialize_https_credentials(binding)
+
+            opener.assert_called_once()
+            self.assertEqual(observed_targets, [Path(binding.credential_bundle_path)])
 
     def test_materialized_config_uses_exact_ca_route_and_shell_only_read_only_helper(self) -> None:
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as trust_raw:
