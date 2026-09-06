@@ -9,6 +9,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -430,6 +431,37 @@ def _bind_https_git_helper(
     return identity, str(resolved_target)
 
 
+def _windows_private_temp_namespace_supported(
+    version: tuple[int, int, int],
+    *,
+    implementation: str,
+) -> bool:
+    if implementation != "cpython":
+        return False
+    major, minor, micro = version
+    if (major, minor) == (3, 11):
+        return micro >= 10
+    if (major, minor) == (3, 12):
+        return micro >= 4
+    return (major, minor) >= (3, 13)
+
+
+def _require_private_https_temp_namespace() -> None:
+    if os.name != "nt":
+        return
+    version = sys.version_info[:3]
+    if not _windows_private_temp_namespace_supported(
+        version,
+        implementation=sys.implementation.name,
+    ):
+        rendered = ".".join(str(part) for part in version)
+        raise InvalidGitMutationError(
+            "M2.5.1 HTTPS requires patched CPython 3.11.10+, 3.12.4+, or 3.13+ on Windows "
+            f"for a private temporary credential namespace; running "
+            f"{sys.implementation.name} {rendered}"
+        )
+
+
 def bind_https_transport(
     snapshot: RepositorySnapshot,
     endpoint: GitNetworkEndpoint,
@@ -454,6 +486,7 @@ def bind_https_transport(
     git_shell = resolve_git_command_shell(snapshot)
     _require_credential_shell_builtins(git_shell)
     git_remote_https, git_remote_https_resolved_target = _bind_https_git_helper(snapshot)
+    _require_private_https_temp_namespace()
     root = Path(tempfile.mkdtemp(prefix="codexia-m251-https-"))
     try:
         resolved_root = root.resolve(strict=True)
@@ -510,6 +543,22 @@ def _credential_response_bytes(binding: HttpsTransportBinding, payload: bytes) -
     if username != binding.credential_source.username:
         raise GitMutationPreconditionChangedError("Bound HTTPS credential username changed")
     return f"username={username}\npassword={secret}\n".encode("utf-8")
+
+
+def _open_exclusive_credential_response(target: Path):
+    if os.name == "nt":
+        return target.open("xb")
+
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        # The create mode is already no broader than 0600. fchmod restores the
+        # exact owner read/write bits if a restrictive umask removed either one,
+        # before the caller writes any credential bytes.
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _revalidate_identity(identity: GitExecutableIdentity, *, label: str) -> None:
@@ -600,12 +649,10 @@ def materialize_https_credentials(binding: HttpsTransportBinding) -> None:
     payload = _credential_response_bytes(binding, source_payload)
     target = Path(binding.credential_bundle_path)
     try:
-        with target.open("xb") as handle:
+        with _open_exclusive_credential_response(target) as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        if os.name != "nt":
-            target.chmod(0o600)
     except FileExistsError as exc:
         raise GitMutationPreconditionChangedError("HTTPS credential bundle already exists") from exc
     except OSError as exc:

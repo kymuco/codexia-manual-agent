@@ -448,7 +448,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"releases={len(snapshot['releases'])}")
     print(f"workflow_runs={len(snapshot['workflow_runs'])}")
     print(f"artifacts={len(snapshot['artifacts'])}")
-    print(f"verified_synthetic_fixture_matches={state.synthetic_fixture_matches}")
 
     print("\nFINDINGS")
     if not state.findings:
