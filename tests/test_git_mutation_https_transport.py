@@ -150,10 +150,13 @@ class GitHttpsTransportBindingTests(unittest.TestCase):
             materialize_https_credentials(binding)
             revalidate_https_transport(binding, require_materialized=True)
 
+            credential_response = Path(binding.credential_bundle_path)
             self.assertEqual(
-                Path(binding.credential_bundle_path).read_bytes(),
+                credential_response.read_bytes(),
                 b"username=codexia-user\npassword=exact-secret\n",
             )
+            if os.name != "nt":
+                self.assertEqual(credential_response.stat().st_mode & 0o777, 0o600)
             command = binding.credential_helper_shell_command
             self.assertIn("get)", command)
             self.assertIn("store|erase) exit 0", command)
