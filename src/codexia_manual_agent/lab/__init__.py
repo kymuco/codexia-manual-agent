@@ -9,6 +9,23 @@ from codexia_manual_agent.lab.errors import (
     LabPersistenceIntegrityError,
     LabRegistryStateError,
 )
+from codexia_manual_agent.lab.execution_evidence import (
+    RUN_EXECUTION_SCHEMA_VERSION,
+    RunExecutionAuthorization,
+    RunExecutionBinding,
+    RunExecutionEvidence,
+    run_execution_authorization_from_dict,
+    run_execution_binding_from_dict,
+    run_execution_evidence_from_dict,
+)
+from codexia_manual_agent.lab.execution_registry import (
+    RUN_EXECUTION_EVENT_SCHEMA_VERSION,
+    RunExecutionEventKind,
+    RunExecutionEventReceipt,
+    RunExecutionPhase,
+    RunExecutionRecovery,
+    SqliteRunExecutionRegistry,
+)
 from codexia_manual_agent.lab.models import (
     LAB_SCHEMA_VERSION,
     ArtifactRecord,
@@ -42,6 +59,8 @@ from codexia_manual_agent.lab.serialization import (
 __all__ = [
     "LAB_REGISTRY_EVENT_SCHEMA_VERSION",
     "LAB_SCHEMA_VERSION",
+    "RUN_EXECUTION_EVENT_SCHEMA_VERSION",
+    "RUN_EXECUTION_SCHEMA_VERSION",
     "ArtifactRecord",
     "Conclusion",
     "ConclusionVerdict",
@@ -60,7 +79,15 @@ __all__ = [
     "LabRegistryStateError",
     "MetricRecord",
     "RegisteredRunSnapshot",
+    "RunExecutionAuthorization",
+    "RunExecutionBinding",
+    "RunExecutionEvidence",
+    "RunExecutionEventKind",
+    "RunExecutionEventReceipt",
+    "RunExecutionPhase",
+    "RunExecutionRecovery",
     "SqliteLabRegistry",
+    "SqliteRunExecutionRegistry",
     "apply_lab_registry_event",
     "artifact_record_from_dict",
     "canonical_registry_json",
@@ -69,5 +96,8 @@ __all__ = [
     "experiment_run_from_dict",
     "hypothesis_from_dict",
     "metric_record_from_dict",
+    "run_execution_authorization_from_dict",
+    "run_execution_binding_from_dict",
+    "run_execution_evidence_from_dict",
     "validate_lab_registry_event_payload",
 ]
