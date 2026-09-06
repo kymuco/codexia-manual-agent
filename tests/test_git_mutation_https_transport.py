@@ -144,19 +144,23 @@ class GitHttpsTransportBindingTests(unittest.TestCase):
 
     def test_windows_private_temp_namespace_requires_patched_cpython(self) -> None:
         cases = (
-            ((3, 11, 0), False),
-            ((3, 11, 9), False),
-            ((3, 11, 10), True),
-            ((3, 12, 0), False),
-            ((3, 12, 3), False),
-            ((3, 12, 4), True),
-            ((3, 13, 0), True),
-            ((3, 14, 0), True),
+            ((3, 11, 0), "cpython", False),
+            ((3, 11, 9), "cpython", False),
+            ((3, 11, 10), "cpython", True),
+            ((3, 12, 0), "cpython", False),
+            ((3, 12, 3), "cpython", False),
+            ((3, 12, 4), "cpython", True),
+            ((3, 13, 0), "cpython", True),
+            ((3, 14, 0), "cpython", True),
+            ((3, 13, 0), "pypy", False),
         )
-        for version, expected in cases:
-            with self.subTest(version=version):
+        for version, implementation, expected in cases:
+            with self.subTest(version=version, implementation=implementation):
                 self.assertEqual(
-                    https_transport._windows_private_temp_namespace_supported(version),
+                    https_transport._windows_private_temp_namespace_supported(
+                        version,
+                        implementation=implementation,
+                    ),
                     expected,
                 )
 
