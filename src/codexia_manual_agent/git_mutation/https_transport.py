@@ -9,6 +9,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -430,6 +431,27 @@ def _bind_https_git_helper(
     return identity, str(resolved_target)
 
 
+def _windows_private_temp_namespace_supported(version: tuple[int, int, int]) -> bool:
+    major, minor, micro = version
+    if (major, minor) == (3, 11):
+        return micro >= 10
+    if (major, minor) == (3, 12):
+        return micro >= 4
+    return (major, minor) >= (3, 13)
+
+
+def _require_private_https_temp_namespace() -> None:
+    if os.name != "nt":
+        return
+    version = sys.version_info[:3]
+    if not _windows_private_temp_namespace_supported(version):
+        rendered = ".".join(str(part) for part in version)
+        raise InvalidGitMutationError(
+            "M2.5.1 HTTPS requires CPython 3.11.10+, 3.12.4+, or 3.13+ on Windows "
+            f"for a private temporary credential namespace; running {rendered}"
+        )
+
+
 def bind_https_transport(
     snapshot: RepositorySnapshot,
     endpoint: GitNetworkEndpoint,
@@ -454,6 +476,7 @@ def bind_https_transport(
     git_shell = resolve_git_command_shell(snapshot)
     _require_credential_shell_builtins(git_shell)
     git_remote_https, git_remote_https_resolved_target = _bind_https_git_helper(snapshot)
+    _require_private_https_temp_namespace()
     root = Path(tempfile.mkdtemp(prefix="codexia-m251-https-"))
     try:
         resolved_root = root.resolve(strict=True)
