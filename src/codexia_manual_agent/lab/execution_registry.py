@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
     InvalidLabRecordError,
+    LabError,
     LabIdentityConflictError,
     LabPersistenceError,
     LabPersistenceIntegrityError,
@@ -196,8 +197,7 @@ def _validate_payload(
         run_execution_evidence_from_dict(value["evidence"])
     else:  # pragma: no cover - enum exhaustiveness
         raise InvalidLabRecordError("Unknown M4.3.1 run execution event kind")
-    encoded = _canonical_json(payload).encode("utf-8")
-    if len(encoded) > MAX_RUN_EXECUTION_EVENT_PAYLOAD_BYTES:
+    if len(_canonical_json(payload).encode("utf-8")) > MAX_RUN_EXECUTION_EVENT_PAYLOAD_BYTES:
         raise InvalidLabRecordError("Run execution event payload exceeds M4.3.1 byte budget")
     return payload
 
@@ -303,7 +303,7 @@ class RunExecutionEventReceipt:
 
 
 @dataclass(slots=True)
-class _RunExecutionReplayState:
+class _ReplayState:
     binding: RunExecutionBinding
     authorization: RunExecutionAuthorization | None = None
     evidence: RunExecutionEvidence | None = None
@@ -331,50 +331,44 @@ class RunExecutionRecovery:
 
 
 def _apply_event(
-    state: _RunExecutionReplayState | None,
+    state: _ReplayState | None,
     kind: RunExecutionEventKind,
     payload: Mapping[str, Any],
     *,
     run: RegisteredRunSnapshot,
-) -> _RunExecutionReplayState:
+) -> _ReplayState:
     value = _validate_payload(kind, payload)
     if kind is RunExecutionEventKind.BINDING_REGISTERED:
         if state is not None:
             raise LabRegistryStateError("binding_registered can appear only once")
         binding = run_execution_binding_from_dict(value["binding"])
         if binding.run.to_dict() != run.run.to_dict():
-            raise EvidenceBindingError(
-                "Execution binding does not bind the exact durable M4 run"
-            )
-        return _RunExecutionReplayState(binding=binding)
-
+            raise EvidenceBindingError("Execution binding does not bind the exact durable M4 run")
+        return _ReplayState(binding=binding)
     if state is None:
         raise LabRegistryStateError("Run execution chronology must start with binding_registered")
 
+    binding = state.binding
     if kind is RunExecutionEventKind.AUTHORIZATION_REGISTERED:
-        if state.authorization is not None:
-            raise LabRegistryStateError("Run execution authorization is already registered")
-        if state.evidence is not None:
-            raise LabRegistryStateError("Authorization cannot appear after execution evidence")
+        if state.authorization is not None or state.evidence is not None:
+            raise LabRegistryStateError("Run execution authorization transition is not fresh")
         authorization = run_execution_authorization_from_dict(value["authorization"])
         if (
-            authorization.binding_id != state.binding.binding_id
-            or not hmac.compare_digest(
-                authorization.binding_digest,
-                state.binding.binding_digest,
-            )
-            or authorization.proposal_id != state.binding.proposal.proposal_id
+            authorization.binding_id != binding.binding_id
+            or not hmac.compare_digest(authorization.binding_digest, binding.binding_digest)
+            or authorization.proposal_id != binding.proposal.proposal_id
             or not hmac.compare_digest(
                 authorization.proposal_digest,
-                state.binding.proposal.proposal_digest,
+                binding.proposal.proposal_digest,
             )
         ):
             raise EvidenceBindingError(
                 "Authorization does not bind the exact durable run execution binding"
             )
         state.authorization = authorization
+        return state
 
-    elif kind is RunExecutionEventKind.EVIDENCE_REGISTERED:
+    if kind is RunExecutionEventKind.EVIDENCE_REGISTERED:
         if state.authorization is None:
             raise LabRegistryStateError(
                 "Execution evidence requires a durable authorization event first"
@@ -383,7 +377,6 @@ def _apply_event(
             raise LabRegistryStateError("Run execution evidence is already registered")
         evidence = run_execution_evidence_from_dict(value["evidence"])
         authorization = state.authorization
-        binding = state.binding
         if (
             evidence.binding_id != binding.binding_id
             or not hmac.compare_digest(evidence.binding_digest, binding.binding_digest)
@@ -395,15 +388,9 @@ def _apply_event(
             or evidence.run_id != binding.run.run_id
             or evidence.experiment_id != binding.run.experiment_id
             or not hmac.compare_digest(evidence.run_digest, binding.run.run_digest)
-            or not hmac.compare_digest(
-                evidence.manifest_digest,
-                binding.run.manifest_digest,
-            )
+            or not hmac.compare_digest(evidence.manifest_digest, binding.run.manifest_digest)
             or evidence.proposal_id != binding.proposal.proposal_id
-            or not hmac.compare_digest(
-                evidence.proposal_digest,
-                binding.proposal.proposal_digest,
-            )
+            or not hmac.compare_digest(evidence.proposal_digest, binding.proposal.proposal_digest)
             or evidence.receipt_id != authorization.receipt.receipt_id
             or not hmac.compare_digest(
                 evidence.receipt_digest,
@@ -414,17 +401,13 @@ def _apply_event(
                 "Execution evidence does not bind the exact durable run/authorization chain"
             )
         state.evidence = evidence
+        return state
 
-    return state
+    raise InvalidLabRecordError("Unknown M4.3.1 run execution event kind")
 
 
 class SqliteRunExecutionRegistry:
-    """M4.3.1 append-only execution chronology layered on the M4.2 registry.
-
-    The M4.2 registry remains authoritative for durable run existence. This class
-    uses the same SQLite file and never grants or consumes M2 authority; it only
-    records exact objects already produced by the M2 authority/execution spine.
-    """
+    """Append-only M4.3.1 execution lineage in the same SQLite trust domain as M4.2."""
 
     def __init__(self, lab_registry: SqliteLabRegistry) -> None:
         if not isinstance(lab_registry, SqliteLabRegistry):
@@ -438,11 +421,7 @@ class SqliteRunExecutionRegistry:
         return self._database_path
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self._database_path,
-            timeout=30.0,
-            isolation_level=None,
-        )
+        connection = sqlite3.connect(self._database_path, timeout=30.0, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 30000")
@@ -462,6 +441,7 @@ class SqliteRunExecutionRegistry:
                 """
                 CREATE TABLE IF NOT EXISTS lab_run_execution_roots (
                     run_id TEXT PRIMARY KEY,
+                    binding_id TEXT NOT NULL UNIQUE,
                     experiment_id TEXT NOT NULL,
                     run_digest TEXT NOT NULL,
                     manifest_digest TEXT NOT NULL,
@@ -470,7 +450,6 @@ class SqliteRunExecutionRegistry:
                     bound_at TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES lab_registry_runs(run_id)
                 );
-
                 CREATE TABLE IF NOT EXISTS lab_run_execution_events (
                     run_id TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
@@ -500,6 +479,40 @@ class SqliteRunExecutionRegistry:
             )
         return snapshot
 
+    @staticmethod
+    def _binding_root(
+        connection: sqlite3.Connection,
+        binding_id: str,
+    ) -> str:
+        target = UUID(_validate_uuid(binding_id, "binding_id"))
+        exact: str | None = None
+        for row in connection.execute(
+            "SELECT binding_id, run_id FROM lab_run_execution_roots"
+        ).fetchall():
+            raw = row["binding_id"]
+            if not isinstance(raw, str):
+                raise LabPersistenceIntegrityError("Persisted execution binding id is not text")
+            try:
+                parsed = UUID(raw)
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise LabPersistenceIntegrityError(
+                    "Persisted execution binding id is malformed"
+                ) from exc
+            if parsed != target:
+                continue
+            if str(parsed) != raw:
+                raise LabPersistenceIntegrityError(
+                    "Persisted execution binding has a noncanonical UUID alias"
+                )
+            if exact is not None:
+                raise LabPersistenceIntegrityError(
+                    "Execution binding identity is not globally unique"
+                )
+            exact = row["run_id"]
+        if exact is None:
+            raise InvalidLabRecordError("Unknown durable run execution binding")
+        return _validate_uuid(exact, "execution root run_id")
+
     def register_binding(self, binding: RunExecutionBinding) -> RunExecutionRecovery:
         if not isinstance(binding, RunExecutionBinding):
             raise TypeError("binding must be a RunExecutionBinding")
@@ -511,15 +524,21 @@ class SqliteRunExecutionRegistry:
                     raise EvidenceBindingError(
                         "Execution binding does not bind the exact durable M4 run"
                     )
-                row = connection.execute(
-                    "SELECT run_id FROM lab_run_execution_roots WHERE run_id = ?",
+                if connection.execute(
+                    "SELECT 1 FROM lab_run_execution_roots WHERE run_id = ?",
                     (binding.run.run_id,),
-                ).fetchone()
-                if row is not None:
+                ).fetchone() is not None:
                     self._load(connection, binding.run.run_id, run=run)
                     raise LabIdentityConflictError(
                         "Run already has a durable execution binding"
                     )
+                # Audit semantic binding UUID identity before relying on SQL text uniqueness.
+                try:
+                    self._binding_root(connection, binding.binding_id)
+                except InvalidLabRecordError:
+                    pass
+                else:
+                    raise LabIdentityConflictError("Execution binding id is already registered")
                 receipt = RunExecutionEventReceipt.create(
                     run_id=binding.run.run_id,
                     sequence=0,
@@ -527,21 +546,17 @@ class SqliteRunExecutionRegistry:
                     payload={"binding": binding.to_dict()},
                     previous_event_digest=None,
                 )
-                state = _apply_event(
-                    None,
-                    receipt.kind,
-                    receipt.payload,
-                    run=run,
-                )
+                state = _apply_event(None, receipt.kind, receipt.payload, run=run)
                 connection.execute(
                     """
                     INSERT INTO lab_run_execution_roots(
-                        run_id, experiment_id, run_digest, manifest_digest,
+                        run_id, binding_id, experiment_id, run_digest, manifest_digest,
                         head_sequence, head_event_digest, bound_at
-                    ) VALUES (?, ?, ?, ?, 0, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
                         binding.run.run_id,
+                        binding.binding_id,
                         binding.run.experiment_id,
                         binding.run.run_digest,
                         binding.run.manifest_digest,
@@ -562,11 +577,25 @@ class SqliteRunExecutionRegistry:
     ) -> RunExecutionRecovery:
         if not isinstance(authorization, RunExecutionAuthorization):
             raise TypeError("authorization must be a RunExecutionAuthorization")
-        return self._append(
-            authorization.binding_id,
-            RunExecutionEventKind.AUTHORIZATION_REGISTERED,
-            {"authorization": authorization.to_dict()},
-        )
+        with self._sqlite_connection() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                run_id = self._binding_root(connection, authorization.binding_id)
+                run = self._durable_run(run_id, require_open=True)
+                state, events = self._load(connection, run_id, run=run)
+                recovery = self._append_loaded(
+                    connection,
+                    run=run,
+                    state=state,
+                    events=events,
+                    kind=RunExecutionEventKind.AUTHORIZATION_REGISTERED,
+                    payload={"authorization": authorization.to_dict()},
+                )
+                connection.execute("COMMIT")
+                return recovery
+            except Exception:
+                self._rollback(connection)
+                raise
 
     def register_evidence(self, evidence: RunExecutionEvidence) -> RunExecutionRecovery:
         if not isinstance(evidence, RunExecutionEvidence):
@@ -596,57 +625,20 @@ class SqliteRunExecutionRegistry:
         with self._sqlite_connection() as connection:
             try:
                 connection.execute("BEGIN")
-                run = self._durable_run(run_id, require_open=False)
+                if connection.execute(
+                    "SELECT 1 FROM lab_run_execution_roots WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone() is None:
+                    raise InvalidLabRecordError("Unknown durable run execution binding")
+                try:
+                    run = self._durable_run(run_id, require_open=False)
+                except InvalidLabRecordError as exc:
+                    raise LabPersistenceIntegrityError(
+                        "Execution chronology references a missing durable M4 run"
+                    ) from exc
                 state, events = self._load(connection, run_id, run=run)
                 connection.execute("COMMIT")
                 return self._public(run, state, events)
-            except Exception:
-                self._rollback(connection)
-                raise
-
-    def _append(
-        self,
-        binding_id: str,
-        kind: RunExecutionEventKind,
-        payload: Mapping[str, Any],
-    ) -> RunExecutionRecovery:
-        _validate_uuid(binding_id, "binding_id")
-        with self._sqlite_connection() as connection:
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                row = connection.execute(
-                    """
-                    SELECT run_id FROM lab_run_execution_events
-                    WHERE sequence = 0 AND kind = ?
-                    """,
-                    (RunExecutionEventKind.BINDING_REGISTERED.value,),
-                ).fetchall()
-                matches: list[str] = []
-                for candidate in row:
-                    run_id = candidate["run_id"]
-                    run = self._durable_run(run_id, require_open=True)
-                    state, _events = self._load(connection, run_id, run=run)
-                    if state.binding.binding_id == binding_id:
-                        matches.append(run_id)
-                if len(matches) != 1:
-                    if matches:
-                        raise LabPersistenceIntegrityError(
-                            "Execution binding identity is not globally unique"
-                        )
-                    raise InvalidLabRecordError("Unknown durable run execution binding")
-                run_id = matches[0]
-                run = self._durable_run(run_id, require_open=True)
-                state, events = self._load(connection, run_id, run=run)
-                recovery = self._append_loaded(
-                    connection,
-                    run=run,
-                    state=state,
-                    events=events,
-                    kind=kind,
-                    payload=payload,
-                )
-                connection.execute("COMMIT")
-                return recovery
             except Exception:
                 self._rollback(connection)
                 raise
@@ -656,7 +648,7 @@ class SqliteRunExecutionRegistry:
         connection: sqlite3.Connection,
         *,
         run: RegisteredRunSnapshot,
-        state: _RunExecutionReplayState,
+        state: _ReplayState,
         events: tuple[RunExecutionEventReceipt, ...],
         kind: RunExecutionEventKind,
         payload: Mapping[str, Any],
@@ -686,9 +678,7 @@ class SqliteRunExecutionRegistry:
             ),
         )
         if cursor.rowcount != 1:
-            raise LabPersistenceIntegrityError(
-                "Run execution root changed during append"
-            )
+            raise LabPersistenceIntegrityError("Run execution root changed during append")
         return self._public(run, state, events + (receipt,))
 
     @staticmethod
@@ -721,7 +711,7 @@ class SqliteRunExecutionRegistry:
         run_id: str,
         *,
         run: RegisteredRunSnapshot,
-    ) -> tuple[_RunExecutionReplayState, tuple[RunExecutionEventReceipt, ...]]:
+    ) -> tuple[_ReplayState, tuple[RunExecutionEventReceipt, ...]]:
         root = connection.execute(
             "SELECT * FROM lab_run_execution_roots WHERE run_id = ?",
             (run_id,),
@@ -730,6 +720,10 @@ class SqliteRunExecutionRegistry:
             raise InvalidLabRecordError("Unknown durable run execution binding")
         try:
             root_run_id = _validate_uuid(root["run_id"], "persisted root run_id")
+            root_binding_id = _validate_uuid(
+                root["binding_id"],
+                "persisted root binding_id",
+            )
             root_experiment_id = _validate_uuid(
                 root["experiment_id"],
                 "persisted root experiment_id",
@@ -749,7 +743,7 @@ class SqliteRunExecutionRegistry:
                 root["head_event_digest"],
                 "persisted root head_event_digest",
             )
-            _validate_timestamp(root["bound_at"], "persisted root bound_at")
+            bound_at = _validate_timestamp(root["bound_at"], "persisted root bound_at")
         except InvalidLabRecordError as exc:
             raise LabPersistenceIntegrityError(
                 "Persisted run execution root is not canonical"
@@ -763,17 +757,15 @@ class SqliteRunExecutionRegistry:
             raise LabPersistenceIntegrityError(
                 "Run execution root disagrees with the authoritative M4 run"
             )
+
         rows = connection.execute(
-            """
-            SELECT * FROM lab_run_execution_events
-            WHERE run_id = ? ORDER BY sequence ASC
-            """,
+            "SELECT * FROM lab_run_execution_events WHERE run_id = ? ORDER BY sequence ASC",
             (run_id,),
         ).fetchall()
         if not rows:
             raise LabPersistenceIntegrityError("Run execution root has no event chronology")
+        state: _ReplayState | None = None
         events: list[RunExecutionEventReceipt] = []
-        state: _RunExecutionReplayState | None = None
         previous_digest: str | None = None
         for expected_sequence, row in enumerate(rows):
             try:
@@ -799,9 +791,7 @@ class SqliteRunExecutionRegistry:
                         "persisted execution previous_event_digest",
                     )
                     if not hmac.compare_digest(prior, previous_digest or ""):
-                        raise InvalidLabRecordError(
-                            "persisted execution event chain is broken"
-                        )
+                        raise InvalidLabRecordError("persisted execution event chain is broken")
                 event_digest = _validate_digest(
                     row["event_digest"],
                     "persisted execution event_digest",
@@ -817,15 +807,27 @@ class SqliteRunExecutionRegistry:
                     previous_event_digest=prior,
                     event_digest=event_digest,
                 )
-            except InvalidLabRecordError as exc:
+                state = _apply_event(state, event.kind, event.payload, run=run)
+            except LabPersistenceIntegrityError:
+                raise
+            except LabError as exc:
                 raise LabPersistenceIntegrityError(
-                    "Persisted run execution event is not canonical or valid"
+                    "Persisted run execution event failed semantic replay"
                 ) from exc
-            state = _apply_event(state, event.kind, event.payload, run=run)
             events.append(event)
             previous_digest = event.event_digest
+
         if state is None:  # pragma: no cover - rows is non-empty
             raise LabPersistenceIntegrityError("Run execution chronology did not produce state")
+        first = events[0]
+        if (
+            first.kind is not RunExecutionEventKind.BINDING_REGISTERED
+            or state.binding.binding_id != root_binding_id
+            or first.created_at != bound_at
+        ):
+            raise LabPersistenceIntegrityError(
+                "Run execution root binding metadata disagrees with chronology"
+            )
         last = events[-1]
         if head_sequence != last.sequence or not hmac.compare_digest(
             head_digest,
@@ -839,7 +841,7 @@ class SqliteRunExecutionRegistry:
     @staticmethod
     def _public(
         run: RegisteredRunSnapshot,
-        state: _RunExecutionReplayState,
+        state: _ReplayState,
         events: tuple[RunExecutionEventReceipt, ...],
     ) -> RunExecutionRecovery:
         return RunExecutionRecovery(
