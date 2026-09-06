@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -136,6 +137,52 @@ class RunExecutionRegistryTests(unittest.TestCase):
         )
         with self.assertRaises(EvidenceBindingError):
             RunExecutionAuthorization.create(binding=binding, receipt=receipt)
+
+    def test_receipt_issued_before_durable_binding_is_rejected(self) -> None:
+        proposal = self._proposal("pre-authorized")
+        authority = LocalApprovalAuthority()
+        receipt = authority.decide(
+            proposal,
+            mode=ApprovalMode.RISKY,
+            approved=True,
+            actor="test-human",
+        )
+        time.sleep(0.002)
+        binding = RunExecutionBinding.create(run=self.run, proposal=proposal)
+        self.executions.register_binding(binding)
+        authorization = RunExecutionAuthorization.create(
+            binding=binding,
+            receipt=receipt,
+        )
+
+        with self.assertRaises(EvidenceBindingError):
+            self.executions.register_authorization(authorization)
+
+        self.assertEqual(
+            self.executions.recover(self.run.run_id).phase,
+            RunExecutionPhase.BOUND,
+        )
+
+    def test_observation_cannot_be_attached_if_authorization_was_recorded_post_hoc(self) -> None:
+        binding = RunExecutionBinding.create(run=self.run, proposal=self._proposal("post-hoc"))
+        self.executions.register_binding(binding)
+        authorization, lifecycle, authority = self._authorized(binding)
+        observation = ProcessExecutor().execute(lifecycle, authority=authority)
+        time.sleep(0.002)
+        self.executions.register_authorization(authorization)
+        evidence = RunExecutionEvidence.create(
+            binding=binding,
+            authorization=authorization,
+            observation=observation,
+        )
+
+        with self.assertRaises(EvidenceBindingError):
+            self.executions.register_evidence(evidence)
+
+        self.assertEqual(
+            self.executions.recover(self.run.run_id).phase,
+            RunExecutionPhase.AUTHORIZED,
+        )
 
     def test_observation_with_forged_process_identity_cannot_back_run(self) -> None:
         binding = RunExecutionBinding.create(run=self.run, proposal=self._proposal("bound"))
