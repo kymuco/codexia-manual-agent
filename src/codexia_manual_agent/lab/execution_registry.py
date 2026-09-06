@@ -101,6 +101,10 @@ def _validate_timestamp(value: Any, field_name: str) -> str:
     return value
 
 
+def _timestamp(value: str, field_name: str) -> datetime:
+    return datetime.fromisoformat(_validate_timestamp(value, field_name))
+
+
 def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -406,6 +410,70 @@ def _apply_event(
     raise InvalidLabRecordError("Unknown M4.3.1 run execution event kind")
 
 
+def _validate_temporal_chain(
+    state: _ReplayState,
+    events: tuple[RunExecutionEventReceipt, ...],
+) -> None:
+    if not events or events[0].kind is not RunExecutionEventKind.BINDING_REGISTERED:
+        raise EvidenceBindingError("Run execution chronology has no durable pre-execution binding")
+    binding_event = events[0]
+    proposal_at = _timestamp(state.binding.proposal.created_at, "proposal.created_at")
+    binding_record_at = _timestamp(state.binding.created_at, "binding.created_at")
+    binding_event_at = _timestamp(binding_event.created_at, "binding event created_at")
+    if not proposal_at <= binding_record_at <= binding_event_at:
+        raise EvidenceBindingError(
+            "Run execution binding must be created after its proposal and durably registered before later authority"
+        )
+
+    if state.authorization is None:
+        if len(events) != 1:
+            raise EvidenceBindingError("Bound run execution chronology has unexpected later events")
+        return
+    if len(events) < 2 or events[1].kind is not RunExecutionEventKind.AUTHORIZATION_REGISTERED:
+        raise EvidenceBindingError("Run execution authorization lacks its exact durable event")
+    authorization_event = events[1]
+    receipt_at = _timestamp(
+        state.authorization.receipt.created_at,
+        "authorization receipt created_at",
+    )
+    authorization_record_at = _timestamp(
+        state.authorization.created_at,
+        "run execution authorization created_at",
+    )
+    authorization_event_at = _timestamp(
+        authorization_event.created_at,
+        "authorization event created_at",
+    )
+    if not binding_event_at <= receipt_at <= authorization_record_at <= authorization_event_at:
+        raise EvidenceBindingError(
+            "Run execution binding must be durable before authorization is issued and recorded"
+        )
+
+    if state.evidence is None:
+        if len(events) != 2:
+            raise EvidenceBindingError("Authorized run execution chronology has unexpected later events")
+        return
+    if len(events) != 3 or events[2].kind is not RunExecutionEventKind.EVIDENCE_REGISTERED:
+        raise EvidenceBindingError("Run execution observation lacks its exact durable evidence event")
+    evidence_event = events[2]
+    observation_at = _timestamp(
+        state.evidence.observation.created_at,
+        "process observation created_at",
+    )
+    evidence_record_at = _timestamp(
+        state.evidence.created_at,
+        "run execution evidence created_at",
+    )
+    evidence_event_at = _timestamp(
+        evidence_event.created_at,
+        "evidence event created_at",
+    )
+    if not authorization_event_at <= observation_at <= evidence_record_at <= evidence_event_at:
+        raise EvidenceBindingError(
+            "Run execution authorization must be durable before execution is observed; evidence must be recorded afterward"
+        )
+
+
 class SqliteRunExecutionRegistry:
     """Append-only M4.3.1 execution lineage in the same SQLite trust domain as M4.2."""
 
@@ -532,7 +600,6 @@ class SqliteRunExecutionRegistry:
                     raise LabIdentityConflictError(
                         "Run already has a durable execution binding"
                     )
-                # Audit semantic binding UUID identity before relying on SQL text uniqueness.
                 try:
                     self._binding_root(connection, binding.binding_id)
                 except InvalidLabRecordError:
@@ -547,6 +614,7 @@ class SqliteRunExecutionRegistry:
                     previous_event_digest=None,
                 )
                 state = _apply_event(None, receipt.kind, receipt.payload, run=run)
+                _validate_temporal_chain(state, (receipt,))
                 connection.execute(
                     """
                     INSERT INTO lab_run_execution_roots(
@@ -662,6 +730,8 @@ class SqliteRunExecutionRegistry:
             previous_event_digest=previous.event_digest,
         )
         state = _apply_event(state, receipt.kind, receipt.payload, run=run)
+        candidate_events = events + (receipt,)
+        _validate_temporal_chain(state, candidate_events)
         self._insert_event(connection, receipt)
         cursor = connection.execute(
             """
@@ -679,7 +749,7 @@ class SqliteRunExecutionRegistry:
         )
         if cursor.rowcount != 1:
             raise LabPersistenceIntegrityError("Run execution root changed during append")
-        return self._public(run, state, events + (receipt,))
+        return self._public(run, state, candidate_events)
 
     @staticmethod
     def _insert_event(
@@ -836,6 +906,12 @@ class SqliteRunExecutionRegistry:
             raise LabPersistenceIntegrityError(
                 "Run execution root head disagrees with event chronology"
             )
+        try:
+            _validate_temporal_chain(state, tuple(events))
+        except LabError as exc:
+            raise LabPersistenceIntegrityError(
+                "Persisted run execution chronology violates temporal ordering"
+            ) from exc
         return state, tuple(events)
 
     @staticmethod
