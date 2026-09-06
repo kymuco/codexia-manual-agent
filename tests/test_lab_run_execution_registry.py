@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from codexia_manual_agent.authority import (
@@ -217,7 +218,7 @@ class RunExecutionRegistryTests(unittest.TestCase):
 
     def test_event_payload_tamper_is_detected_after_restart(self) -> None:
         self._observed_chain()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             raw = connection.execute(
                 """
                 SELECT payload_json FROM lab_run_execution_events
@@ -237,6 +238,7 @@ class RunExecutionRegistryTests(unittest.TestCase):
                     self.run.run_id,
                 ),
             )
+            connection.commit()
 
         with self.assertRaises(LabPersistenceIntegrityError):
             SqliteRunExecutionRegistry(SqliteLabRegistry(self.db_path)).recover(
@@ -245,7 +247,7 @@ class RunExecutionRegistryTests(unittest.TestCase):
 
     def test_root_head_tamper_is_detected_after_restart(self) -> None:
         self._observed_chain()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 """
                 UPDATE lab_run_execution_roots SET head_event_digest = ?
@@ -253,6 +255,7 @@ class RunExecutionRegistryTests(unittest.TestCase):
                 """,
                 ("0" * 64, self.run.run_id),
             )
+            connection.commit()
 
         with self.assertRaises(LabPersistenceIntegrityError):
             SqliteRunExecutionRegistry(SqliteLabRegistry(self.db_path)).recover(
