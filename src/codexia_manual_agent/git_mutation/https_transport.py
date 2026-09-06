@@ -512,36 +512,20 @@ def _credential_response_bytes(binding: HttpsTransportBinding, payload: bytes) -
     return f"username={username}\npassword={secret}\n".encode("utf-8")
 
 
-def _write_credential_response_file(target: Path, payload: bytes) -> None:
+def _open_exclusive_credential_response(target: Path):
     if os.name == "nt":
-        with target.open("xb") as handle:
-            # Intentional M2.5.1 frozen credential-protocol response in the
-            # proposal-bound private bundle; the sink is narrower than replacing
-            # it with an ambient credential-manager/OAuth authority path.
-            # codeql[py/clear-text-storage-sensitive-data]
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        return
+        return target.open("xb")
 
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         # The create mode is already no broader than 0600. fchmod restores the
         # exact owner read/write bits if a restrictive umask removed either one,
-        # before any credential bytes are written.
+        # before the caller writes any credential bytes.
         os.fchmod(fd, 0o600)
-        handle = os.fdopen(fd, "wb")
+        return os.fdopen(fd, "wb")
     except BaseException:
         os.close(fd)
         raise
-    with handle:
-        # Intentional M2.5.1 frozen credential-protocol response in the
-        # proposal-bound private bundle. POSIX permissions are fixed at 0600
-        # before this first credential byte is written.
-        # codeql[py/clear-text-storage-sensitive-data]
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
 
 
 def _revalidate_identity(identity: GitExecutableIdentity, *, label: str) -> None:
@@ -632,7 +616,10 @@ def materialize_https_credentials(binding: HttpsTransportBinding) -> None:
     payload = _credential_response_bytes(binding, source_payload)
     target = Path(binding.credential_bundle_path)
     try:
-        _write_credential_response_file(target, payload)
+        with _open_exclusive_credential_response(target) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
     except FileExistsError as exc:
         raise GitMutationPreconditionChangedError("HTTPS credential bundle already exists") from exc
     except OSError as exc:
