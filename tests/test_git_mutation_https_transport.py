@@ -164,17 +164,19 @@ class GitHttpsTransportBindingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw, tempfile.TemporaryDirectory() as trust_raw:
             root, trust = Path(raw), Path(trust_raw)
             _init_repo(root)
-            with mock.patch.object(
-                https_transport,
-                "_require_private_https_temp_namespace",
-                side_effect=InvalidGitMutationError("private temporary credential namespace"),
-            ) as admission:
-                with self.assertRaisesRegex(
-                    InvalidGitMutationError,
-                    "private temporary credential namespace",
-                ):
-                    _binding(root, trust)
+            with mock.patch.object(https_transport.tempfile, "mkdtemp") as mkdtemp:
+                with mock.patch.object(
+                    https_transport,
+                    "_require_private_https_temp_namespace",
+                    side_effect=InvalidGitMutationError("private temporary credential namespace"),
+                ) as admission:
+                    with self.assertRaisesRegex(
+                        InvalidGitMutationError,
+                        "private temporary credential namespace",
+                    ):
+                        _binding(root, trust)
             admission.assert_called_once_with()
+            mkdtemp.assert_not_called()
 
     @unittest.skipIf(os.name == "nt", "POSIX credential mode regression")
     def test_posix_credential_response_is_private_and_empty_before_first_write(self) -> None:
