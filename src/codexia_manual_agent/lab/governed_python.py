@@ -142,6 +142,30 @@ def _metric_id(run_id: str, metric_name: str) -> str:
     return str(uuid5(UUID(run_id), f"codexia:m4.3.2:metric:{metric_name}"))
 
 
+def _admitted_python_executable(value: str | Path | None) -> str:
+    try:
+        current = Path(sys.executable).resolve(strict=True)
+    except OSError as exc:  # pragma: no cover - a running interpreter has an executable
+        raise InvalidLabRecordError(
+            "Current Python executable cannot be resolved for M4.3.2"
+        ) from exc
+    if not current.is_file():  # pragma: no cover - defensive runtime invariant
+        raise InvalidLabRecordError("Current Python executable is not a regular file")
+    if value is None:
+        return str(current)
+    try:
+        supplied = Path(value).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise InvalidLabRecordError(
+            "M4.3.2 python_executable must resolve to the current interpreter"
+        ) from exc
+    if supplied != current:
+        raise InvalidLabRecordError(
+            "M4.3.2 does not admit an alternate executable for the Python profile"
+        )
+    return str(current)
+
+
 def _validate_metric_name(value: Any) -> str:
     if not isinstance(value, str) or _NAME_RE.fullmatch(value) is None:
         raise InvalidLabRecordError("M4.3.2 metric name is invalid")
@@ -904,251 +928,251 @@ class SqlitePhysicalEvidenceRegistry:
         snapshot = self._lab.recover_for_run(artifact.run_id).run(artifact.run_id)
         same_path = [
             item
-            for item in snapshot.artifacts.values()
-            if item.logical_path == artifact.logical_path
-        ]
-        if same_path:
-            if len(same_path) != 1 or same_path[0] != artifact:
-                raise EvidenceBindingError(
-                    "Durable artifact path is already bound to different bytes"
-                )
-            return
-        self._lab.register_artifact(artifact)
-
-    def _ensure_metric(self, metric: MetricRecord) -> None:
-        snapshot = self._lab.recover_for_run(metric.run_id).run(metric.run_id)
-        same_name = [item for item in snapshot.metrics.values() if item.name == metric.name]
-        if same_name:
-            if len(same_name) != 1 or same_name[0] != metric:
-                raise EvidenceBindingError(
-                    "Durable metric name is already bound to a different value"
-                )
-            return
-        self._lab.register_metric(metric)
-
-    def _validate_dependencies(
-        self,
-        receipt: PhysicalEvidenceReceipt,
-        *,
-        verify_physical: bool,
-    ) -> PhysicalEvidenceRecovery:
-        execution = self._executions.recover(receipt.run_id)
-        if (
-            execution.phase is not RunExecutionPhase.OBSERVED
-            or execution.evidence is None
-            or not execution.execution_succeeded
-            or not hmac.compare_digest(
-                execution.evidence.evidence_digest,
-                receipt.execution_evidence_digest,
-            )
-            or not hmac.compare_digest(
-                execution.evidence.observation.observation_digest,
-                receipt.observation_digest,
-            )
-            or not hmac.compare_digest(
-                execution.evidence.observation.stdout.sha256,
-                receipt.stdout_sha256,
-            )
-        ):
-            raise EvidenceBindingError(
-                "Physical evidence lacks exact successful M4.3.1 execution provenance"
-            )
-        recovery = self._lab.recover_for_run(receipt.run_id)
-        run = recovery.run(receipt.run_id)
-        spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
-        if run.run.to_dict() != execution.binding.run.to_dict():
-            raise EvidenceBindingError(
-                "Physical evidence run disagrees with execution binding"
-            )
-        if (
-            receipt.artifact.artifact_id != _artifact_id(receipt.run_id)
-            or receipt.metric.metric_id
-            != _metric_id(receipt.run_id, spec.metric_name)
-            or receipt.artifact.media_type != "application/json"
-            or receipt.metric.name != spec.metric_name
-            or receipt.metric.unit != spec.metric_unit
-        ):
-            raise EvidenceBindingError(
-                "Physical evidence record identity differs from the manifest-declared output/metric"
-            )
-        artifact = run.artifacts.get(receipt.artifact.artifact_id)
-        metric = run.metrics.get(receipt.metric.metric_id)
-        if artifact != receipt.artifact or metric != receipt.metric:
-            raise EvidenceBindingError(
-                "Physical evidence records are not durably registered in M4.2"
-            )
-        if verify_physical:
-            snapshot = _read_physical_output(
-                execution.binding.proposal.workspace_root,
-                receipt.output_logical_path,
-            )
-            stdout_bytes = _observed_stdout_bytes(execution.evidence)
-            if (
-                snapshot.data != stdout_bytes
-                or snapshot.size_bytes != receipt.output_size_bytes
-                or not hmac.compare_digest(snapshot.sha256, receipt.output_sha256)
-                or not hmac.compare_digest(snapshot.sha256, receipt.stdout_sha256)
-            ):
-                raise EvidenceBindingError(
-                    "Physical output bytes changed or no longer match exact observed stdout"
-                )
-            value = _extract_metric(snapshot, run_id=receipt.run_id, spec=spec)
-            if not _same_metric_value(value, receipt.metric.value):
-                raise EvidenceBindingError(
-                    "Recovered physical bytes no longer yield the exact durable metric representation"
-                )
-        return PhysicalEvidenceRecovery(
-            receipt=receipt,
-            execution=execution,
-            run=run,
-            artifact=receipt.artifact,
-            metric=receipt.metric,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class GovernedPythonRunResult:
-    execution: RunExecutionRecovery
-    physical: PhysicalEvidenceRecovery | None
-
-
-class GovernedPythonJsonRunner:
-    """One narrow M4.3.2 profile over the existing M2/M3 authority spine."""
-
-    def __init__(
-        self,
-        lab_registry: SqliteLabRegistry,
-        session_store: SqliteSessionEventStore,
-        execution_registry: SqliteRunExecutionRegistry,
-        physical_registry: SqlitePhysicalEvidenceRegistry,
-    ) -> None:
-        paths = {
-            lab_registry.database_path.resolve(),
-            session_store.path.resolve(),
-            execution_registry.database_path.resolve(),
-            physical_registry.database_path.resolve(),
-        }
-        if len(paths) != 1:
-            raise ValueError("M4.3.2 runner requires one SQLite trust domain")
-        self._lab = lab_registry
-        self._m3 = session_store
-        self._executions = execution_registry
-        self._physical = physical_registry
-
-    def prepare(
-        self,
-        *,
-        run_id: str,
-        m3_session_id: str,
-        workspace: str | Path,
-        python_executable: str | Path | None = None,
-    ) -> PreparedPythonJsonRun:
-        recovery = self._lab.recover_for_run(run_id)
-        run_snapshot = recovery.run(run_id)
-        if run_snapshot.evidence_sealed:
-            raise LabRegistryStateError("Cannot prepare execution for a sealed run")
-        spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
-        output_path = _logical_output_path(run_id)
-        if os.path.lexists(Path(workspace) / PurePosixPath(output_path)):
-            raise EvidenceBindingError(
-                "Deterministic M4.3.2 output already exists before execution"
-            )
-        executable = str(python_executable or sys.executable)
-        proposal = prepare_process_proposal(
-            workspace=workspace,
-            argv=[
-                executable,
-                "-I",
-                "-c",
-                spec.source,
-                run_id,
-                output_path,
-                spec.input_json,
-            ],
-            limits=ProcessLimits(
-                timeout_seconds=30.0,
-                max_stdout_bytes=MAX_RESULT_BYTES,
-                max_stderr_bytes=65_536,
-            ),
-            summary="Execute one exact M4.3.2 inline Python JSON experiment.",
-        )
-        binding = RunExecutionBinding.create(run=run_snapshot.run, proposal=proposal)
-        self._m3.record_proposal(m3_session_id, proposal)
-        self._executions.register_binding(
-            binding,
-            m3_session_id=m3_session_id,
-        )
-        return PreparedPythonJsonRun(
-            run=run_snapshot.run,
-            manifest_digest=recovery.manifest.manifest_digest,
-            m3_session_id=m3_session_id,
-            output_logical_path=output_path,
-            spec=spec,
-            binding=binding,
-        )
-
-    def execute_authorized(
-        self,
-        prepared: PreparedPythonJsonRun,
-        *,
-        receipt: AuthorizationReceipt,
-    ) -> GovernedPythonRunResult:
-        if not isinstance(prepared, PreparedPythonJsonRun):
-            raise TypeError("prepared must be a PreparedPythonJsonRun")
-        if not isinstance(receipt, AuthorizationReceipt):
-            raise TypeError("receipt must be an AuthorizationReceipt")
-        authority = LocalApprovalAuthority(
-            consumption_registry=DurableAuthorizationConsumptionRegistry(
-                self._m3,
-                session_id=prepared.m3_session_id,
-            )
-        )
-        authority.verify_authorization(
-            prepared.proposal,
-            receipt,
-            mode=receipt.mode,
-        )
-        self._m3.record_authorization(prepared.m3_session_id, receipt)
-        authorization = RunExecutionAuthorization.create(
-            binding=prepared.binding,
-            receipt=receipt,
-        )
-        self._executions.register_authorization(authorization)
-
-        output = Path(prepared.proposal.workspace_root) / PurePosixPath(
-            prepared.output_logical_path
-        )
-        if os.path.lexists(output):
-            raise EvidenceBindingError(
-                "M4.3.2 output appeared before one-shot execution consumption"
-            )
-
-        lifecycle = ActionLifecycle(prepared.proposal, receipt.mode)
-        lifecycle.apply_receipt(receipt, authority=authority)
-        observation = ProcessExecutor().execute(lifecycle, authority=authority)
-        self._m3.record_execution(
-            prepared.m3_session_id,
-            proposal=prepared.proposal,
-            receipt=receipt,
-            execution_id=observation.execution_id,
-        )
-        self._m3.record_observation(
-            prepared.m3_session_id,
-            proposal=prepared.proposal,
-            execution_id=observation.execution_id,
-            observation_id=observation.observation_id,
-            observation_digest=observation.observation_digest,
-        )
-        execution_evidence = RunExecutionEvidence.create(
-            binding=prepared.binding,
-            authorization=authorization,
-            observation=observation,
-        )
-        execution = self._executions.register_evidence(execution_evidence)
-        if (
-            observation.termination_reason is not ProcessTerminationReason.EXITED
-            or observation.exit_code != 0
-        ):
-            return GovernedPythonRunResult(execution=execution, physical=None)
-        physical = self._physical.finalize(prepared.run.run_id)
-        return GovernedPythonRunResult(execution=execution, physical=physical)
++            for item in snapshot.artifacts.values()
++            if item.logical_path == artifact.logical_path
++        ]
++        if same_path:
++            if len(same_path) != 1 or same_path[0] != artifact:
++                raise EvidenceBindingError(
++                    "Durable artifact path is already bound to different bytes"
++                )
++            return
++        self._lab.register_artifact(artifact)
++
++    def _ensure_metric(self, metric: MetricRecord) -> None:
++        snapshot = self._lab.recover_for_run(metric.run_id).run(metric.run_id)
++        same_name = [item for item in snapshot.metrics.values() if item.name == metric.name]
++        if same_name:
++            if len(same_name) != 1 or same_name[0] != metric:
++                raise EvidenceBindingError(
++                    "Durable metric name is already bound to a different value"
++                )
++            return
++        self._lab.register_metric(metric)
++
++    def _validate_dependencies(
++        self,
++        receipt: PhysicalEvidenceReceipt,
++        *,
++        verify_physical: bool,
++    ) -> PhysicalEvidenceRecovery:
++        execution = self._executions.recover(receipt.run_id)
++        if (
++            execution.phase is not RunExecutionPhase.OBSERVED
++            or execution.evidence is None
++            or not execution.execution_succeeded
++            or not hmac.compare_digest(
++                execution.evidence.evidence_digest,
++                receipt.execution_evidence_digest,
++            )
++            or not hmac.compare_digest(
++                execution.evidence.observation.observation_digest,
++                receipt.observation_digest,
++            )
++            or not hmac.compare_digest(
++                execution.evidence.observation.stdout.sha256,
++                receipt.stdout_sha256,
++            )
++        ):
++            raise EvidenceBindingError(
++                "Physical evidence lacks exact successful M4.3.1 execution provenance"
++            )
++        recovery = self._lab.recover_for_run(receipt.run_id)
++        run = recovery.run(receipt.run_id)
++        spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
++        if run.run.to_dict() != execution.binding.run.to_dict():
++            raise EvidenceBindingError(
++                "Physical evidence run disagrees with execution binding"
++            )
++        if (
++            receipt.artifact.artifact_id != _artifact_id(receipt.run_id)
++            or receipt.metric.metric_id
++            != _metric_id(receipt.run_id, spec.metric_name)
++            or receipt.artifact.media_type != "application/json"
++            or receipt.metric.name != spec.metric_name
++            or receipt.metric.unit != spec.metric_unit
++        ):
++            raise EvidenceBindingError(
++                "Physical evidence record identity differs from the manifest-declared output/metric"
++            )
++        artifact = run.artifacts.get(receipt.artifact.artifact_id)
++        metric = run.metrics.get(receipt.metric.metric_id)
++        if artifact != receipt.artifact or metric != receipt.metric:
++            raise EvidenceBindingError(
++                "Physical evidence records are not durably registered in M4.2"
++            )
++        if verify_physical:
++            snapshot = _read_physical_output(
++                execution.binding.proposal.workspace_root,
++                receipt.output_logical_path,
++            )
++            stdout_bytes = _observed_stdout_bytes(execution.evidence)
++            if (
++                snapshot.data != stdout_bytes
++                or snapshot.size_bytes != receipt.output_size_bytes
++                or not hmac.compare_digest(snapshot.sha256, receipt.output_sha256)
++                or not hmac.compare_digest(snapshot.sha256, receipt.stdout_sha256)
++            ):
++                raise EvidenceBindingError(
++                    "Physical output bytes changed or no longer match exact observed stdout"
++                )
++            value = _extract_metric(snapshot, run_id=receipt.run_id, spec=spec)
++            if not _same_metric_value(value, receipt.metric.value):
++                raise EvidenceBindingError(
++                    "Recovered physical bytes no longer yield the exact durable metric representation"
++                )
++        return PhysicalEvidenceRecovery(
++            receipt=receipt,
++            execution=execution,
++            run=run,
++            artifact=receipt.artifact,
++            metric=receipt.metric,
++        )
++
++
++@dataclass(frozen=True, slots=True)
++class GovernedPythonRunResult:
++    execution: RunExecutionRecovery
++    physical: PhysicalEvidenceRecovery | None
++
++
++class GovernedPythonJsonRunner:
++    """One narrow M4.3.2 profile over the existing M2/M3 authority spine."""
++
++    def __init__(
++        self,
++        lab_registry: SqliteLabRegistry,
++        session_store: SqliteSessionEventStore,
++        execution_registry: SqliteRunExecutionRegistry,
++        physical_registry: SqlitePhysicalEvidenceRegistry,
++    ) -> None:
++        paths = {
++            lab_registry.database_path.resolve(),
++            session_store.path.resolve(),
++            execution_registry.database_path.resolve(),
++            physical_registry.database_path.resolve(),
++        }
++        if len(paths) != 1:
++            raise ValueError("M4.3.2 runner requires one SQLite trust domain")
++        self._lab = lab_registry
++        self._m3 = session_store
++        self._executions = execution_registry
++        self._physical = physical_registry
++
++    def prepare(
++        self,
++        *,
++        run_id: str,
++        m3_session_id: str,
++        workspace: str | Path,
++        python_executable: str | Path | None = None,
++    ) -> PreparedPythonJsonRun:
++        recovery = self._lab.recover_for_run(run_id)
++        run_snapshot = recovery.run(run_id)
++        if run_snapshot.evidence_sealed:
++            raise LabRegistryStateError("Cannot prepare execution for a sealed run")
++        spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
++        output_path = _logical_output_path(run_id)
++        if os.path.lexists(Path(workspace) / PurePosixPath(output_path)):
++            raise EvidenceBindingError(
++                "Deterministic M4.3.2 output already exists before execution"
++            )
++        executable = _admitted_python_executable(python_executable)
++        proposal = prepare_process_proposal(
++            workspace=workspace,
++            argv=[
++                executable,
++                "-I",
++                "-c",
++                spec.source,
++                run_id,
++                output_path,
++                spec.input_json,
++            ],
++            limits=ProcessLimits(
++                timeout_seconds=30.0,
++                max_stdout_bytes=MAX_RESULT_BYTES,
++                max_stderr_bytes=65_536,
++            ),
++            summary="Execute one exact M4.3.2 inline Python JSON experiment.",
++        )
++        binding = RunExecutionBinding.create(run=run_snapshot.run, proposal=proposal)
++        self._m3.record_proposal(m3_session_id, proposal)
++        self._executions.register_binding(
++            binding,
++            m3_session_id=m3_session_id,
++        )
++        return PreparedPythonJsonRun(
++            run=run_snapshot.run,
++            manifest_digest=recovery.manifest.manifest_digest,
++            m3_session_id=m3_session_id,
++            output_logical_path=output_path,
++            spec=spec,
++            binding=binding,
++        )
++
++    def execute_authorized(
++        self,
++        prepared: PreparedPythonJsonRun,
++        *,
++        receipt: AuthorizationReceipt,
++    ) -> GovernedPythonRunResult:
++        if not isinstance(prepared, PreparedPythonJsonRun):
++            raise TypeError("prepared must be a PreparedPythonJsonRun")
++        if not isinstance(receipt, AuthorizationReceipt):
++            raise TypeError("receipt must be an AuthorizationReceipt")
++        authority = LocalApprovalAuthority(
++            consumption_registry=DurableAuthorizationConsumptionRegistry(
++                self._m3,
++                session_id=prepared.m3_session_id,
++            )
++        )
++        authority.verify_authorization(
++            prepared.proposal,
++            receipt,
++            mode=receipt.mode,
++        )
++        self._m3.record_authorization(prepared.m3_session_id, receipt)
++        authorization = RunExecutionAuthorization.create(
++            binding=prepared.binding,
++            receipt=receipt,
++        )
++        self._executions.register_authorization(authorization)
++
++        output = Path(prepared.proposal.workspace_root) / PurePosixPath(
++            prepared.output_logical_path
++        )
++        if os.path.lexists(output):
++            raise EvidenceBindingError(
++                "M4.3.2 output appeared before one-shot execution consumption"
++            )
++
++        lifecycle = ActionLifecycle(prepared.proposal, receipt.mode)
++        lifecycle.apply_receipt(receipt, authority=authority)
++        observation = ProcessExecutor().execute(lifecycle, authority=authority)
++        self._m3.record_execution(
++            prepared.m3_session_id,
++            proposal=prepared.proposal,
++            receipt=receipt,
++            execution_id=observation.execution_id,
++        )
++        self._m3.record_observation(
++            prepared.m3_session_id,
++            proposal=prepared.proposal,
++            execution_id=observation.execution_id,
++            observation_id=observation.observation_id,
++            observation_digest=observation.observation_digest,
++        )
++        execution_evidence = RunExecutionEvidence.create(
++            binding=prepared.binding,
++            authorization=authorization,
++            observation=observation,
++        )
++        execution = self._executions.register_evidence(execution_evidence)
++        if (
++            observation.termination_reason is not ProcessTerminationReason.EXITED
++            or observation.exit_code != 0
++        ):
++            return GovernedPythonRunResult(execution=execution, physical=None)
++        physical = self._physical.finalize(prepared.run.run_id)
++        return GovernedPythonRunResult(execution=execution, physical=physical)
