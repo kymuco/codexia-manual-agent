@@ -4,6 +4,7 @@ import json
 import sqlite3
 from typing import Any, Mapping
 
+from codexia_manual_agent.authority.models import ActionProposal
 from codexia_manual_agent.session_events.models import (
     EventKind,
     SessionEventIntegrityError,
@@ -97,6 +98,76 @@ class SqliteSessionEventStore(_BaseSqliteSessionEventStore):
                 )
             self._validate_consumed_row_event(row, event)
             return True
+
+    def record_observation(
+        self,
+        session_id: str,
+        *,
+        proposal: ActionProposal,
+        execution_id: str,
+        observation_id: str,
+        observation_digest: str | None = None,
+    ) -> SessionEventReceipt:
+        """Record an action observation, optionally binding its exact M2 digest.
+
+        The legacy M3.1 shape without ``observation_digest`` remains readable and
+        writable for compatibility. M4.3 execution evidence deliberately requires
+        the digest-bound shape and will fail closed on a legacy observation.
+        """
+
+        if observation_digest is None:
+            return super().record_observation(
+                session_id,
+                proposal=proposal,
+                execution_id=execution_id,
+                observation_id=observation_id,
+            )
+        if not isinstance(proposal, ActionProposal):
+            raise TypeError("proposal must be an ActionProposal")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_open_session(connection, session_id)
+            self._validate_session_consumption_integrity(connection, session_id)
+            recorded_proposal = self._find_recorded_proposal(
+                connection,
+                session_id=session_id,
+                proposal_id=proposal.proposal_id,
+                proposal_digest=proposal.proposal_digest,
+            )
+            if recorded_proposal.to_dict() != proposal.to_dict():
+                raise SessionEventStateError(
+                    "Observation proposal differs from durable proposal"
+                )
+            execution = self._find_execution(
+                connection,
+                session_id=session_id,
+                proposal_id=proposal.proposal_id,
+            )
+            if (
+                execution["proposal_digest"] != proposal.proposal_digest
+                or execution["execution_id"] != execution_id
+            ):
+                raise SessionEventStateError(
+                    "Observation is not bound to the exact execution"
+                )
+            if self._observation_for_proposal_exists(
+                connection,
+                session_id,
+                proposal.proposal_id,
+            ):
+                raise SessionEventStateError("Action observation was already recorded")
+            return self._append_in_transaction(
+                connection,
+                session_id=session_id,
+                kind=EventKind.ACTION_OBSERVED,
+                payload={
+                    "proposal_id": proposal.proposal_id,
+                    "proposal_digest": proposal.proposal_digest,
+                    "execution_id": execution_id,
+                    "observation_id": observation_id,
+                    "observation_digest": observation_digest,
+                },
+            )
 
     def _read_snapshot(
         self,
