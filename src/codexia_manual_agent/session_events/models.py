@@ -439,15 +439,21 @@ def validate_event_payload(kind: EventKind | str, payload: Mapping[str, Any]) ->
         _non_empty_text(payload["execution_id"], "execution_id")
 
     elif normalized_kind is EventKind.ACTION_OBSERVED:
-        _exact_keys(
-            payload,
-            {"proposal_id", "proposal_digest", "execution_id", "observation_id"},
-            normalized_kind,
+        legacy_keys = frozenset(
+            {"proposal_id", "proposal_digest", "execution_id", "observation_id"}
         )
+        digest_bound_keys = frozenset((*legacy_keys, "observation_digest"))
+        actual_keys = frozenset(payload)
+        if actual_keys not in {legacy_keys, digest_bound_keys}:
+            raise SessionEventIntegrityError(
+                "action_observed payload keys mismatch; expected legacy or digest-bound observation"
+            )
         _validate_uuid(payload["proposal_id"], "proposal_id")
         _validate_digest(payload["proposal_digest"], "proposal_digest")
         _non_empty_text(payload["execution_id"], "execution_id")
         _non_empty_text(payload["observation_id"], "observation_id")
+        if "observation_digest" in payload:
+            _validate_digest(payload["observation_digest"], "observation_digest")
 
     frozen = _freeze_json(payload)
     encoded = canonical_json(frozen).encode("utf-8")
