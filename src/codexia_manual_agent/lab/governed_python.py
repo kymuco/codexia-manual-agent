@@ -134,6 +134,14 @@ def _logical_output_path(run_id: str) -> str:
     return f".codexia/m4-runs/{run_id}/result.json"
 
 
+def _artifact_id(run_id: str) -> str:
+    return str(uuid5(UUID(run_id), "codexia:m4.3.2:artifact:result.json"))
+
+
+def _metric_id(run_id: str, metric_name: str) -> str:
+    return str(uuid5(UUID(run_id), f"codexia:m4.3.2:metric:{metric_name}"))
+
+
 def _validate_metric_name(value: Any) -> str:
     if not isinstance(value, str) or _NAME_RE.fullmatch(value) is None:
         raise InvalidLabRecordError("M4.3.2 metric name is invalid")
@@ -346,6 +354,14 @@ class PhysicalEvidenceReceipt:
             self.metric, MetricRecord
         ):
             raise InvalidLabRecordError("Physical evidence contains invalid M4 records")
+        if (
+            self.artifact.artifact_id != _artifact_id(self.run_id)
+            or self.metric.metric_id != _metric_id(self.run_id, self.metric.name)
+            or self.artifact.media_type != "application/json"
+        ):
+            raise EvidenceBindingError(
+                "Physical evidence artifact/metric identities are not deterministic"
+            )
         if (
             self.artifact.run_id != self.run_id
             or self.metric.run_id != self.run_id
@@ -754,9 +770,7 @@ class SqlitePhysicalEvidenceRegistry:
             size_bytes=snapshot.size_bytes,
             sha256_digest=snapshot.sha256,
             media_type="application/json",
-            artifact_id=str(
-                uuid5(UUID(run_id), "codexia:m4.3.2:artifact:result.json")
-            ),
+            artifact_id=_artifact_id(run_id),
             created_at=created_at,
         )
         metric = MetricRecord.create(
@@ -764,9 +778,7 @@ class SqlitePhysicalEvidenceRegistry:
             name=spec.metric_name,
             value=metric_value,
             unit=spec.metric_unit,
-            metric_id=str(
-                uuid5(UUID(run_id), f"codexia:m4.3.2:metric:{spec.metric_name}")
-            ),
+            metric_id=_metric_id(run_id, spec.metric_name),
             created_at=created_at,
         )
         self._ensure_artifact(artifact)
@@ -937,9 +949,21 @@ class SqlitePhysicalEvidenceRegistry:
             )
         recovery = self._lab.recover_for_run(receipt.run_id)
         run = recovery.run(receipt.run_id)
+        spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
         if run.run.to_dict() != execution.binding.run.to_dict():
             raise EvidenceBindingError(
                 "Physical evidence run disagrees with execution binding"
+            )
+        if (
+            receipt.artifact.artifact_id != _artifact_id(receipt.run_id)
+            or receipt.metric.metric_id
+            != _metric_id(receipt.run_id, spec.metric_name)
+            or receipt.artifact.media_type != "application/json"
+            or receipt.metric.name != spec.metric_name
+            or receipt.metric.unit != spec.metric_unit
+        ):
+            raise EvidenceBindingError(
+                "Physical evidence record identity differs from the manifest-declared output/metric"
             )
         artifact = run.artifacts.get(receipt.artifact.artifact_id)
         metric = run.metrics.get(receipt.metric.metric_id)
@@ -962,7 +986,6 @@ class SqlitePhysicalEvidenceRegistry:
                 raise EvidenceBindingError(
                     "Physical output bytes changed or no longer match exact observed stdout"
                 )
-            spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
             value = _extract_metric(snapshot, run_id=receipt.run_id, spec=spec)
             if value != receipt.metric.value:
                 raise EvidenceBindingError(
