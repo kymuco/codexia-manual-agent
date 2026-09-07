@@ -4,24 +4,29 @@ import json
 import os
 import tempfile
 import unittest
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from codexia_manual_agent.authority import ApprovalMode, LocalApprovalAuthority
 from codexia_manual_agent.lab import (
+    ArtifactRecord,
     EvidenceBindingError,
     ExperimentManifest,
     ExperimentRun,
     GovernedPythonJsonRunner,
     Hypothesis,
     LabPersistenceIntegrityError,
+    MetricRecord,
+    PhysicalEvidenceReceipt,
     PYTHON_JSON_PROFILE,
     RunExecutionPhase,
     SqliteLabRegistry,
     SqlitePhysicalEvidenceRegistry,
     SqliteRunExecutionRegistry,
 )
+from codexia_manual_agent.lab.governed_python import PhysicalOutputSnapshot
 from codexia_manual_agent.session_events import (
     ActionRecoveryState,
     SqliteSessionEventStore,
@@ -262,6 +267,63 @@ class GovernedPythonRunnerTests(unittest.TestCase):
         snapshot = self.lab.recover_for_run(run.run_id).run(run.run_id)
         self.assertFalse(snapshot.metrics)
         self.assertFalse(snapshot.artifacts)
+
+    def test_equal_numeric_value_with_different_json_type_cannot_be_published(self) -> None:
+        run = self._register()
+        prepared = self._prepare(run)
+        with patch.object(
+            self.physical,
+            "finalize",
+            side_effect=RuntimeError("leave exact observed result unfinalized"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.runner.execute_authorized(
+                    prepared,
+                    receipt=self._approve(prepared),
+                )
+
+        execution = self.executions.recover(run.run_id)
+        assert execution.evidence is not None
+        output = self.root / prepared.output_logical_path
+        data = output.read_bytes()
+        output_digest = sha256(data).hexdigest()
+        created_at = execution.evidence.created_at
+        artifact = ArtifactRecord.create(
+            run=run,
+            logical_path=prepared.output_logical_path,
+            size_bytes=len(data),
+            sha256_digest=output_digest,
+            media_type="application/json",
+            artifact_id=str(
+                uuid5(UUID(run.run_id), "codexia:m4.3.2:artifact:result.json")
+            ),
+            created_at=created_at,
+        )
+        rebound_metric = MetricRecord.create(
+            run=run,
+            name="score",
+            value=6.0,
+            unit="points",
+            metric_id=str(uuid5(UUID(run.run_id), "codexia:m4.3.2:metric:score")),
+            created_at=created_at,
+        )
+        self.lab.register_artifact(artifact)
+        self.lab.register_metric(rebound_metric)
+        forged = PhysicalEvidenceReceipt.create(
+            run=run,
+            execution_evidence=execution.evidence,
+            snapshot=PhysicalOutputSnapshot(
+                logical_path=prepared.output_logical_path,
+                size_bytes=len(data),
+                sha256=output_digest,
+                data=data,
+            ),
+            artifact=artifact,
+            metric=rebound_metric,
+        )
+
+        with self.assertRaises(EvidenceBindingError):
+            self.physical.publish(forged)
 
     def test_crash_after_observation_can_finalize_without_reexecution(self) -> None:
         run = self._register()
