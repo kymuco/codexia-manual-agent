@@ -17,6 +17,7 @@ from codexia_manual_agent.lab import (
     ExperimentRun,
     GovernedPythonJsonRunner,
     Hypothesis,
+    InvalidLabRecordError,
     LabPersistenceIntegrityError,
     MetricRecord,
     PhysicalEvidenceReceipt,
@@ -202,6 +203,22 @@ class GovernedPythonRunnerTests(unittest.TestCase):
         recovered = self._fresh_physical().recover(run.run_id)
         self.assertEqual(recovered.metric.value, 6)
         self.assertEqual(output.stat().st_mtime_ns, before)
+
+    def test_python_profile_rejects_alternate_executable_before_proposal(self) -> None:
+        run = self._register()
+        session_id = self._session()
+        alternate = self.root / "not-the-running-python"
+        alternate.write_text("not an interpreter", encoding="utf-8")
+
+        with self.assertRaises(InvalidLabRecordError):
+            self.runner.prepare(
+                run_id=run.run_id,
+                m3_session_id=session_id,
+                workspace=self.root,
+                python_executable=alternate,
+            )
+
+        self.assertFalse(self.m3.recover(session_id).actions)
 
     def test_preexisting_output_blocks_before_receipt_consumption(self) -> None:
         run = self._register()
