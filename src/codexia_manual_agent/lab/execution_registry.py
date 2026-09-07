@@ -31,6 +31,13 @@ from codexia_manual_agent.lab.execution_evidence import (
     run_execution_evidence_from_dict,
 )
 from codexia_manual_agent.lab.registry import RegisteredRunSnapshot, SqliteLabRegistry
+from codexia_manual_agent.session_events import (
+    ActionRecoveryState,
+    EventKind,
+    SessionEventError,
+    SqliteSessionEventStore,
+)
+from codexia_manual_agent.session_events.recovery import RecoveredAction, SessionRecovery
 
 
 RUN_EXECUTION_EVENT_SCHEMA_VERSION = 1
@@ -185,20 +192,42 @@ def _exact_keys(value: Any, expected: set[str], label: str) -> Mapping[str, Any]
     return value
 
 
+def _validate_m3_anchor(value: Any) -> Mapping[str, Any]:
+    anchor = _exact_keys(
+        value,
+        {"session_id", "event_id", "event_digest"},
+        "m3 observation anchor",
+    )
+    _validate_uuid(anchor["session_id"], "m3 anchor session_id")
+    _validate_uuid(anchor["event_id"], "m3 anchor event_id")
+    _validate_digest(anchor["event_digest"], "m3 anchor event_digest")
+    return anchor
+
+
 def _validate_payload(
     kind: RunExecutionEventKind | str,
     payload: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     normalized = _normalize_kind(kind)
     if normalized is RunExecutionEventKind.BINDING_REGISTERED:
-        value = _exact_keys(payload, {"binding"}, normalized.value)
+        value = _exact_keys(
+            payload,
+            {"binding", "m3_session_id"},
+            normalized.value,
+        )
         run_execution_binding_from_dict(value["binding"])
+        _validate_uuid(value["m3_session_id"], "m3_session_id")
     elif normalized is RunExecutionEventKind.AUTHORIZATION_REGISTERED:
         value = _exact_keys(payload, {"authorization"}, normalized.value)
         run_execution_authorization_from_dict(value["authorization"])
     elif normalized is RunExecutionEventKind.EVIDENCE_REGISTERED:
-        value = _exact_keys(payload, {"evidence"}, normalized.value)
+        value = _exact_keys(
+            payload,
+            {"evidence", "m3_observation_anchor"},
+            normalized.value,
+        )
         run_execution_evidence_from_dict(value["evidence"])
+        _validate_m3_anchor(value["m3_observation_anchor"])
     else:  # pragma: no cover - enum exhaustiveness
         raise InvalidLabRecordError("Unknown M4.3.1 run execution event kind")
     if len(_canonical_json(payload).encode("utf-8")) > MAX_RUN_EXECUTION_EVENT_PAYLOAD_BYTES:
@@ -309,16 +338,22 @@ class RunExecutionEventReceipt:
 @dataclass(slots=True)
 class _ReplayState:
     binding: RunExecutionBinding
+    m3_session_id: str
     authorization: RunExecutionAuthorization | None = None
     evidence: RunExecutionEvidence | None = None
+    m3_observation_event_id: str | None = None
+    m3_observation_event_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class RunExecutionRecovery:
     run: RegisteredRunSnapshot
     binding: RunExecutionBinding
+    m3_session_id: str
     authorization: RunExecutionAuthorization | None
     evidence: RunExecutionEvidence | None
+    m3_observation_event_id: str | None
+    m3_observation_event_digest: str | None
     events: tuple[RunExecutionEventReceipt, ...]
 
     @property
@@ -348,7 +383,10 @@ def _apply_event(
         binding = run_execution_binding_from_dict(value["binding"])
         if binding.run.to_dict() != run.run.to_dict():
             raise EvidenceBindingError("Execution binding does not bind the exact durable M4 run")
-        return _ReplayState(binding=binding)
+        return _ReplayState(
+            binding=binding,
+            m3_session_id=_validate_uuid(value["m3_session_id"], "m3_session_id"),
+        )
     if state is None:
         raise LabRegistryStateError("Run execution chronology must start with binding_registered")
 
@@ -404,7 +442,12 @@ def _apply_event(
             raise EvidenceBindingError(
                 "Execution evidence does not bind the exact durable run/authorization chain"
             )
+        anchor = _validate_m3_anchor(value["m3_observation_anchor"])
+        if anchor["session_id"] != state.m3_session_id:
+            raise EvidenceBindingError("M3 observation anchor belongs to another session")
         state.evidence = evidence
+        state.m3_observation_event_id = str(anchor["event_id"])
+        state.m3_observation_event_digest = str(anchor["event_digest"])
         return state
 
     raise InvalidLabRecordError("Unknown M4.3.1 run execution event kind")
@@ -474,14 +517,166 @@ def _validate_temporal_chain(
         )
 
 
-class SqliteRunExecutionRegistry:
-    """Append-only M4.3.1 execution lineage in the same SQLite trust domain as M4.2."""
+def _exact_m3_action(recovery: SessionRecovery, proposal: Any) -> RecoveredAction:
+    matches = [
+        action
+        for action in recovery.actions
+        if action.proposal.proposal_id == proposal.proposal_id
+    ]
+    if len(matches) != 1 or matches[0].proposal.to_dict() != proposal.to_dict():
+        raise EvidenceBindingError(
+            "M4.3.1 requires one exact durable M3 action proposal for the bound process"
+        )
+    return matches[0]
 
-    def __init__(self, lab_registry: SqliteLabRegistry) -> None:
+
+def _recover_m3(
+    store: SqliteSessionEventStore,
+    session_id: str,
+) -> SessionRecovery:
+    try:
+        return store.recover(session_id)
+    except SessionEventError as exc:
+        raise EvidenceBindingError(
+            "M4.3.1 could not validate the authoritative M3 action chronology"
+        ) from exc
+
+
+def _require_m3_binding_candidate(
+    store: SqliteSessionEventStore,
+    *,
+    session_id: str,
+    binding: RunExecutionBinding,
+) -> None:
+    action = _exact_m3_action(_recover_m3(store, session_id), binding.proposal)
+    if action.state is not ActionRecoveryState.PROPOSED:
+        raise EvidenceBindingError(
+            "M4 execution binding must be registered while the exact M3 action is only PROPOSED"
+        )
+
+
+def _require_m3_authorization_candidate(
+    store: SqliteSessionEventStore,
+    *,
+    session_id: str,
+    binding: RunExecutionBinding,
+    authorization: RunExecutionAuthorization,
+) -> None:
+    action = _exact_m3_action(_recover_m3(store, session_id), binding.proposal)
+    if (
+        action.state is not ActionRecoveryState.AUTHORIZED_UNCONSUMED
+        or action.receipt is None
+        or action.receipt.to_dict() != authorization.receipt.to_dict()
+    ):
+        raise EvidenceBindingError(
+            "M4 authorization requires the exact M3 ALLOW receipt before one-shot consumption"
+        )
+
+
+def _m3_observation_anchor(
+    store: SqliteSessionEventStore,
+    *,
+    session_id: str,
+    binding: RunExecutionBinding,
+    authorization: RunExecutionAuthorization,
+    evidence: RunExecutionEvidence,
+) -> dict[str, str]:
+    recovery = _recover_m3(store, session_id)
+    action = _exact_m3_action(recovery, binding.proposal)
+    observation = evidence.observation
+    if (
+        action.state is not ActionRecoveryState.OBSERVED
+        or action.receipt is None
+        or action.receipt.to_dict() != authorization.receipt.to_dict()
+        or action.execution_id != observation.execution_id
+        or action.observation_id != observation.observation_id
+    ):
+        raise EvidenceBindingError(
+            "M4 evidence does not match the exact terminal M3 action chronology"
+        )
+    matches = [
+        event
+        for event in recovery.events
+        if event.kind is EventKind.ACTION_OBSERVED
+        and event.payload.get("proposal_id") == binding.proposal.proposal_id
+    ]
+    if len(matches) != 1:
+        raise EvidenceBindingError(
+            "M4 evidence requires one exact authoritative M3 observation event"
+        )
+    event = matches[0]
+    payload = event.payload
+    if (
+        payload.get("proposal_digest") != binding.proposal.proposal_digest
+        or payload.get("execution_id") != observation.execution_id
+        or payload.get("observation_id") != observation.observation_id
+        or payload.get("observation_digest") != observation.observation_digest
+    ):
+        raise EvidenceBindingError(
+            "M4 evidence requires the digest-bound M3 observation emitted for this exact execution"
+        )
+    return {
+        "session_id": session_id,
+        "event_id": event.event_id,
+        "event_digest": event.event_digest,
+    }
+
+
+def _revalidate_m3_history(
+    store: SqliteSessionEventStore,
+    state: _ReplayState,
+) -> None:
+    recovery = _recover_m3(store, state.m3_session_id)
+    action = _exact_m3_action(recovery, state.binding.proposal)
+    if state.authorization is not None:
+        if action.receipt is None or action.receipt.to_dict() != state.authorization.receipt.to_dict():
+            raise EvidenceBindingError(
+                "Persisted M4 authorization no longer matches the exact M3 receipt"
+            )
+    if state.evidence is None:
+        return
+    if action.state is not ActionRecoveryState.OBSERVED:
+        raise EvidenceBindingError(
+            "Persisted M4 execution evidence lacks terminal M3 observation provenance"
+        )
+    anchor = _m3_observation_anchor(
+        store,
+        session_id=state.m3_session_id,
+        binding=state.binding,
+        authorization=state.authorization,
+        evidence=state.evidence,
+    )
+    if (
+        anchor["event_id"] != state.m3_observation_event_id
+        or not hmac.compare_digest(
+            anchor["event_digest"],
+            state.m3_observation_event_digest or "",
+        )
+    ):
+        raise EvidenceBindingError(
+            "Persisted M4 observation anchor no longer matches authoritative M3"
+        )
+
+
+class SqliteRunExecutionRegistry:
+    """Append-only M4.3.1 execution lineage backed by authoritative M3 provenance."""
+
+    def __init__(
+        self,
+        lab_registry: SqliteLabRegistry,
+        session_event_store: SqliteSessionEventStore,
+    ) -> None:
         if not isinstance(lab_registry, SqliteLabRegistry):
             raise TypeError("lab_registry must be a SqliteLabRegistry")
+        if not isinstance(session_event_store, SqliteSessionEventStore):
+            raise TypeError("session_event_store must be a SqliteSessionEventStore")
         self._lab_registry = lab_registry
         self._database_path = lab_registry.database_path
+        self._session_event_store = session_event_store
+        if self._database_path.resolve() != session_event_store.path.resolve():
+            raise ValueError(
+                "M4.3.1 requires M3 and M4 registries to share one SQLite trust domain"
+            )
         self._initialize()
 
     @property
@@ -581,9 +776,15 @@ class SqliteRunExecutionRegistry:
             raise InvalidLabRecordError("Unknown durable run execution binding")
         return _validate_uuid(exact, "execution root run_id")
 
-    def register_binding(self, binding: RunExecutionBinding) -> RunExecutionRecovery:
+    def register_binding(
+        self,
+        binding: RunExecutionBinding,
+        *,
+        m3_session_id: str,
+    ) -> RunExecutionRecovery:
         if not isinstance(binding, RunExecutionBinding):
             raise TypeError("binding must be a RunExecutionBinding")
+        _validate_uuid(m3_session_id, "m3_session_id")
         with self._sqlite_connection() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
@@ -592,6 +793,11 @@ class SqliteRunExecutionRegistry:
                     raise EvidenceBindingError(
                         "Execution binding does not bind the exact durable M4 run"
                     )
+                _require_m3_binding_candidate(
+                    self._session_event_store,
+                    session_id=m3_session_id,
+                    binding=binding,
+                )
                 if connection.execute(
                     "SELECT 1 FROM lab_run_execution_roots WHERE run_id = ?",
                     (binding.run.run_id,),
@@ -610,7 +816,10 @@ class SqliteRunExecutionRegistry:
                     run_id=binding.run.run_id,
                     sequence=0,
                     kind=RunExecutionEventKind.BINDING_REGISTERED,
-                    payload={"binding": binding.to_dict()},
+                    payload={
+                        "binding": binding.to_dict(),
+                        "m3_session_id": m3_session_id,
+                    },
                     previous_event_digest=None,
                 )
                 state = _apply_event(None, receipt.kind, receipt.payload, run=run)
@@ -651,6 +860,12 @@ class SqliteRunExecutionRegistry:
                 run_id = self._binding_root(connection, authorization.binding_id)
                 run = self._durable_run(run_id, require_open=True)
                 state, events = self._load(connection, run_id, run=run)
+                _require_m3_authorization_candidate(
+                    self._session_event_store,
+                    session_id=state.m3_session_id,
+                    binding=state.binding,
+                    authorization=authorization,
+                )
                 recovery = self._append_loaded(
                     connection,
                     run=run,
@@ -674,13 +889,27 @@ class SqliteRunExecutionRegistry:
                 connection.execute("BEGIN IMMEDIATE")
                 run = self._durable_run(evidence.run_id, require_open=True)
                 state, events = self._load(connection, evidence.run_id, run=run)
+                if state.authorization is None:
+                    raise LabRegistryStateError(
+                        "Execution evidence requires a durable authorization event first"
+                    )
+                anchor = _m3_observation_anchor(
+                    self._session_event_store,
+                    session_id=state.m3_session_id,
+                    binding=state.binding,
+                    authorization=state.authorization,
+                    evidence=evidence,
+                )
                 recovery = self._append_loaded(
                     connection,
                     run=run,
                     state=state,
                     events=events,
                     kind=RunExecutionEventKind.EVIDENCE_REGISTERED,
-                    payload={"evidence": evidence.to_dict()},
+                    payload={
+                        "evidence": evidence.to_dict(),
+                        "m3_observation_anchor": anchor,
+                    },
                 )
                 connection.execute("COMMIT")
                 return recovery
@@ -705,6 +934,12 @@ class SqliteRunExecutionRegistry:
                         "Execution chronology references a missing durable M4 run"
                     ) from exc
                 state, events = self._load(connection, run_id, run=run)
+                try:
+                    _revalidate_m3_history(self._session_event_store, state)
+                except LabError as exc:
+                    raise LabPersistenceIntegrityError(
+                        "Persisted M4 execution chronology disagrees with authoritative M3 provenance"
+                    ) from exc
                 connection.execute("COMMIT")
                 return self._public(run, state, events)
             except Exception:
@@ -923,7 +1158,10 @@ class SqliteRunExecutionRegistry:
         return RunExecutionRecovery(
             run=run,
             binding=state.binding,
+            m3_session_id=state.m3_session_id,
             authorization=state.authorization,
             evidence=state.evidence,
+            m3_observation_event_id=state.m3_observation_event_id,
+            m3_observation_event_digest=state.m3_observation_event_digest,
             events=events,
         )
