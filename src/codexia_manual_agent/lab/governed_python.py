@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import math
@@ -12,12 +13,20 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
-from types import MappingProxyType
 from typing import Any, Mapping
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
-from codexia_manual_agent.authority import ActionLifecycle, AuthorizationReceipt, LocalApprovalAuthority
-from codexia_manual_agent.execution import ProcessExecutor, ProcessTerminationReason, prepare_process_proposal
+from codexia_manual_agent.authority import (
+    ActionLifecycle,
+    AuthorizationReceipt,
+    LocalApprovalAuthority,
+)
+from codexia_manual_agent.execution import (
+    ProcessExecutor,
+    ProcessLimits,
+    ProcessTerminationReason,
+    prepare_process_proposal,
+)
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
     InvalidLabRecordError,
@@ -36,7 +45,12 @@ from codexia_manual_agent.lab.execution_registry import (
     RunExecutionRecovery,
     SqliteRunExecutionRegistry,
 )
-from codexia_manual_agent.lab.models import ArtifactRecord, ExperimentManifest, ExperimentRun, MetricRecord
+from codexia_manual_agent.lab.models import (
+    ArtifactRecord,
+    ExperimentManifest,
+    ExperimentRun,
+    MetricRecord,
+)
 from codexia_manual_agent.lab.registry import RegisteredRunSnapshot, SqliteLabRegistry
 from codexia_manual_agent.session_events import (
     DurableAuthorizationConsumptionRegistry,
@@ -76,7 +90,9 @@ def _canonical_json(value: Any) -> str:
             allow_nan=False,
         )
     except (TypeError, ValueError, RecursionError) as exc:
-        raise InvalidLabRecordError("M4.3.2 value is not canonical JSON-compatible data") from exc
+        raise InvalidLabRecordError(
+            "M4.3.2 value is not canonical JSON-compatible data"
+        ) from exc
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -107,7 +123,8 @@ def _exact_keys(value: Any, expected: set[str], label: str) -> Mapping[str, Any]
     actual = set(value)
     if actual != expected:
         raise InvalidLabRecordError(
-            f"{label} keys mismatch; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+            f"{label} keys mismatch; missing={sorted(expected - actual)}, "
+            f"extra={sorted(actual - expected)}"
         )
     return value
 
@@ -126,7 +143,13 @@ def _validate_metric_name(value: Any) -> str:
 def _validate_unit(value: Any) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 128 or "\x00" in value:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 128
+        or "\x00" in value
+    ):
         raise InvalidLabRecordError("M4.3.2 metric unit is invalid")
     return value
 
@@ -173,7 +196,9 @@ class PythonJsonExperimentSpec:
             "M4.3.2 manifest parameters",
         )
         if params["profile"] != PYTHON_JSON_PROFILE:
-            raise InvalidLabRecordError("Manifest does not use the admitted M4.3.2 Python profile")
+            raise InvalidLabRecordError(
+                "Manifest does not use the admitted M4.3.2 Python profile"
+            )
         source = params["source"]
         if (
             not isinstance(source, str)
@@ -182,11 +207,17 @@ class PythonJsonExperimentSpec:
             or len(source) > MAX_INLINE_SOURCE_CHARS
             or len(source.encode("utf-8")) > MAX_INLINE_SOURCE_BYTES
         ):
-            raise InvalidLabRecordError("Inline Python source is empty or exceeds the M4.3.2 budget")
+            raise InvalidLabRecordError(
+                "Inline Python source is empty or exceeds the M4.3.2 budget"
+            )
         input_json = _canonical_json(params["input"])
         if len(input_json) > MAX_INPUT_JSON_CHARS:
             raise InvalidLabRecordError("Manifest input exceeds the M4.3.2 argv budget")
-        metric = _exact_keys(params["metric"], {"name", "unit"}, "M4.3.2 metric declaration")
+        metric = _exact_keys(
+            params["metric"],
+            {"name", "unit"},
+            "M4.3.2 metric declaration",
+        )
         name = _validate_metric_name(metric["name"])
         unit = _validate_unit(metric["unit"])
         return cls(
@@ -230,6 +261,7 @@ class PhysicalEvidenceReceipt:
     manifest_digest: str
     execution_evidence_digest: str
     observation_digest: str
+    stdout_sha256: str
     output_logical_path: str
     output_size_bytes: int
     output_sha256: str
@@ -256,6 +288,7 @@ class PhysicalEvidenceReceipt:
             "manifest_digest": run.manifest_digest,
             "execution_evidence_digest": execution_evidence.evidence_digest,
             "observation_digest": execution_evidence.observation.observation_digest,
+            "stdout_sha256": execution_evidence.observation.stdout.sha256,
             "output_logical_path": snapshot.logical_path,
             "output_size_bytes": snapshot.size_bytes,
             "output_sha256": snapshot.sha256,
@@ -270,6 +303,7 @@ class PhysicalEvidenceReceipt:
             manifest_digest=run.manifest_digest,
             execution_evidence_digest=execution_evidence.evidence_digest,
             observation_digest=execution_evidence.observation.observation_digest,
+            stdout_sha256=execution_evidence.observation.stdout.sha256,
             output_logical_path=snapshot.logical_path,
             output_size_bytes=snapshot.size_bytes,
             output_sha256=snapshot.sha256,
@@ -283,35 +317,60 @@ class PhysicalEvidenceReceipt:
             raise InvalidLabRecordError("Unsupported M4.3.2 physical evidence schema")
         _validate_uuid(self.receipt_id, "receipt_id")
         _validate_uuid(self.run_id, "run_id")
+        if self.receipt_id != str(
+            uuid5(UUID(self.run_id), "codexia:m4.3.2:physical-evidence")
+        ):
+            raise EvidenceBindingError(
+                "Physical evidence receipt id is not run-deterministic"
+            )
         for name in (
             "run_digest",
             "manifest_digest",
             "execution_evidence_digest",
             "observation_digest",
+            "stdout_sha256",
             "output_sha256",
             "receipt_digest",
         ):
             _validate_digest(getattr(self, name), name)
         if self.output_logical_path != _logical_output_path(self.run_id):
-            raise EvidenceBindingError("Physical evidence output path is not the deterministic run path")
-        if type(self.output_size_bytes) is not int or not 0 <= self.output_size_bytes <= MAX_RESULT_BYTES:
+            raise EvidenceBindingError(
+                "Physical evidence output path is not the deterministic run path"
+            )
+        if (
+            type(self.output_size_bytes) is not int
+            or not 0 <= self.output_size_bytes <= MAX_RESULT_BYTES
+        ):
             raise InvalidLabRecordError("Physical evidence output size is invalid")
-        if not isinstance(self.artifact, ArtifactRecord) or not isinstance(self.metric, MetricRecord):
+        if not isinstance(self.artifact, ArtifactRecord) or not isinstance(
+            self.metric, MetricRecord
+        ):
             raise InvalidLabRecordError("Physical evidence contains invalid M4 records")
         if (
             self.artifact.run_id != self.run_id
             or self.metric.run_id != self.run_id
             or not hmac.compare_digest(self.artifact.run_digest, self.run_digest)
             or not hmac.compare_digest(self.metric.run_digest, self.run_digest)
-            or not hmac.compare_digest(self.artifact.manifest_digest, self.manifest_digest)
-            or not hmac.compare_digest(self.metric.manifest_digest, self.manifest_digest)
+            or not hmac.compare_digest(
+                self.artifact.manifest_digest,
+                self.manifest_digest,
+            )
+            or not hmac.compare_digest(
+                self.metric.manifest_digest,
+                self.manifest_digest,
+            )
             or self.artifact.logical_path != self.output_logical_path
             or self.artifact.size_bytes != self.output_size_bytes
             or not hmac.compare_digest(self.artifact.sha256, self.output_sha256)
+            or not hmac.compare_digest(self.stdout_sha256, self.output_sha256)
         ):
-            raise EvidenceBindingError("Physical evidence records do not bind the exact run/output")
+            raise EvidenceBindingError(
+                "Physical evidence records do not bind the exact observed output bytes"
+            )
         if not hmac.compare_digest(_digest(self._payload()), self.receipt_digest):
-            raise InvalidLabRecordError("Physical evidence receipt digest does not match payload")
+            raise InvalidLabRecordError(
+                "Physical evidence receipt digest does not match payload"
+            )
 
     def _payload(self) -> dict[str, Any]:
         return {
@@ -322,6 +381,7 @@ class PhysicalEvidenceReceipt:
             "manifest_digest": self.manifest_digest,
             "execution_evidence_digest": self.execution_evidence_digest,
             "observation_digest": self.observation_digest,
+            "stdout_sha256": self.stdout_sha256,
             "output_logical_path": self.output_logical_path,
             "output_size_bytes": self.output_size_bytes,
             "output_sha256": self.output_sha256,
@@ -337,17 +397,31 @@ def _artifact_from_dict(value: Any) -> ArtifactRecord:
     data = _exact_keys(
         value,
         {
-            "schema_version", "artifact_id", "created_at", "run_id", "run_digest",
-            "manifest_digest", "logical_path", "size_bytes", "sha256", "media_type",
+            "schema_version",
+            "artifact_id",
+            "created_at",
+            "run_id",
+            "run_digest",
+            "manifest_digest",
+            "logical_path",
+            "size_bytes",
+            "sha256",
+            "media_type",
             "artifact_digest",
         },
         "physical evidence artifact",
     )
     return ArtifactRecord(
-        schema_version=data["schema_version"], artifact_id=data["artifact_id"],
-        created_at=data["created_at"], run_id=data["run_id"], run_digest=data["run_digest"],
-        manifest_digest=data["manifest_digest"], logical_path=data["logical_path"],
-        size_bytes=data["size_bytes"], sha256=data["sha256"], media_type=data["media_type"],
+        schema_version=data["schema_version"],
+        artifact_id=data["artifact_id"],
+        created_at=data["created_at"],
+        run_id=data["run_id"],
+        run_digest=data["run_digest"],
+        manifest_digest=data["manifest_digest"],
+        logical_path=data["logical_path"],
+        size_bytes=data["size_bytes"],
+        sha256=data["sha256"],
+        media_type=data["media_type"],
         artifact_digest=data["artifact_digest"],
     )
 
@@ -356,16 +430,30 @@ def _metric_from_dict(value: Any) -> MetricRecord:
     data = _exact_keys(
         value,
         {
-            "schema_version", "metric_id", "created_at", "run_id", "run_digest",
-            "manifest_digest", "name", "value", "unit", "metric_digest",
+            "schema_version",
+            "metric_id",
+            "created_at",
+            "run_id",
+            "run_digest",
+            "manifest_digest",
+            "name",
+            "value",
+            "unit",
+            "metric_digest",
         },
         "physical evidence metric",
     )
     return MetricRecord(
-        schema_version=data["schema_version"], metric_id=data["metric_id"],
-        created_at=data["created_at"], run_id=data["run_id"], run_digest=data["run_digest"],
-        manifest_digest=data["manifest_digest"], name=data["name"], value=data["value"],
-        unit=data["unit"], metric_digest=data["metric_digest"],
+        schema_version=data["schema_version"],
+        metric_id=data["metric_id"],
+        created_at=data["created_at"],
+        run_id=data["run_id"],
+        run_digest=data["run_digest"],
+        manifest_digest=data["manifest_digest"],
+        name=data["name"],
+        value=data["value"],
+        unit=data["unit"],
+        metric_digest=data["metric_digest"],
     )
 
 
@@ -373,19 +461,37 @@ def physical_evidence_receipt_from_dict(value: Any) -> PhysicalEvidenceReceipt:
     data = _exact_keys(
         value,
         {
-            "schema_version", "receipt_id", "run_id", "run_digest", "manifest_digest",
-            "execution_evidence_digest", "observation_digest", "output_logical_path",
-            "output_size_bytes", "output_sha256", "artifact", "metric", "receipt_digest",
+            "schema_version",
+            "receipt_id",
+            "run_id",
+            "run_digest",
+            "manifest_digest",
+            "execution_evidence_digest",
+            "observation_digest",
+            "stdout_sha256",
+            "output_logical_path",
+            "output_size_bytes",
+            "output_sha256",
+            "artifact",
+            "metric",
+            "receipt_digest",
         },
         "physical evidence receipt",
     )
     return PhysicalEvidenceReceipt(
-        schema_version=data["schema_version"], receipt_id=data["receipt_id"],
-        run_id=data["run_id"], run_digest=data["run_digest"], manifest_digest=data["manifest_digest"],
+        schema_version=data["schema_version"],
+        receipt_id=data["receipt_id"],
+        run_id=data["run_id"],
+        run_digest=data["run_digest"],
+        manifest_digest=data["manifest_digest"],
         execution_evidence_digest=data["execution_evidence_digest"],
-        observation_digest=data["observation_digest"], output_logical_path=data["output_logical_path"],
-        output_size_bytes=data["output_size_bytes"], output_sha256=data["output_sha256"],
-        artifact=_artifact_from_dict(data["artifact"]), metric=_metric_from_dict(data["metric"]),
+        observation_digest=data["observation_digest"],
+        stdout_sha256=data["stdout_sha256"],
+        output_logical_path=data["output_logical_path"],
+        output_size_bytes=data["output_size_bytes"],
+        output_sha256=data["output_sha256"],
+        artifact=_artifact_from_dict(data["artifact"]),
+        metric=_metric_from_dict(data["metric"]),
         receipt_digest=data["receipt_digest"],
     )
 
@@ -403,15 +509,25 @@ def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
-def _read_physical_output(workspace: str | Path, logical_path: str) -> PhysicalOutputSnapshot:
-    root = Path(workspace).expanduser().resolve(strict=True)
+def _read_physical_output(
+    workspace: str | Path,
+    logical_path: str,
+) -> PhysicalOutputSnapshot:
+    try:
+        root = Path(workspace).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise EvidenceBindingError("M4.3.2 workspace root cannot be resolved") from exc
     if not root.is_dir():
         raise EvidenceBindingError("M4.3.2 workspace root is not a directory")
     if "\\" in logical_path:
         raise EvidenceBindingError("Physical output path must use POSIX separators")
     relative = PurePosixPath(logical_path)
-    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
-        raise EvidenceBindingError("Physical output path is not a canonical relative path")
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise EvidenceBindingError("Physical output path is not canonical and relative")
 
     current = root
     before: os.stat_result | None = None
@@ -420,9 +536,13 @@ def _read_physical_output(workspace: str | Path, logical_path: str) -> PhysicalO
         try:
             info = os.lstat(current)
         except OSError as exc:
-            raise EvidenceBindingError(f"Required physical output is missing: {logical_path}") from exc
+            raise EvidenceBindingError(
+                f"Required physical output is missing: {logical_path}"
+            ) from exc
         if stat.S_ISLNK(info.st_mode) or _has_reparse_point(info):
-            raise EvidenceBindingError("Physical output path contains a symlink/junction/reparse point")
+            raise EvidenceBindingError(
+                "Physical output path contains a symlink/junction/reparse point"
+            )
         final = index == len(relative.parts) - 1
         if final:
             if not stat.S_ISREG(info.st_mode):
@@ -438,7 +558,9 @@ def _read_physical_output(workspace: str | Path, logical_path: str) -> PhysicalO
         with current.open("rb") as handle:
             opened = os.fstat(handle.fileno())
             if not _same_file_identity(before, opened):
-                raise EvidenceBindingError("Physical output changed between path validation and open")
+                raise EvidenceBindingError(
+                    "Physical output changed between path validation and open"
+                )
             data = handle.read(MAX_RESULT_BYTES + 1)
             after_open = os.fstat(handle.fileno())
     except EvidenceBindingError:
@@ -458,7 +580,9 @@ def _read_physical_output(workspace: str | Path, logical_path: str) -> PhysicalO
         or not _same_file_identity(after_open, after_path)
         or len(data) != after_path.st_size
     ):
-        raise EvidenceBindingError("Physical output mutated while evidence bytes were captured")
+        raise EvidenceBindingError(
+            "Physical output mutated while evidence bytes were captured"
+        )
     return PhysicalOutputSnapshot(
         logical_path=logical_path,
         size_bytes=len(data),
@@ -467,7 +591,31 @@ def _read_physical_output(workspace: str | Path, logical_path: str) -> PhysicalO
     )
 
 
-def _extract_metric(snapshot: PhysicalOutputSnapshot, *, run_id: str, spec: PythonJsonExperimentSpec) -> int | float:
+def _observed_stdout_bytes(evidence: RunExecutionEvidence) -> bytes:
+    stream = evidence.observation.stdout
+    if stream.truncated:
+        raise EvidenceBindingError(
+            "M4.3.2 requires complete stdout bytes; truncated stdout is not evidence"
+        )
+    try:
+        data = base64.b64decode(stream.data_base64.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise EvidenceBindingError("Observed stdout bytes are not valid base64") from exc
+    if len(data) != stream.byte_count:
+        raise EvidenceBindingError("Observed stdout byte count is inconsistent")
+    if not hmac.compare_digest(sha256(data).hexdigest(), stream.sha256):
+        raise EvidenceBindingError(
+            "Observed stdout digest does not match retained bytes"
+        )
+    return data
+
+
+def _extract_metric(
+    snapshot: PhysicalOutputSnapshot,
+    *,
+    run_id: str,
+    spec: PythonJsonExperimentSpec,
+) -> int | float:
     try:
         text = snapshot.data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -482,10 +630,23 @@ def _extract_metric(snapshot: PhysicalOutputSnapshot, *, run_id: str, spec: Pyth
         raise
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise EvidenceBindingError("Result artifact is not valid bounded JSON") from exc
-    root = _exact_keys(value, {"schema", "run_id", "metric"}, "result artifact")
+    try:
+        root = _exact_keys(
+            value,
+            {"schema", "run_id", "metric"},
+            "result artifact",
+        )
+        metric = _exact_keys(
+            root["metric"],
+            {"name", "value", "unit"},
+            "result metric",
+        )
+    except InvalidLabRecordError as exc:
+        raise EvidenceBindingError(
+            "Result artifact shape is not the declared schema"
+        ) from exc
     if root["schema"] != PYTHON_JSON_RESULT_SCHEMA or root["run_id"] != run_id:
         raise EvidenceBindingError("Result artifact does not bind the exact M4.3.2 run")
-    metric = _exact_keys(root["metric"], {"name", "value", "unit"}, "result metric")
     if metric["name"] != spec.metric_name or metric["unit"] != spec.metric_unit:
         raise EvidenceBindingError("Result metric does not match the manifest declaration")
     return _validate_metric_value(metric["value"])
@@ -513,11 +674,22 @@ class SqlitePhysicalEvidenceRegistry:
         self._database_path = lab_registry.database_path
         self._initialize()
 
+    @property
+    def database_path(self) -> Path:
+        return self._database_path
+
     @contextmanager
     def _connect(self):
         try:
-            with closing(sqlite3.connect(self._database_path, timeout=30.0, isolation_level=None)) as connection:
+            with closing(
+                sqlite3.connect(
+                    self._database_path,
+                    timeout=30.0,
+                    isolation_level=None,
+                )
+            ) as connection:
                 connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("PRAGMA busy_timeout = 30000")
                 yield connection
         except sqlite3.Error as exc:
@@ -537,6 +709,86 @@ class SqlitePhysicalEvidenceRegistry:
                 """
             )
 
+    def finalize(self, run_id: str) -> PhysicalEvidenceRecovery:
+        """Finalize already-observed execution without replaying or minting authority."""
+
+        _validate_uuid(run_id, "run_id")
+        execution = self._executions.recover(run_id)
+        if (
+            execution.phase is not RunExecutionPhase.OBSERVED
+            or execution.evidence is None
+            or not execution.execution_succeeded
+        ):
+            raise LabRegistryStateError(
+                "Physical evidence finalization requires successful M4.3.1 observation"
+            )
+        lab_recovery = self._lab.recover_for_run(run_id)
+        run_snapshot = lab_recovery.run(run_id)
+        if run_snapshot.evidence_sealed:
+            raise LabRegistryStateError(
+                "Cannot finalize physical evidence for a sealed run"
+            )
+        if run_snapshot.run.to_dict() != execution.binding.run.to_dict():
+            raise EvidenceBindingError(
+                "M4.2 run disagrees with M4.3.1 execution binding"
+            )
+        spec = PythonJsonExperimentSpec.from_manifest(lab_recovery.manifest)
+        logical_path = _logical_output_path(run_id)
+        snapshot = _read_physical_output(
+            execution.binding.proposal.workspace_root,
+            logical_path,
+        )
+        stdout_bytes = _observed_stdout_bytes(execution.evidence)
+        if snapshot.data != stdout_bytes or not hmac.compare_digest(
+            snapshot.sha256,
+            execution.evidence.observation.stdout.sha256,
+        ):
+            raise EvidenceBindingError(
+                "Physical result bytes differ from exact stdout bytes bound to the execution observation"
+            )
+        metric_value = _extract_metric(snapshot, run_id=run_id, spec=spec)
+        created_at = execution.evidence.created_at
+        artifact = ArtifactRecord.create(
+            run=run_snapshot.run,
+            logical_path=logical_path,
+            size_bytes=snapshot.size_bytes,
+            sha256_digest=snapshot.sha256,
+            media_type="application/json",
+            artifact_id=str(
+                uuid5(UUID(run_id), "codexia:m4.3.2:artifact:result.json")
+            ),
+            created_at=created_at,
+        )
+        metric = MetricRecord.create(
+            run=run_snapshot.run,
+            name=spec.metric_name,
+            value=metric_value,
+            unit=spec.metric_unit,
+            metric_id=str(
+                uuid5(UUID(run_id), f"codexia:m4.3.2:metric:{spec.metric_name}")
+            ),
+            created_at=created_at,
+        )
+        self._ensure_artifact(artifact)
+        self._ensure_metric(metric)
+
+        current = _read_physical_output(
+            execution.binding.proposal.workspace_root,
+            logical_path,
+        )
+        if current.data != stdout_bytes:
+            raise EvidenceBindingError(
+                "Physical result changed before terminal evidence publication"
+            )
+        receipt = PhysicalEvidenceReceipt.create(
+            run=run_snapshot.run,
+            execution_evidence=execution.evidence,
+            snapshot=current,
+            artifact=artifact,
+            metric=metric,
+        )
+        return self.publish(receipt)
+
     def publish(self, receipt: PhysicalEvidenceReceipt) -> PhysicalEvidenceRecovery:
         if not isinstance(receipt, PhysicalEvidenceReceipt):
             raise TypeError("receipt must be a PhysicalEvidenceReceipt")
@@ -549,16 +801,30 @@ class SqlitePhysicalEvidenceRegistry:
                 (receipt.run_id,),
             ).fetchone()
             if row is not None:
-                if row["payload_json"] == raw and row["receipt_digest"] == receipt.receipt_digest:
-                    connection.execute("COMMIT")
-                    return self.recover(receipt.run_id)
-                connection.execute("ROLLBACK")
-                raise LabIdentityConflictError("Run already has different physical evidence")
-            connection.execute(
-                "INSERT INTO lab_physical_evidence(run_id, receipt_id, payload_json, receipt_digest) VALUES (?, ?, ?, ?)",
-                (receipt.run_id, receipt.receipt_id, raw, receipt.receipt_digest),
-            )
-            connection.execute("COMMIT")
+                if (
+                    row["payload_json"] != raw
+                    or row["receipt_digest"] != receipt.receipt_digest
+                ):
+                    connection.execute("ROLLBACK")
+                    raise LabIdentityConflictError(
+                        "Run already has different physical evidence"
+                    )
+                connection.execute("COMMIT")
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO lab_physical_evidence(
+                        run_id, receipt_id, payload_json, receipt_digest
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        receipt.run_id,
+                        receipt.receipt_id,
+                        raw,
+                        receipt.receipt_digest,
+                    ),
+                )
+                connection.execute("COMMIT")
         return self.recover(receipt.run_id)
 
     def recover(self, run_id: str) -> PhysicalEvidenceRecovery:
@@ -573,21 +839,74 @@ class SqlitePhysicalEvidenceRegistry:
                 raise InvalidLabRecordError("Unknown physical evidence for run")
             raw = row["payload_json"]
             if not isinstance(raw, str) or len(raw) > MAX_PHYSICAL_RECEIPT_JSON_CHARS:
-                raise LabPersistenceIntegrityError("Persisted physical evidence JSON is invalid")
+                raise LabPersistenceIntegrityError(
+                    "Persisted physical evidence JSON is invalid"
+                )
             try:
-                value = json.loads(raw, object_pairs_hook=_reject_duplicate_pairs, parse_constant=_reject_constant)
+                value = json.loads(
+                    raw,
+                    object_pairs_hook=_reject_duplicate_pairs,
+                    parse_constant=_reject_constant,
+                )
                 receipt = physical_evidence_receipt_from_dict(value)
-            except (EvidenceBindingError, InvalidLabRecordError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise LabPersistenceIntegrityError("Persisted physical evidence failed validation") from exc
+            except (
+                EvidenceBindingError,
+                InvalidLabRecordError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise LabPersistenceIntegrityError(
+                    "Persisted physical evidence failed validation"
+                ) from exc
             if _canonical_json(receipt.to_dict()) != raw:
-                raise LabPersistenceIntegrityError("Persisted physical evidence is not canonical JSON")
-            if row["receipt_id"] != receipt.receipt_id or row["receipt_digest"] != receipt.receipt_digest:
-                raise LabPersistenceIntegrityError("Persisted physical evidence indexes disagree with receipt")
+                raise LabPersistenceIntegrityError(
+                    "Persisted physical evidence is not canonical JSON"
+                )
+            if (
+                row["receipt_id"] != receipt.receipt_id
+                or row["receipt_digest"] != receipt.receipt_digest
+            ):
+                raise LabPersistenceIntegrityError(
+                    "Persisted physical evidence indexes disagree with receipt"
+                )
             connection.execute("COMMIT")
         try:
             return self._validate_dependencies(receipt, verify_physical=True)
-        except (EvidenceBindingError, InvalidLabRecordError, LabRegistryStateError) as exc:
-            raise LabPersistenceIntegrityError("Physical evidence no longer matches durable execution/evidence state") from exc
+        except (
+            EvidenceBindingError,
+            InvalidLabRecordError,
+            LabRegistryStateError,
+        ) as exc:
+            raise LabPersistenceIntegrityError(
+                "Physical evidence no longer matches durable execution/evidence state"
+            ) from exc
+
+    def _ensure_artifact(self, artifact: ArtifactRecord) -> None:
+        snapshot = self._lab.recover_for_run(artifact.run_id).run(artifact.run_id)
+        same_path = [
+            item
+            for item in snapshot.artifacts.values()
+            if item.logical_path == artifact.logical_path
+        ]
+        if same_path:
+            if len(same_path) != 1 or same_path[0] != artifact:
+                raise EvidenceBindingError(
+                    "Durable artifact path is already bound to different bytes"
+                )
+            return
+        self._lab.register_artifact(artifact)
+
+    def _ensure_metric(self, metric: MetricRecord) -> None:
+        snapshot = self._lab.recover_for_run(metric.run_id).run(metric.run_id)
+        same_name = [item for item in snapshot.metrics.values() if item.name == metric.name]
+        if same_name:
+            if len(same_name) != 1 or same_name[0] != metric:
+                raise EvidenceBindingError(
+                    "Durable metric name is already bound to a different value"
+                )
+            return
+        self._lab.register_metric(metric)
 
     def _validate_dependencies(
         self,
@@ -600,36 +919,55 @@ class SqlitePhysicalEvidenceRegistry:
             execution.phase is not RunExecutionPhase.OBSERVED
             or execution.evidence is None
             or not execution.execution_succeeded
-            or not hmac.compare_digest(execution.evidence.evidence_digest, receipt.execution_evidence_digest)
+            or not hmac.compare_digest(
+                execution.evidence.evidence_digest,
+                receipt.execution_evidence_digest,
+            )
             or not hmac.compare_digest(
                 execution.evidence.observation.observation_digest,
                 receipt.observation_digest,
             )
+            or not hmac.compare_digest(
+                execution.evidence.observation.stdout.sha256,
+                receipt.stdout_sha256,
+            )
         ):
-            raise EvidenceBindingError("Physical evidence lacks exact successful M4.3.1 execution provenance")
+            raise EvidenceBindingError(
+                "Physical evidence lacks exact successful M4.3.1 execution provenance"
+            )
         recovery = self._lab.recover_for_run(receipt.run_id)
         run = recovery.run(receipt.run_id)
         if run.run.to_dict() != execution.binding.run.to_dict():
-            raise EvidenceBindingError("Physical evidence run disagrees with execution binding")
+            raise EvidenceBindingError(
+                "Physical evidence run disagrees with execution binding"
+            )
         artifact = run.artifacts.get(receipt.artifact.artifact_id)
         metric = run.metrics.get(receipt.metric.metric_id)
         if artifact != receipt.artifact or metric != receipt.metric:
-            raise EvidenceBindingError("Physical evidence records are not durably registered in M4.2")
+            raise EvidenceBindingError(
+                "Physical evidence records are not durably registered in M4.2"
+            )
         if verify_physical:
             snapshot = _read_physical_output(
                 execution.binding.proposal.workspace_root,
                 receipt.output_logical_path,
             )
+            stdout_bytes = _observed_stdout_bytes(execution.evidence)
             if (
-                snapshot.size_bytes != receipt.output_size_bytes
+                snapshot.data != stdout_bytes
+                or snapshot.size_bytes != receipt.output_size_bytes
                 or not hmac.compare_digest(snapshot.sha256, receipt.output_sha256)
+                or not hmac.compare_digest(snapshot.sha256, receipt.stdout_sha256)
             ):
-                raise EvidenceBindingError("Physical output bytes changed after evidence publication")
-            manifest = recovery.manifest
-            spec = PythonJsonExperimentSpec.from_manifest(manifest)
+                raise EvidenceBindingError(
+                    "Physical output bytes changed or no longer match exact observed stdout"
+                )
+            spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
             value = _extract_metric(snapshot, run_id=receipt.run_id, spec=spec)
             if value != receipt.metric.value:
-                raise EvidenceBindingError("Recovered physical bytes no longer yield the durable metric")
+                raise EvidenceBindingError(
+                    "Recovered physical bytes no longer yield the durable metric"
+                )
         return PhysicalEvidenceRecovery(
             receipt=receipt,
             execution=execution,
@@ -659,7 +997,7 @@ class GovernedPythonJsonRunner:
             lab_registry.database_path.resolve(),
             session_store.path.resolve(),
             execution_registry.database_path.resolve(),
-            physical_registry._database_path.resolve(),
+            physical_registry.database_path.resolve(),
         }
         if len(paths) != 1:
             raise ValueError("M4.3.2 runner requires one SQLite trust domain")
@@ -683,7 +1021,9 @@ class GovernedPythonJsonRunner:
         spec = PythonJsonExperimentSpec.from_manifest(recovery.manifest)
         output_path = _logical_output_path(run_id)
         if os.path.lexists(Path(workspace) / PurePosixPath(output_path)):
-            raise EvidenceBindingError("Deterministic M4.3.2 output already exists before execution")
+            raise EvidenceBindingError(
+                "Deterministic M4.3.2 output already exists before execution"
+            )
         executable = str(python_executable or sys.executable)
         proposal = prepare_process_proposal(
             workspace=workspace,
@@ -696,11 +1036,19 @@ class GovernedPythonJsonRunner:
                 output_path,
                 spec.input_json,
             ],
+            limits=ProcessLimits(
+                timeout_seconds=30.0,
+                max_stdout_bytes=MAX_RESULT_BYTES,
+                max_stderr_bytes=65_536,
+            ),
             summary="Execute one exact M4.3.2 inline Python JSON experiment.",
         )
         binding = RunExecutionBinding.create(run=run_snapshot.run, proposal=proposal)
         self._m3.record_proposal(m3_session_id, proposal)
-        self._executions.register_binding(binding, m3_session_id=m3_session_id)
+        self._executions.register_binding(
+            binding,
+            m3_session_id=m3_session_id,
+        )
         return PreparedPythonJsonRun(
             run=run_snapshot.run,
             manifest_digest=recovery.manifest.manifest_digest,
@@ -726,7 +1074,11 @@ class GovernedPythonJsonRunner:
                 session_id=prepared.m3_session_id,
             )
         )
-        authority.verify_authorization(prepared.proposal, receipt, mode=receipt.mode)
+        authority.verify_authorization(
+            prepared.proposal,
+            receipt,
+            mode=receipt.mode,
+        )
         self._m3.record_authorization(prepared.m3_session_id, receipt)
         authorization = RunExecutionAuthorization.create(
             binding=prepared.binding,
@@ -734,9 +1086,13 @@ class GovernedPythonJsonRunner:
         )
         self._executions.register_authorization(authorization)
 
-        output = Path(prepared.proposal.workspace_root) / PurePosixPath(prepared.output_logical_path)
+        output = Path(prepared.proposal.workspace_root) / PurePosixPath(
+            prepared.output_logical_path
+        )
         if os.path.lexists(output):
-            raise EvidenceBindingError("M4.3.2 output appeared before one-shot execution consumption")
+            raise EvidenceBindingError(
+                "M4.3.2 output appeared before one-shot execution consumption"
+            )
 
         lifecycle = ActionLifecycle(prepared.proposal, receipt.mode)
         lifecycle.apply_receipt(receipt, authority=authority)
@@ -765,63 +1121,5 @@ class GovernedPythonJsonRunner:
             or observation.exit_code != 0
         ):
             return GovernedPythonRunResult(execution=execution, physical=None)
-
-        snapshot = _read_physical_output(
-            prepared.proposal.workspace_root,
-            prepared.output_logical_path,
-        )
-        metric_value = _extract_metric(snapshot, run_id=prepared.run.run_id, spec=prepared.spec)
-        artifact = ArtifactRecord.create(
-            run=prepared.run,
-            logical_path=prepared.output_logical_path,
-            size_bytes=snapshot.size_bytes,
-            sha256_digest=snapshot.sha256,
-            media_type="application/json",
-            artifact_id=str(uuid5(UUID(prepared.run.run_id), "codexia:m4.3.2:artifact:result.json")),
-            created_at=execution_evidence.created_at,
-        )
-        metric = MetricRecord.create(
-            run=prepared.run,
-            name=prepared.spec.metric_name,
-            value=metric_value,
-            unit=prepared.spec.metric_unit,
-            metric_id=str(uuid5(UUID(prepared.run.run_id), f"codexia:m4.3.2:metric:{prepared.spec.metric_name}")),
-            created_at=execution_evidence.created_at,
-        )
-        self._ensure_artifact(artifact)
-        self._ensure_metric(metric)
-        # Re-read immediately before publishing the terminal physical receipt so a
-        # mutation between M4.2 registration and M4.3.2 publication fails closed.
-        current = _read_physical_output(
-            prepared.proposal.workspace_root,
-            prepared.output_logical_path,
-        )
-        if current.size_bytes != snapshot.size_bytes or not hmac.compare_digest(current.sha256, snapshot.sha256):
-            raise EvidenceBindingError("Physical output changed before evidence publication")
-        physical_receipt = PhysicalEvidenceReceipt.create(
-            run=prepared.run,
-            execution_evidence=execution_evidence,
-            snapshot=snapshot,
-            artifact=artifact,
-            metric=metric,
-        )
-        physical = self._physical.publish(physical_receipt)
+        physical = self._physical.finalize(prepared.run.run_id)
         return GovernedPythonRunResult(execution=execution, physical=physical)
-
-    def _ensure_artifact(self, artifact: ArtifactRecord) -> None:
-        snapshot = self._lab.recover_for_run(artifact.run_id).run(artifact.run_id)
-        same_path = [item for item in snapshot.artifacts.values() if item.logical_path == artifact.logical_path]
-        if same_path:
-            if len(same_path) != 1 or same_path[0] != artifact:
-                raise EvidenceBindingError("Durable artifact path is already bound to different bytes")
-            return
-        self._lab.register_artifact(artifact)
-
-    def _ensure_metric(self, metric: MetricRecord) -> None:
-        snapshot = self._lab.recover_for_run(metric.run_id).run(metric.run_id)
-        same_name = [item for item in snapshot.metrics.values() if item.name == metric.name]
-        if same_name:
-            if len(same_name) != 1 or same_name[0] != metric:
-                raise EvidenceBindingError("Durable metric name is already bound to a different value")
-            return
-        self._lab.register_metric(metric)
