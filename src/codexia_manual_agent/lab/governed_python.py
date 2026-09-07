@@ -172,6 +172,12 @@ def _validate_metric_value(value: Any) -> int | float:
     return value
 
 
+def _same_metric_value(left: int | float, right: int | float) -> bool:
+    """Compare metric values without collapsing JSON integer/float identity."""
+
+    return type(left) is type(right) and left == right
+
+
 def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -987,9 +993,9 @@ class SqlitePhysicalEvidenceRegistry:
                     "Physical output bytes changed or no longer match exact observed stdout"
                 )
             value = _extract_metric(snapshot, run_id=receipt.run_id, spec=spec)
-            if value != receipt.metric.value:
+            if not _same_metric_value(value, receipt.metric.value):
                 raise EvidenceBindingError(
-                    "Recovered physical bytes no longer yield the durable metric"
+                    "Recovered physical bytes no longer yield the exact durable metric representation"
                 )
         return PhysicalEvidenceRecovery(
             receipt=receipt,
