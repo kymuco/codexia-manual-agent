@@ -123,7 +123,7 @@ See `docs/m3_2_durable_delegation_recovery.md` and `docs/m3_2_source_audit.md`.
 
 ## M4 — Computational Lab
 
-M4.1 and M4.2 are complete in the clean public baseline.
+M4.1 through M4.3 are complete.
 
 The M4 series turns Codexia's governed runtime into a reproducible computational research surface without widening execution authority.
 
@@ -161,7 +161,7 @@ See `docs/m4_2_durable_experiment_registry.md` and `docs/m4_2_source_audit.md`.
 
 ### M4.3 — Governed Experiment Execution
 
-**Next active milestone.**
+**Complete.**
 
 Primary invariant:
 
@@ -169,26 +169,28 @@ Primary invariant:
 declared run != executed run
 ```
 
-M4.3 must close the first real end-to-end scientific loop by binding an M4 run to one actual M2-governed execution and to the physical evidence produced by that execution.
+M4.3 closes the first real end-to-end scientific execution/evidence loop without widening M2 authority.
 
-The first vertical slice is intentionally narrow:
+Demonstrated vertical slice:
 
-- one admitted local Python experiment profile rather than generic arbitrary execution;
-- run registration before execution;
-- existing M2 proposal/authorization/one-shot receipt remains the only execution authority;
-- exact executable, argv, cwd, declared inputs, and execution outcome are bound as durable execution evidence;
-- produced artifacts are verified from physical bytes before `ArtifactRecord` registration;
-- at least one bounded machine-readable metric is derived from the actual run output and registered to that run;
-- the run is sealed only after the execution/evidence chain is internally consistent;
-- recovery reconstructs the chain and never replays the experiment automatically.
+- a registered M4 run is bound before authorization to one exact M2 process proposal;
+- exact HUMAN authorization and M3 authority chronology are part of the durable execution provenance;
+- a forged/rebound observation cannot make an arbitrary run execution-backed;
+- one admitted local Python profile derives exact execution from manifest state and remains bound to the current exact Python executable;
+- final result bytes must equal the exact retained stdout bytes of the governed execution;
+- physical artifact size/SHA-256 and one declared numeric metric are derived locally from those bytes;
+- missing, mutated, redirected, mismatched, malformed, or ambiguous evidence fails closed;
+- run/experiment evidence can be irreversibly sealed;
+- a fresh Python process can reconstruct the exact hypothesis → manifest → run → governed execution → verified physical evidence chain from durable state without conversational history and without rerunning the experiment;
+- an already-sealed run cannot be prepared for replay.
 
-M4.3 is complete only when Codexia can execute one real experiment from a registered hypothesis/manifest through governed execution to sealed durable evidence, and negative tests prove that drift, missing/mutated outputs, mismatched execution evidence, or restart cannot be misrepresented as a valid completed run.
+The M4.3.3 closure fixture uses the frozen hypothesis that, for `n=37`, the sum of the first 37 positive odd integers equals `37²`, with `absolute_error != 0` declared as the falsification criterion before execution.
 
-See `docs/m4_3_governed_experiment_execution_plan.md`.
+See `docs/m4_3_governed_experiment_execution_plan.md`, `docs/m4_3_3_first_real_experiment.md`, and `docs/m4_3_source_audit.md`.
 
 ### M4.4 — Comparison and Falsification
 
-Planned after M4.3.
+**Next active milestone.**
 
 Freeze comparison policy before opening the evidence it will judge: target metric, direction, threshold, repetition/seeds, aggregation, and failure/missing-run policy. Compare multiple verified runs or baselines and produce an evidence-bounded supported/refuted/inconclusive result without choosing the criterion after seeing the outcome.
 
@@ -200,7 +202,7 @@ Turn frozen comparison policy and verified evidence into reproducible conclusion
 
 ## Near-term anti-drift rule
 
-The next work should increase Codexia's ability to conduct and falsify real computational experiments. Security, persistence, and transport hardening remain important, but should interrupt the M4.3 line only for a concrete blocker, demonstrated vulnerability, or invariant violation rather than becoming the product goal themselves.
+The next work should increase Codexia's ability to conduct and falsify real computational experiments. Security, persistence, and transport hardening remain important, but should interrupt the M4 research line only for a concrete blocker, demonstrated vulnerability, or invariant violation rather than becoming the product goal themselves.
 
 ## M5 — Bounded automation
 
