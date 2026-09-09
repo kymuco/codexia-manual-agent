@@ -255,9 +255,44 @@ The next work should automate the already-proven manual M4 research loop rather 
 
 ## M5 — Bounded automation
 
+**In progress.**
+
+Primary invariant:
+
+```text
+automation intent != execution authority
+```
+
+M5 automates the already-proven M4 research loop under precommitted budgets and stop policies while preserving the existing M2/M3 authority and replay boundaries.
+
+### M5.1 — Frozen Automation Plan
+
+**Complete.**
+
+- one exact frozen M4.4 policy maps to one deterministic v1 automation identity;
+- target policy/freeze, exact arm manifests, required run count, budget, and stop policy are immutable and digest-bound;
+- `max_runs` cannot exceed the exact frozen comparison run set;
+- strict v1 stop rules require pause on authorization, stop on error, stop on budget exhaustion, and stop on conclusion;
+- the plan must freeze before either experiment advances beyond the M4.4 policy-freeze anchor;
+- freeze-vs-run ordering is serialized by the shared SQLite writer domain rather than wall-clock comparison;
+- both arms must use the already-proven `python-inline-json-result.v1` M4.3 execution profile;
+- one policy cannot acquire alternate budgets after the first plan is frozen;
+- durable recovery validates exact M4 lineage and freeze anchors but does not execute or replay work;
+- no M2 proposal, approval decision, authorization receipt, process execution, mutation, Git, network, or scheduler authority is introduced.
+
+See `docs/m5_1_frozen_automation_plan.md`.
+
+### M5.2 — Governed Automation State Machine
+
 **Next active milestone.**
 
-Support limited autonomous exploration with explicit budgets, stop policies, and the existing authority boundaries. No unattended destructive or external write authority. M5 should automate the already-proven M4 research loop rather than invent a second execution architecture.
+Advance the exact predeclared M4 run set one durable step at a time, consume the frozen budget monotonically, reuse `GovernedPythonJsonRunner`, and stop at the external authorization boundary. Recovery must reconstruct automation state without replaying a process or manufacturing fresh authority.
+
+### M5.3 — First Real Bounded Automation Closure
+
+Planned after M5.2.
+
+Run the already-proven M4 comparison/conclusion vertical through the bounded coordinator with externally supplied authorization, deterministic budget/stop behavior, and fresh-process recovery. No second executor, evidence path, or authority system.
 
 ## M6 — Optional TUI
 
