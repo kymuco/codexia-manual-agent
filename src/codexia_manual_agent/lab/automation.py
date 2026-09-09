@@ -109,6 +109,16 @@ def _validate_timestamp(value: Any, field_name: str) -> str:
     return value
 
 
+def _canonical_workspace_root(value: str | Path) -> str:
+    try:
+        resolved = Path(value).expanduser().resolve(strict=True)
+    except (TypeError, OSError, RuntimeError) as exc:
+        raise InvalidLabRecordError("Automation workspace_root does not resolve") from exc
+    if not resolved.is_dir():
+        raise InvalidLabRecordError("Automation workspace_root must be a directory")
+    return str(resolved)
+
+
 def _new_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -185,9 +195,7 @@ class AutomationStopPolicy:
             if type(value) is not bool:
                 raise InvalidLabRecordError(f"{field_name} must be boolean")
             if not value:
-                raise InvalidLabRecordError(
-                    f"M5.1 v1 requires {field_name}=true"
-                )
+                raise InvalidLabRecordError(f"M5.1 v1 requires {field_name}=true")
 
     def to_dict(self) -> dict[str, bool | int]:
         return {
@@ -204,6 +212,7 @@ class AutomationPlan:
     schema_version: int
     automation_id: str
     created_at: str
+    workspace_root: str
     policy_id: str
     policy_digest: str
     policy_freeze_digest: str
@@ -221,6 +230,7 @@ class AutomationPlan:
         cls,
         *,
         frozen_policy: FrozenComparisonPolicy,
+        workspace_root: str | Path,
         budget: AutomationBudget,
         stop_policy: AutomationStopPolicy | None = None,
         created_at: str | None = None,
@@ -232,6 +242,7 @@ class AutomationPlan:
         stop_policy = stop_policy or AutomationStopPolicy.strict_v1()
         if not isinstance(stop_policy, AutomationStopPolicy):
             raise TypeError("stop_policy must be an AutomationStopPolicy")
+        canonical_workspace = _canonical_workspace_root(workspace_root)
         policy = frozen_policy.policy
         required_runs = len(policy.seeds) * 2
         if budget.max_runs > required_runs:
@@ -244,6 +255,7 @@ class AutomationPlan:
             "schema_version": AUTOMATION_PLAN_SCHEMA_VERSION,
             "automation_id": automation_id,
             "created_at": created_at,
+            "workspace_root": canonical_workspace,
             "policy_id": policy.policy_id,
             "policy_digest": policy.policy_digest,
             "policy_freeze_digest": frozen_policy.freeze_digest,
@@ -259,6 +271,7 @@ class AutomationPlan:
             schema_version=AUTOMATION_PLAN_SCHEMA_VERSION,
             automation_id=automation_id,
             created_at=created_at,
+            workspace_root=canonical_workspace,
             policy_id=policy.policy_id,
             policy_digest=policy.policy_digest,
             policy_freeze_digest=frozen_policy.freeze_digest,
@@ -277,6 +290,11 @@ class AutomationPlan:
             raise InvalidLabRecordError("Unsupported M5.1 automation plan schema")
         _validate_uuid(self.automation_id, "automation_id")
         _validate_timestamp(self.created_at, "created_at")
+        object.__setattr__(
+            self,
+            "workspace_root",
+            _canonical_workspace_root(self.workspace_root),
+        )
         _validate_uuid(self.policy_id, "policy_id")
         _validate_digest(self.policy_digest, "policy_digest")
         _validate_digest(self.policy_freeze_digest, "policy_freeze_digest")
@@ -314,6 +332,7 @@ class AutomationPlan:
             "schema_version": self.schema_version,
             "automation_id": self.automation_id,
             "created_at": self.created_at,
+            "workspace_root": self.workspace_root,
             "policy_id": self.policy_id,
             "policy_digest": self.policy_digest,
             "policy_freeze_digest": self.policy_freeze_digest,
@@ -464,6 +483,7 @@ def automation_plan_from_dict(value: Any) -> AutomationPlan:
             "schema_version",
             "automation_id",
             "created_at",
+            "workspace_root",
             "policy_id",
             "policy_digest",
             "policy_freeze_digest",
@@ -482,6 +502,7 @@ def automation_plan_from_dict(value: Any) -> AutomationPlan:
         schema_version=data["schema_version"],
         automation_id=data["automation_id"],
         created_at=data["created_at"],
+        workspace_root=data["workspace_root"],
         policy_id=data["policy_id"],
         policy_digest=data["policy_digest"],
         policy_freeze_digest=data["policy_freeze_digest"],
@@ -777,6 +798,7 @@ class SqliteAutomationPlanRegistry:
         *,
         require_preautomation: bool,
     ) -> None:
+        _canonical_workspace_root(plan.workspace_root)
         for label, recovery, experiment_id, manifest_digest in (
             (
                 "baseline",
