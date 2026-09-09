@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+from codexia_manual_agent.lab.comparison import (
+    COMPARISON_POLICY_SCHEMA_VERSION,
+    FROZEN_COMPARISON_SCHEMA_VERSION,
+    ComparisonAggregation,
+    ComparisonDirection,
+    ComparisonMissingPolicy,
+    ComparisonPolicy,
+    FrozenComparisonPolicy,
+    SqliteComparisonRegistry,
+    comparison_policy_from_dict,
+    frozen_comparison_policy_from_dict,
+)
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
     InvalidLabRecordError,
@@ -70,6 +82,8 @@ from codexia_manual_agent.lab.serialization import (
 )
 
 __all__ = [
+    "COMPARISON_POLICY_SCHEMA_VERSION",
+    "FROZEN_COMPARISON_SCHEMA_VERSION",
     "LAB_REGISTRY_EVENT_SCHEMA_VERSION",
     "LAB_SCHEMA_VERSION",
     "PHYSICAL_EVIDENCE_SCHEMA_VERSION",
@@ -78,11 +92,16 @@ __all__ = [
     "RUN_EXECUTION_EVENT_SCHEMA_VERSION",
     "RUN_EXECUTION_SCHEMA_VERSION",
     "ArtifactRecord",
+    "ComparisonAggregation",
+    "ComparisonDirection",
+    "ComparisonMissingPolicy",
+    "ComparisonPolicy",
     "Conclusion",
     "ConclusionVerdict",
     "EvidenceBindingError",
     "ExperimentManifest",
     "ExperimentRun",
+    "FrozenComparisonPolicy",
     "GovernedPythonJsonRunner",
     "GovernedPythonRunResult",
     "Hypothesis",
@@ -108,15 +127,18 @@ __all__ = [
     "RunExecutionEventReceipt",
     "RunExecutionPhase",
     "RunExecutionRecovery",
+    "SqliteComparisonRegistry",
     "SqliteLabRegistry",
     "SqlitePhysicalEvidenceRegistry",
     "SqliteRunExecutionRegistry",
     "apply_lab_registry_event",
     "artifact_record_from_dict",
     "canonical_registry_json",
+    "comparison_policy_from_dict",
     "conclusion_from_dict",
     "experiment_manifest_from_dict",
     "experiment_run_from_dict",
+    "frozen_comparison_policy_from_dict",
     "hypothesis_from_dict",
     "metric_record_from_dict",
     "physical_evidence_receipt_from_dict",
