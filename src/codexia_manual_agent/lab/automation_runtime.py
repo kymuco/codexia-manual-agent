@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID, uuid5
 
 from codexia_manual_agent.authority import ActionProposal, AuthorizationReceipt
@@ -14,9 +14,8 @@ from codexia_manual_agent.domain.capabilities import Capability
 from codexia_manual_agent.execution import ProcessLimits
 from codexia_manual_agent.execution.process import PROCESS_ACTION
 from codexia_manual_agent.lab.automation import SqliteAutomationPlanRegistry
-from codexia_manual_agent.lab.comparison_registry import SqliteComparisonRegistry
+from codexia_manual_agent.lab.comparison import SqliteComparisonRegistry
 from codexia_manual_agent.lab.errors import (
-    EvidenceBindingError,
     InvalidLabRecordError,
     LabPersistenceIntegrityError,
     LabRegistryStateError,
@@ -42,6 +41,7 @@ from codexia_manual_agent.lab.registry import (
 from codexia_manual_agent.session_events import (
     ActionRecoveryState,
     EventKind,
+    SessionEventStateError,
     SessionRecovery,
     SqliteSessionEventStore,
     UnknownSessionError,
@@ -110,9 +110,11 @@ class AutomationState:
         if self.schema_version != AUTOMATION_STATE_SCHEMA_VERSION:
             raise InvalidLabRecordError("Unsupported M5.2 automation state schema")
         try:
-            UUID(self.automation_id)
+            parsed = UUID(self.automation_id)
         except (TypeError, ValueError, AttributeError) as exc:
-            raise InvalidLabRecordError("automation_id must be a UUID") from exc
+            raise InvalidLabRecordError("automation_id must be a canonical UUID") from exc
+        if str(parsed) != self.automation_id:
+            raise InvalidLabRecordError("automation_id must be a canonical UUID")
         if type(self.steps_used) is not int or self.steps_used < 0:
             raise InvalidLabRecordError("steps_used must be non-negative")
         if type(self.runs_started) is not int or self.runs_started < 0:
@@ -161,11 +163,11 @@ class _SlotRecovery:
 
 
 class GovernedAutomationStateMachine:
-    """M5.2 bounded coordinator derived from the existing durable M3/M4 spine.
+    """M5.2 coordinator derived from the existing durable M3/M4 authority spine.
 
-    The coordinator never creates an authorization receipt. `advance()` performs at
-    most one non-authority transition. `continue_authorized()` accepts exactly one
-    externally supplied receipt for the exact pending M4.3 proposal.
+    `advance()` performs at most one non-authority transition. Process execution is
+    available only through `continue_authorized()` with an externally supplied
+    receipt for the exact pending M4.3 proposal.
     """
 
     def __init__(
@@ -309,8 +311,7 @@ class GovernedAutomationStateMachine:
             return None
         if not recovery.events or recovery.events[0].kind is not EventKind.SESSION_STARTED:
             raise LabPersistenceIntegrityError("M5.2 M3 session lacks its exact start event")
-        expected = self._session_payload(workspace_root)
-        if dict(recovery.events[0].payload) != expected:
+        if dict(recovery.events[0].payload) != self._session_payload(workspace_root):
             raise LabPersistenceIntegrityError(
                 "M5.2 deterministic M3 session does not bind the frozen workspace/profile"
             )
@@ -324,7 +325,7 @@ class GovernedAutomationStateMachine:
     def _expected_executable() -> str:
         try:
             executable = Path(sys.executable).resolve(strict=True)
-        except OSError as exc:  # pragma: no cover - interpreter invariant
+        except OSError as exc:  # pragma: no cover - running interpreter invariant
             raise LabPersistenceIntegrityError("Current Python executable cannot be resolved") from exc
         return str(executable)
 
@@ -339,18 +340,17 @@ class GovernedAutomationStateMachine:
     ) -> ActionProposal:
         proposal = execution.binding.proposal
         spec = PythonJsonExperimentSpec.from_manifest(manifest)
-        expected_executable = self._expected_executable()
-        expected_output = self._expected_output(slot)
+        executable = self._expected_executable()
+        parameters = proposal.to_dict()["parameters"]
         expected_argv = [
-            expected_executable,
+            executable,
             "-I",
             "-c",
             spec.source,
             slot.run_id,
-            expected_output,
+            self._expected_output(slot),
             spec.input_json,
         ]
-        parameters = proposal.to_dict()["parameters"]
         expected_limits = ProcessLimits(
             timeout_seconds=30.0,
             max_stdout_bytes=MAX_RESULT_BYTES,
@@ -362,7 +362,7 @@ class GovernedAutomationStateMachine:
             or proposal.workspace_root != workspace_root
             or proposal.summary != _PREPARE_SUMMARY
             or parameters.get("argv") != expected_argv
-            or parameters.get("resolved_executable") != expected_executable
+            or parameters.get("resolved_executable") != executable
             or parameters.get("cwd") != "."
             or parameters.get("environment_profile") != "minimal-v1"
             or parameters.get("limits") != expected_limits
@@ -370,14 +370,17 @@ class GovernedAutomationStateMachine:
             raise LabPersistenceIntegrityError(
                 "M5.2 execution binding is not the exact M4.3 Python proposal for this slot"
             )
-        actions = [
-            action
-            for action in session.actions
-            if action.proposal.proposal_id == proposal.proposal_id
-        ]
-        if len(actions) != 1 or actions[0].proposal.to_dict() != proposal.to_dict():
+        if len(session.actions) != 1:
             raise LabPersistenceIntegrityError(
-                "M5.2 pending proposal does not have one exact authoritative M3 action"
+                "M5.2 deterministic run session must contain exactly one action proposal"
+            )
+        action = session.actions[0]
+        if (
+            action.proposal.proposal_id != proposal.proposal_id
+            or action.proposal.to_dict() != proposal.to_dict()
+        ):
+            raise LabPersistenceIntegrityError(
+                "M5.2 pending proposal disagrees with authoritative M3 action"
             )
         return proposal
 
@@ -396,16 +399,8 @@ class GovernedAutomationStateMachine:
                 raise LabPersistenceIntegrityError(
                     "M5.2 deterministic M3 session exists before its exact durable run"
                 )
-            return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=None,
-                execution=None,
-                session=None,
-                stage=0,
-                terminal_error=None,
-                physical_verified=False,
-            )
+            return _SlotRecovery(slot, manifest, None, None, None, 0, None, False)
+
         run = snapshot.run
         if (
             run.run_id != slot.run_id
@@ -427,28 +422,18 @@ class GovernedAutomationStateMachine:
                 )
             if session is not None and session.actions:
                 return _SlotRecovery(
-                    slot=slot,
-                    manifest=manifest,
-                    run=snapshot,
-                    execution=None,
-                    session=session,
-                    stage=2,
-                    terminal_error=(
-                        "A durable M3 proposal exists without its M4 execution binding; "
-                        "M5.2 will not mint a replacement approval target"
-                    ),
-                    physical_verified=False,
+                    slot,
+                    manifest,
+                    snapshot,
+                    None,
+                    session,
+                    2,
+                    "A durable M3 proposal exists without its M4 execution binding; "
+                    "M5.2 will not mint a replacement approval target",
+                    False,
                 )
-            return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=snapshot,
-                execution=None,
-                session=session,
-                stage=1,
-                terminal_error=None,
-                physical_verified=False,
-            )
+            return _SlotRecovery(slot, manifest, snapshot, None, session, 1, None, False)
+
         if session is None:
             raise LabPersistenceIntegrityError("M4 execution binding references a missing M5.2 M3 session")
         proposal = self._validate_bound_proposal(
@@ -458,105 +443,77 @@ class GovernedAutomationStateMachine:
             execution=execution,
             session=session,
         )
-        action = next(
-            action
-            for action in session.actions
-            if action.proposal.proposal_id == proposal.proposal_id
-        )
+        action = session.actions[0]
         output = Path(workspace_root) / PurePosixPath(self._expected_output(slot))
 
         if execution.phase is RunExecutionPhase.BOUND:
             if action.state is not ActionRecoveryState.PROPOSED:
                 return _SlotRecovery(
-                    slot=slot,
-                    manifest=manifest,
-                    run=snapshot,
-                    execution=execution,
-                    session=session,
-                    stage=3,
-                    terminal_error=(
-                        "M3 authority advanced beyond PROPOSED without matching M4 execution "
-                        "chronology; replay is forbidden"
-                    ),
-                    physical_verified=False,
+                    slot,
+                    manifest,
+                    snapshot,
+                    execution,
+                    session,
+                    3,
+                    "M3 authority advanced beyond PROPOSED without matching M4 execution "
+                    "chronology; replay is forbidden",
+                    False,
                 )
             if os.path.lexists(output):
                 return _SlotRecovery(
-                    slot=slot,
-                    manifest=manifest,
-                    run=snapshot,
-                    execution=execution,
-                    session=session,
-                    stage=2,
-                    terminal_error=(
-                        "Physical output exists before governed execution evidence; M5.2 "
-                        "will not overwrite or replay"
-                    ),
-                    physical_verified=False,
+                    slot,
+                    manifest,
+                    snapshot,
+                    execution,
+                    session,
+                    2,
+                    "Physical output exists before governed execution evidence; M5.2 "
+                    "will not overwrite or replay",
+                    False,
                 )
-            return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=snapshot,
-                execution=execution,
-                session=session,
-                stage=2,
-                terminal_error=None,
-                physical_verified=False,
-            )
+            if proposal.to_dict() != execution.binding.proposal.to_dict():  # pragma: no cover
+                raise LabPersistenceIntegrityError("M5.2 proposal changed during recovery")
+            return _SlotRecovery(slot, manifest, snapshot, execution, session, 2, None, False)
 
         if execution.phase is RunExecutionPhase.AUTHORIZED:
             return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=snapshot,
-                execution=execution,
-                session=session,
-                stage=3,
-                terminal_error=(
-                    "Authorization is durable but no terminal execution evidence exists; "
-                    "M5.2 fails closed instead of replaying the process"
-                ),
-                physical_verified=False,
+                slot,
+                manifest,
+                snapshot,
+                execution,
+                session,
+                3,
+                "Authorization is durable but no terminal execution evidence exists; "
+                "M5.2 fails closed instead of replaying the process",
+                False,
             )
 
         if not execution.execution_succeeded:
             return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=snapshot,
-                execution=execution,
-                session=session,
-                stage=3,
-                terminal_error="Governed process execution produced a terminal failure",
-                physical_verified=False,
+                slot,
+                manifest,
+                snapshot,
+                execution,
+                session,
+                3,
+                "Governed process execution produced a terminal failure",
+                False,
             )
         try:
             self._physical.recover(slot.run_id)
         except InvalidLabRecordError:
             return _SlotRecovery(
-                slot=slot,
-                manifest=manifest,
-                run=snapshot,
-                execution=execution,
-                session=session,
-                stage=3,
-                terminal_error=(
-                    "Successful governed execution lacks verified physical evidence; "
-                    "M5.2 will not rerun it"
-                ),
-                physical_verified=False,
+                slot,
+                manifest,
+                snapshot,
+                execution,
+                session,
+                3,
+                "Successful governed execution lacks verified physical evidence; "
+                "M5.2 will not rerun it",
+                False,
             )
-        return _SlotRecovery(
-            slot=slot,
-            manifest=manifest,
-            run=snapshot,
-            execution=execution,
-            session=session,
-            stage=3,
-            terminal_error=None,
-            physical_verified=True,
-        )
+        return _SlotRecovery(slot, manifest, snapshot, execution, session, 3, None, True)
 
     def _derived(self, automation_id: str):
         frozen_plan, frozen_policy, slots = self._slots(automation_id)
@@ -591,23 +548,43 @@ class GovernedAutomationStateMachine:
                 raise LabPersistenceIntegrityError(
                     "M5.2 durable run progression is not a contiguous deterministic prefix"
                 )
-            if item.stage < 3 or (item.run is not None and not item.run.evidence_sealed):
+            if item.stage < 3 or item.run is None or not item.run.evidence_sealed:
                 seen_incomplete = True
             recovered.append(item)
+
+        for arm, experiment in (
+            (AutomationRunArm.BASELINE, baseline),
+            (AutomationRunArm.CANDIDATE, candidate),
+        ):
+            if not experiment.experiment_sealed:
+                continue
+            arm_items = [item for item in recovered if item.slot.arm is arm]
+            if any(
+                item.stage != 3
+                or item.terminal_error is not None
+                or not item.physical_verified
+                or item.run is None
+                or not item.run.evidence_sealed
+                for item in arm_items
+            ):
+                raise LabPersistenceIntegrityError(
+                    "M5.2 experiment was sealed before its exact automated run set completed"
+                )
         return frozen_plan, frozen_policy, baseline, candidate, tuple(recovered)
 
     def recover(self, automation_id: str) -> AutomationState:
         frozen_plan, _frozen_policy, baseline, candidate, recovered = self._derived(automation_id)
         plan = frozen_plan.plan
         steps_used = sum(item.stage for item in recovered)
-        runs_started = sum(item.stage >= 1 for item in recovered)
+        runs_started = sum(1 for item in recovered if item.stage >= 1)
         runs_completed = sum(
-            item.stage == 3
+            1
+            for item in recovered
+            if item.stage == 3
             and item.terminal_error is None
             and item.physical_verified
             and item.run is not None
             and item.run.evidence_sealed
-            for item in recovered
         )
         if steps_used > plan.budget.max_steps or runs_started > plan.budget.max_runs:
             raise LabPersistenceIntegrityError(
@@ -617,49 +594,43 @@ class GovernedAutomationStateMachine:
         active: _SlotRecovery | None = None
         for item in recovered:
             if item.terminal_error is not None:
-                active = item
                 return self._state(
-                    plan=plan,
-                    phase=AutomationPhase.STOPPED_ERROR,
-                    steps_used=steps_used,
-                    runs_started=runs_started,
-                    runs_completed=runs_completed,
-                    active=active,
-                    detail=item.terminal_error,
+                    plan,
+                    AutomationPhase.STOPPED_ERROR,
+                    steps_used,
+                    runs_started,
+                    runs_completed,
+                    item,
+                    item.terminal_error,
                 )
             if item.stage == 3 and item.physical_verified:
                 if item.run is not None and item.run.evidence_sealed:
                     continue
-                active = item
                 return self._state(
-                    plan=plan,
-                    phase=AutomationPhase.FINALIZATION_REQUIRED,
-                    steps_used=steps_used,
-                    runs_started=runs_started,
-                    runs_completed=runs_completed,
-                    active=active,
-                    detail="Verified physical evidence is durable; only the M4 run seal remains",
+                    plan,
+                    AutomationPhase.FINALIZATION_REQUIRED,
+                    steps_used,
+                    runs_started,
+                    runs_completed,
+                    item,
+                    "Verified physical evidence is durable; only the M4 run seal remains",
                 )
             active = item
             break
 
         if active is None:
-            if not baseline.experiment_sealed and not candidate.experiment_sealed:
-                phase = AutomationPhase.RUN_SET_COMPLETE
-            elif baseline.experiment_sealed and candidate.experiment_sealed:
-                phase = AutomationPhase.RUN_SET_COMPLETE
-            else:
+            if baseline.experiment_sealed != candidate.experiment_sealed:
                 raise LabPersistenceIntegrityError(
-                    "Only one M5.2 comparison arm was sealed after the exact run set completed"
+                    "Only one M5.2 comparison arm was sealed after run-set completion"
                 )
             return self._state(
-                plan=plan,
-                phase=phase,
-                steps_used=steps_used,
-                runs_started=runs_started,
-                runs_completed=runs_completed,
-                active=None,
-                detail="Exact frozen run set is complete; comparison/conclusion remain M5.3 work",
+                plan,
+                AutomationPhase.RUN_SET_COMPLETE,
+                steps_used,
+                runs_started,
+                runs_completed,
+                None,
+                "Exact frozen run set is complete; comparison/conclusion remain M5.3 work",
             )
 
         if active.stage == 0:
@@ -683,21 +654,20 @@ class GovernedAutomationStateMachine:
             else:
                 phase = AutomationPhase.PAUSED_AUTHORIZATION_REQUIRED
                 detail = "External authorization is required for the exact durable process proposal"
-        else:  # pragma: no cover - _recover_slot exhausts stage-3 cases above
+        else:  # pragma: no cover - stage-3 cases return above
             raise LabPersistenceIntegrityError("M5.2 could not derive a valid active phase")
         return self._state(
-            plan=plan,
-            phase=phase,
-            steps_used=steps_used,
-            runs_started=runs_started,
-            runs_completed=runs_completed,
-            active=active,
-            detail=detail,
+            plan,
+            phase,
+            steps_used,
+            runs_started,
+            runs_completed,
+            active,
+            detail,
         )
 
     @staticmethod
     def _state(
-        *,
         plan,
         phase: AutomationPhase,
         steps_used: int,
@@ -706,9 +676,7 @@ class GovernedAutomationStateMachine:
         active: _SlotRecovery | None,
         detail: str | None,
     ) -> AutomationState:
-        proposal = None
-        if active is not None and active.execution is not None:
-            proposal = active.execution.binding.proposal
+        proposal = active.execution.binding.proposal if active and active.execution else None
         return AutomationState(
             schema_version=AUTOMATION_STATE_SCHEMA_VERSION,
             automation_id=plan.automation_id,
@@ -731,9 +699,7 @@ class GovernedAutomationStateMachine:
                     session_id=slot.m3_session_id,
                     payload=self._session_payload(workspace_root),
                 )
-            except Exception:
-                # A concurrent caller may have created the deterministic session. Recovery
-                # decides whether it is exact; any other failure remains visible.
+            except SessionEventStateError:
                 recovery = self._recover_session(slot, workspace_root)
                 if recovery is None:
                     raise
@@ -747,15 +713,15 @@ class GovernedAutomationStateMachine:
         if state.phase is AutomationPhase.READY:
             assert state.active_slot is not None
             slot = state.active_slot
-            recovery = self._lab.recover_experiment(slot.experiment_id)
-            manifest = recovery.manifest
-            run = ExperimentRun.create(
-                manifest=manifest,
-                ordinal=slot.ordinal,
-                seed=slot.seed,
-                run_id=slot.run_id,
+            manifest = self._lab.recover_experiment(slot.experiment_id).manifest
+            self._lab.register_run(
+                ExperimentRun.create(
+                    manifest=manifest,
+                    ordinal=slot.ordinal,
+                    seed=slot.seed,
+                    run_id=slot.run_id,
+                )
             )
-            self._lab.register_run(run)
             return self.recover(automation_id)
 
         if state.phase is AutomationPhase.RUN_REGISTERED:
@@ -792,7 +758,9 @@ class GovernedAutomationStateMachine:
             )
         assert state.active_slot is not None
         slot = state.active_slot
-        frozen_plan, _frozen_policy, baseline, candidate, recovered = self._derived(automation_id)
+        frozen_plan, _frozen_policy, _baseline, _candidate, recovered = self._derived(
+            automation_id
+        )
         active = next(item for item in recovered if item.slot.run_id == slot.run_id)
         if active.execution is None or active.run is None or active.session is None:
             raise LabPersistenceIntegrityError("Paused M5.2 state lacks exact prepared provenance")
@@ -805,7 +773,7 @@ class GovernedAutomationStateMachine:
         )
         if active.execution.phase is not RunExecutionPhase.BOUND:
             raise LabRegistryStateError("Pending M5.2 run is no longer awaiting authorization")
-        if proposal.to_dict() != active.execution.binding.proposal.to_dict():
+        if proposal.to_dict() != active.execution.binding.proposal.to_dict():  # pragma: no cover
             raise LabPersistenceIntegrityError("Pending M5.2 proposal changed during recovery")
         return PreparedPythonJsonRun(
             run=active.run.run,
