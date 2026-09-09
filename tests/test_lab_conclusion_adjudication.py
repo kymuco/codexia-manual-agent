@@ -122,6 +122,15 @@ class AdjudicatedConclusionTests(unittest.TestCase):
         self.assertNotIn("summary", parameters)
         self.assertNotIn("conclusion_id", parameters)
 
+        direct_parameters = inspect.signature(AdjudicatedConclusion).parameters
+        self.assertNotIn("verdict", direct_parameters)
+        self.assertNotIn("summary", direct_parameters)
+        self.assertNotIn("conclusion_id", direct_parameters)
+        with self.assertRaises(TypeError):
+            AdjudicatedConclusion()
+        with self.assertRaises(TypeError):
+            AdjudicatedConclusion(verdict=ConclusionVerdict.SUPPORTED)
+
     def test_all_comparison_outcomes_map_to_exact_policy_scoped_verdicts(self) -> None:
         expected = {
             ComparisonOutcome.SUPPORTED: ConclusionVerdict.SUPPORTED,
