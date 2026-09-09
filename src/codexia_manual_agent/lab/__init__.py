@@ -15,6 +15,14 @@ from codexia_manual_agent.lab.automation import (
     automation_stop_policy_from_dict,
     frozen_automation_plan_from_dict,
 )
+from codexia_manual_agent.lab.automation_runtime import (
+    AUTOMATION_STATE_SCHEMA_VERSION,
+    AutomationPhase,
+    AutomationRunArm,
+    AutomationRunSlot,
+    AutomationState,
+    GovernedAutomationStateMachine,
+)
 from codexia_manual_agent.lab.comparison import (
     COMPARISON_POLICY_SCHEMA_VERSION,
     FROZEN_COMPARISON_SCHEMA_VERSION,
@@ -43,9 +51,7 @@ from codexia_manual_agent.lab.conclusion_adjudication import (
     ConclusionScope,
     adjudicated_conclusion_from_dict,
 )
-from codexia_manual_agent.lab.conclusion_registry import (
-    SqliteAdjudicatedConclusionRegistry,
-)
+from codexia_manual_agent.lab.conclusion_registry import SqliteAdjudicatedConclusionRegistry
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
     InvalidLabRecordError,
@@ -119,6 +125,7 @@ __all__ = [
     "ADJUDICATED_CONCLUSION_SCHEMA_VERSION",
     "AUTOMATION_BUDGET_SCHEMA_VERSION",
     "AUTOMATION_PLAN_SCHEMA_VERSION",
+    "AUTOMATION_STATE_SCHEMA_VERSION",
     "AUTOMATION_STOP_POLICY_SCHEMA_VERSION",
     "COMPARISON_EVIDENCE_SCHEMA_VERSION",
     "COMPARISON_POLICY_SCHEMA_VERSION",
@@ -135,7 +142,11 @@ __all__ = [
     "AdjudicatedConclusion",
     "ArtifactRecord",
     "AutomationBudget",
+    "AutomationPhase",
     "AutomationPlan",
+    "AutomationRunArm",
+    "AutomationRunSlot",
+    "AutomationState",
     "AutomationStopPolicy",
     "ComparisonAggregation",
     "ComparisonDirection",
@@ -152,6 +163,7 @@ __all__ = [
     "ExperimentRun",
     "FrozenAutomationPlan",
     "FrozenComparisonPolicy",
+    "GovernedAutomationStateMachine",
     "GovernedPythonJsonRunner",
     "GovernedPythonRunResult",
     "Hypothesis",

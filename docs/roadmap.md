@@ -255,7 +255,7 @@ The next work should automate the already-proven manual M4 research loop rather 
 
 ## M5 — Bounded automation
 
-**In progress.**
+**In progress through M5.2.**
 
 Primary invariant:
 
@@ -284,15 +284,34 @@ See `docs/m5_1_frozen_automation_plan.md`.
 
 ### M5.2 — Governed Automation State Machine
 
-**Next active milestone.**
+**Complete.**
 
-Advance the exact predeclared M4 run set one durable step at a time, consume the frozen budget monotonically, reuse `GovernedPythonJsonRunner`, and stop at the external authorization boundary. Recovery must reconstruct automation state without replaying a process or manufacturing fresh authority.
+Primary invariant:
+
+```text
+automation progress != authorization authority
+```
+
+- the exact baseline/candidate run slots are derived only from the frozen M5.1/M4.4 lineage;
+- deterministic UUIDv5 run/session identities prevent caller-selected slot substitution;
+- state and budget use are reconstructed from authoritative durable M3/M4 facts rather than a rollback-prone automation counter;
+- `advance()` performs only bounded non-authority progression and becomes inert at the authorization boundary;
+- the exact pending M2 proposal survives fresh-process recovery without execution or proposal replacement;
+- execution continuation requires an externally supplied exact `AuthorizationReceipt` and reuses the existing M2/M3/M4.3 authority path;
+- frozen step/run budgets stop work before the next irreversible stage;
+- ambiguous post-authority recovery stops fail-closed rather than replaying a process;
+- foreign runs, non-contiguous progression, incomplete sealed arms, and authority/evidence mismatch fail integrity;
+- every completed slot requires governed execution provenance, verified physical evidence, and an irreversible M4 run seal;
+- the complete sealed run set remains recoverable while downstream M5.3 sequentially seals the two experiment arms;
+- no scheduler, second executor, alternate evidence path, automatic comparison, or conclusion authority is introduced.
+
+See `docs/m5_2_governed_automation_state_machine.md` and `docs/m5_2_source_audit.md`.
 
 ### M5.3 — First Real Bounded Automation Closure
 
-Planned after M5.2.
+**Next active milestone.**
 
-Run the already-proven M4 comparison/conclusion vertical through the bounded coordinator with externally supplied authorization, deterministic budget/stop behavior, and fresh-process recovery. No second executor, evidence path, or authority system.
+Run the already-proven M4 comparison/conclusion vertical through the bounded coordinator with externally supplied authorization, deterministic budget/stop behavior, experiment sealing, exact M4.4 comparison, exact M4.5 conclusion, and fresh-process recovery. No second executor, evidence path, or authority system.
 
 ## M6 — Optional TUI
 
