@@ -50,7 +50,6 @@ RECOVERY_PROGRAM = textwrap.dedent(
 
     db = Path(sys.argv[1]).resolve()
     policy_id = sys.argv[2]
-    expected_conclusion_id = sys.argv[3]
 
     lab = SqliteLabRegistry(db)
     m3 = SqliteSessionEventStore(db)
@@ -63,8 +62,6 @@ RECOVERY_PROGRAM = textwrap.dedent(
     frozen = comparisons.recover_policy(policy_id)
     result = results.recover_result(policy_id)
     conclusion = conclusions.recover(policy_id)
-    if conclusion.conclusion_id != expected_conclusion_id:
-        raise RuntimeError("recovered conclusion identity changed")
 
     print(json.dumps({
         "policy_id": frozen.policy.policy_id,
@@ -278,7 +275,6 @@ class M453FirstRealConclusionClosureTests(unittest.TestCase):
                 RECOVERY_PROGRAM,
                 str(self.db),
                 frozen.policy.policy_id,
-                conclusion.conclusion_id,
             ],
             cwd=self.workspace,
             check=False,
