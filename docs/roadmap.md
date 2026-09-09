@@ -123,7 +123,7 @@ See `docs/m3_2_durable_delegation_recovery.md` and `docs/m3_2_source_audit.md`.
 
 ## M4 — Computational Lab
 
-M4.1 through M4.4 are complete.
+M4.1 through M4.5 are complete.
 
 The M4 series turns Codexia's governed runtime into a reproducible computational research surface without widening execution authority.
 
@@ -219,19 +219,45 @@ See `docs/m4_4_comparison_falsification_plan.md`, `docs/m4_4_2_verified_evidence
 
 ### M4.5 — Conclusion Adjudication
 
-**Next active milestone.**
+**Complete.**
 
-Turn frozen comparison policy and verified evidence into reproducible conclusion adjudication. The next proof must preserve the distinction between a policy-local `SUPPORTED` / `REFUTED` / `INCONCLUSIVE` comparison result and an evidence-bounded scientific `Conclusion`; it must not silently upgrade either into scientific truth beyond the declared policy and evidence lineage.
+Primary invariants:
+
+```text
+comparison outcome != unrestricted scientific conclusion
+human/model wording != conclusion adjudication authority
+persisted conclusion != conclusion authority
+```
+
+M4.5 turns one exact recovered M4.4 result into one deterministic policy-scoped conclusion without allowing caller/model prose or database text to become adjudication authority.
+
+Demonstrated vertical slice:
+
+- M4.4 comparison outcomes map deterministically to bounded `SUPPORTED` / `REFUTED` / `INCONCLUSIVE` conclusion verdicts;
+- the comparison conclusion has fixed scope `frozen_comparison_policy.v1` and one canonical bounded summary per outcome;
+- exact hypothesis, baseline/candidate manifests, policy/freeze, and comparison result identities/digests are jointly bound;
+- callers cannot provide verdict, summary, conclusion id, evidence subset, replacement policy/result, or alternate arm ordering through the authoritative creation path;
+- direct dataclass semantic construction is disabled; the strict decoder validates structure but is not provenance authority by itself;
+- durable conclusion rows are derived cache only: recovery re-recovers exact M4.4 dependencies and recomputes the expected conclusion;
+- a structurally self-consistent forged verdict with a freshly valid SHA-256 is rejected when authoritative M4.4 recovery reproduces a different conclusion;
+- physical evidence mutation invalidates conclusion recovery transitively through M4.3 and M4.4;
+- the M4.4.3 real `REFUTED` integration comparison is adjudicated without weakening the threshold or upgrading policy-local refutation into universal scientific falsity;
+- a fresh Python process reconstructs the exact policy → result → bounded conclusion chain from durable state without an experiment runner, new authorization, replacement criterion, or caller-authored conclusion text;
+- all four governed physical result files remain byte-identical with unchanged `mtime_ns` across fresh-process conclusion recovery.
+
+The M4.5.3 closure therefore completes the manual Computational Lab loop from hypothesis through governed execution, verified evidence, precommitted comparison, bounded adjudication, and durable restart recovery without replay.
+
+See `docs/m4_5_conclusion_adjudication_plan.md`, `docs/m4_5_2_durable_conclusion_recovery.md`, `docs/m4_5_3_first_real_conclusion.md`, and `docs/m4_5_source_audit.md`.
 
 ## Near-term anti-drift rule
 
-The next work should increase Codexia's ability to conduct and falsify real computational experiments. Security, persistence, and transport hardening remain important, but should interrupt the M4 research line only for a concrete blocker, demonstrated vulnerability, or invariant violation rather than becoming the product goal themselves.
+The next work should automate the already-proven manual M4 research loop rather than invent another execution or evidence architecture. Security, persistence, and transport hardening should interrupt that line only for a concrete blocker, demonstrated vulnerability, or invariant violation.
 
 ## M5 — Bounded automation
 
-Planned after the manual experiment loop is proven.
+**Next active milestone.**
 
-Support limited autonomous exploration with explicit budgets, stop policies, and the existing authority boundaries. No unattended destructive or external write authority. M5 should automate an already-proven M4 research loop rather than invent a second execution architecture.
+Support limited autonomous exploration with explicit budgets, stop policies, and the existing authority boundaries. No unattended destructive or external write authority. M5 should automate the already-proven M4 research loop rather than invent a second execution architecture.
 
 ## M6 — Optional TUI
 
