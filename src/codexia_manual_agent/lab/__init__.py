@@ -28,6 +28,9 @@ from codexia_manual_agent.lab.conclusion_adjudication import (
     ConclusionScope,
     adjudicated_conclusion_from_dict,
 )
+from codexia_manual_agent.lab.conclusion_registry import (
+    SqliteAdjudicatedConclusionRegistry,
+)
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
     InvalidLabRecordError,
@@ -151,6 +154,7 @@ __all__ = [
     "RunExecutionEventReceipt",
     "RunExecutionPhase",
     "RunExecutionRecovery",
+    "SqliteAdjudicatedConclusionRegistry",
     "SqliteComparisonRegistry",
     "SqliteComparisonResultRegistry",
     "SqliteLabRegistry",
