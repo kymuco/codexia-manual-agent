@@ -84,8 +84,7 @@ The persisted row is not conclusion authority. M4.5.2 recovery re-recovers the M
 The child process receives only:
 
 - the SQLite database path;
-- the stable `policy_id`;
-- the expected deterministic `conclusion_id` for equality checking.
+- the stable `policy_id`.
 
 It constructs only recovery registries:
 
@@ -106,7 +105,7 @@ It does **not** construct:
 - a replacement comparison policy;
 - caller-authored conclusion text.
 
-The fresh process recovers and checks the exact policy, result, conclusion id/digest, bounded scope, `REFUTED` verdict, canonical summary, and both exact manifest digests.
+The fresh process independently recovers the conclusion identity and checks the exact policy, result, conclusion id/digest, bounded scope, `REFUTED` verdict, canonical summary, and both exact manifest digests. The parent then compares the recovered identity/digest against the conclusion published before restart.
 
 Before starting the child process, the parent records the bytes and `mtime_ns` of all four governed physical result files. After recovery, every file must remain byte-identical with unchanged modification time. The fresh process therefore demonstrates recovery rather than experiment replay.
 
