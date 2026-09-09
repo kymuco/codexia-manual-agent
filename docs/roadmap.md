@@ -123,7 +123,7 @@ See `docs/m3_2_durable_delegation_recovery.md` and `docs/m3_2_source_audit.md`.
 
 ## M4 — Computational Lab
 
-M4.1 through M4.3 are complete.
+M4.1 through M4.4 are complete.
 
 The M4 series turns Codexia's governed runtime into a reproducible computational research surface without widening execution authority.
 
@@ -190,15 +190,38 @@ See `docs/m4_3_governed_experiment_execution_plan.md`, `docs/m4_3_3_first_real_e
 
 ### M4.4 — Comparison and Falsification
 
-**Next active milestone.**
+**Complete.**
 
-Freeze comparison policy before opening the evidence it will judge: target metric, direction, threshold, repetition/seeds, aggregation, and failure/missing-run policy. Compare multiple verified runs or baselines and produce an evidence-bounded supported/refuted/inconclusive result without choosing the criterion after seeing the outcome.
+Primary invariant:
+
+```text
+verified evidence != precommitted comparison
+```
+
+M4.4 freezes one exact comparison policy before either arm has run evidence, admits only the final complete verified evidence set, and recomputes the same policy-local result after restart without rerunning experiments.
+
+Demonstrated vertical slice:
+
+- exact hypothesis/baseline/candidate manifest identity is frozen before either arm registers a run;
+- metric, direction, minimum effect, ordered repetition/seed identities, mean aggregation, and missing/failure policy are precommitted;
+- one unordered exact manifest pair admits only one deterministic v1 policy identity, preventing policy shopping and baseline/candidate reversal shopping;
+- freeze-vs-run ordering is serialized in the same SQLite trust domain rather than inferred from wall-clock timestamps;
+- both comparison arms must be irreversibly sealed, making the final run set complete before evaluation;
+- caller-supplied runs, metric values, subsets, thresholds, or alternate directions are not part of the evaluation API;
+- every admitted value is recovered through M4.3 physical evidence;
+- extra runs, seed/ordinal substitution, metric mismatch, evidence mutation, result tamper, and favorable partial aggregation fail closed;
+- complete means/effect use exact rational arithmetic and bind the original metric evidence identities;
+- a fresh Python process can reconstruct the exact policy → verified evidence → comparison result chain from durable state and physical files without rerunning experiments.
+
+The M4.4.3 closure fixture compares left-Riemann and trapezoid approximations of `∫₀¹x²dx` at `n=8`. The policy freezes a required lower-is-better improvement of at least `180` common-denominator error-numerator units. Verified evidence yields baseline `184`, candidate `8`, and effect `176`, so the precommitted claim is correctly **REFUTED** even though the candidate is substantially better.
+
+See `docs/m4_4_comparison_falsification_plan.md`, `docs/m4_4_2_verified_evidence_comparator.md`, `docs/m4_4_3_first_real_comparison.md`, and `docs/m4_4_source_audit.md`.
 
 ### M4.5 — Conclusion Adjudication
 
-Planned after M4.4 if the comparison slice demonstrates value.
+**Next active milestone.**
 
-Turn frozen comparison policy and verified evidence into reproducible conclusion adjudication. This milestone must not claim scientific truth beyond the declared policy and evidence lineage.
+Turn frozen comparison policy and verified evidence into reproducible conclusion adjudication. The next proof must preserve the distinction between a policy-local `SUPPORTED` / `REFUTED` / `INCONCLUSIVE` comparison result and an evidence-bounded scientific `Conclusion`; it must not silently upgrade either into scientific truth beyond the declared policy and evidence lineage.
 
 ## Near-term anti-drift rule
 
