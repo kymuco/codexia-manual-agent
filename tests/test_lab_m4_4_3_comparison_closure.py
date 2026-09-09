@@ -251,12 +251,13 @@ class M443ComparisonFalsificationClosureTests(unittest.TestCase):
                 frozen.policy.policy_id,
             ],
             cwd=self.workspace,
-            check=True,
+            check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
         )
+        self.assertEqual(completed.returncode, 0, msg=completed.stderr)
         recovered = json.loads(completed.stdout)
 
         self.assertEqual(recovered["policy_id"], frozen.policy.policy_id)
