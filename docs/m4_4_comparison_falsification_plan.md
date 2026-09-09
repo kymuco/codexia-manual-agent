@@ -60,6 +60,8 @@ After either experiment has a registered run:
 new pre-evidence policy freeze for that comparison = forbidden
 ```
 
+M4.4 v1 also admits exactly one frozen policy for one unordered exact manifest pair. The policy identity is deterministic from both experiment ids and manifest digests, independent of which arm is written first. Therefore a second threshold, metric, direction, seed plan, or baseline/candidate reversal for the same exact pair conflicts with the already-frozen policy instead of creating a menu of pre-registered criteria that could be selected after outcomes are known.
+
 A durable freeze receipt should bind the policy digest to the exact M4.2 `experiment_registered` event digest for each arm. Later runs may extend those experiment chronologies, but recovery must still prove that the frozen policy was anchored to the pre-run state.
 
 This does not provide hostile-database attestation. It provides causal ordering inside the existing same-host SQLite trust domain used by M3/M4.
@@ -103,13 +105,14 @@ Deliverables:
 - immutable digest-bound comparison-policy contract;
 - exact baseline/candidate manifest and hypothesis binding;
 - metric/direction/threshold/seeds/aggregation/missing-policy binding;
+- exactly one frozen policy per unordered exact manifest pair in v1;
 - durable freeze receipt anchored to both pre-run M4.2 experiment chronologies;
 - recovery and tamper/rebinding tests;
 - atomic exclusion against concurrent run registration through the shared SQLite trust domain.
 
 Exit gate:
 
-> Once either compared manifest has a registered run, Codexia cannot create a new policy that claims to have been frozen before evidence for that comparison.
+> Once a policy is frozen for an exact manifest pair, neither a different policy for that pair nor a new pre-evidence policy after either arm has a registered run can be admitted as another valid M4.4.1 freeze.
 
 ### M4.4.2 — Verified evidence comparator
 
