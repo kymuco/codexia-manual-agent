@@ -54,7 +54,7 @@ RECOVERY_PROGRAM = textwrap.dedent(
     comparisons = SqliteComparisonRegistry(lab)
     results = SqliteComparisonResultRegistry(comparisons, lab, physical)
 
-    frozen = comparisons.recover(policy_id)
+    frozen = comparisons.recover_policy(policy_id)
     result = results.recover_result(policy_id)
     print(json.dumps({
         "policy_id": frozen.policy.policy_id,
