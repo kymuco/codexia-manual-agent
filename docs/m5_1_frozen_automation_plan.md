@@ -13,14 +13,14 @@ automation intent != execution authority
 Temporal boundary:
 
 ```text
-frozen automation budget/stop policy before automated work
+frozen automation context/budget/stop policy before automated work
 !=
-budget/stop policy chosen after work has started
+context/budget/stop policy chosen after work has started
 ```
 
 ## Why M5.1 comes first
 
-A bounded loop is not bounded merely because code contains counters. If the target, run budget, or stop rules can be changed after the loop has begun, the automation can effectively enlarge its own search space after seeing intermediate evidence.
+A bounded loop is not bounded merely because code contains counters. If the target, execution context, run budget, or stop rules can be changed after the loop has begun, the automation can effectively enlarge or alter its search space after seeing intermediate evidence.
 
 M5.1 therefore freezes one automation plan against one already-frozen M4.4 comparison policy before either comparison arm advances beyond the policy-freeze point.
 
@@ -29,12 +29,17 @@ M5.1 therefore freezes one automation plan against one already-frozen M4.4 compa
 `AutomationPlan` binds:
 
 - deterministic `automation_id` derived from the stable M4.4 `policy_id`;
+- exact canonical existing `workspace_root`;
 - exact policy id/digest and comparison freeze digest;
 - exact baseline/candidate experiment ids and manifest digests;
 - exact number of policy-declared run slots (`2 * len(seeds)`);
 - an explicit `AutomationBudget`;
 - an explicit strict-v1 `AutomationStopPolicy`;
 - one canonical plan digest.
+
+The workspace is part of the scientific execution context rather than a UI convenience. M4.3 binds the process cwd/workspace into the exact governed proposal, and admitted Python can observe files relative to that workspace. Letting M5 choose a different workspace after automation starts would therefore change execution context while pretending to preserve the same experiment plan.
+
+M5.1 resolves `workspace_root` strictly to one canonical existing directory before plan creation and includes that path in `plan_digest`. Once the policy owns a frozen plan, switching to another workspace is the same kind of v1 identity conflict as switching budgets.
 
 The v1 budget contains:
 
@@ -70,7 +75,7 @@ The plan has no field for an approval decision, authorization receipt, capabilit
 
 ## One policy, one v1 automation identity
 
-M4.4 prevents comparison-policy shopping. M5.1 applies the same principle to automation budgets:
+M4.4 prevents comparison-policy shopping. M5.1 applies the same principle to automation context and budgets:
 
 ```text
 one exact frozen policy
@@ -78,13 +83,15 @@ one exact frozen policy
 → one frozen v1 plan
 ```
 
-After one plan is registered for a policy, a second plan with a larger or smaller budget is an identity conflict rather than an alternate plan that can be selected later.
+After one plan is registered for a policy, a second plan with another workspace or a larger/smaller budget is an identity conflict rather than an alternate plan that can be selected later.
 
 ## Admission boundary
 
 M5.1 v1 automates only the execution surface already proven in M4.3. Both comparison arms must decode as the admitted `python-inline-json-result.v1` profile through `PythonJsonExperimentSpec`.
 
 This deliberately rejects a paper automation plan for a manifest the current governed runtime cannot execute.
+
+The frozen workspace must also continue to resolve to the same canonical directory during plan recovery. If it disappears or is moved, recovery fails closed rather than silently selecting another cwd.
 
 ## Durable freeze
 
@@ -108,7 +115,7 @@ run registration wins
 
 No wall-clock comparison is used as the causal gate.
 
-The frozen record retains the exact baseline/candidate event anchors observed at registration. Recovery validates canonical JSON, indexes, digests, exact M4.4 policy lineage, exact manifest profiles, and those durable event anchors. Later valid runs do not invalidate the already-frozen plan.
+The frozen record retains the exact baseline/candidate event anchors observed at registration. Recovery validates canonical JSON, indexes, digests, exact M4.4 policy lineage, exact manifest profiles, canonical workspace, and those durable event anchors. Later valid runs do not invalidate the already-frozen plan.
 
 ## Adversarial regressions
 
@@ -117,6 +124,8 @@ The frozen record retains the exact baseline/candidate event anchors observed at
 - successful pre-run plan freeze and recovery after a later run is registered;
 - late freeze rejection after the first run;
 - budget-shopping rejection for the same policy identity;
+- workspace-substitution rejection for the same policy identity;
+- fail-closed recovery if the frozen workspace no longer exists at that path;
 - rejection when `max_runs` exceeds the frozen comparison run set;
 - rejection when authorization pause is disabled;
 - rejection of a non-M4.3 Python execution profile;
@@ -145,7 +154,7 @@ The shortest intended M5 path is:
 
 ### M5.1 — Frozen Automation Plan
 
-Freeze exact target, budget, and stop rules before automated work.
+Freeze exact target, workspace, budget, and stop rules before automated work.
 
 ### M5.2 — Governed Automation State Machine
 
@@ -159,4 +168,4 @@ Run the already-proven M4 comparison/conclusion vertical through the M5 coordina
 
 M5.1 is complete when the exact reviewed candidate proves:
 
-> One exact frozen M4.4 policy can acquire only one pre-run automation plan whose target, run budget, and mandatory stop rules are durable and immutable; the plan admits only the already-proven M4.3 execution profile and cannot itself create execution authority.
+> One exact frozen M4.4 policy can acquire only one pre-run automation plan whose canonical workspace, target, run budget, and mandatory stop rules are durable and immutable; the plan admits only the already-proven M4.3 execution profile and cannot itself create execution authority.
