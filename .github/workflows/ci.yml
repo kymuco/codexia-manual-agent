@@ -50,6 +50,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          # Hosted images may carry unrelated third-party apt sources. A stale
+          # Chrome index must not block installation of Ubuntu containment packages.
+          for source in /etc/apt/sources.list.d/*; do
+            if [ -f "$source" ] && grep -q 'dl.google.com' "$source"; then
+              sudo mv "$source" "$source.disabled"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y bubblewrap apparmor-profiles apparmor-utils
           profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
