@@ -31,6 +31,8 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.root = Path(self.tempdir.name).resolve()
+        self.workspace = self.root / "workspace"
+        self.workspace.mkdir()
         self.db = self.root / "m5-1.sqlite3"
         self.lab = SqliteLabRegistry(self.db)
         self.comparisons = SqliteComparisonRegistry(self.lab)
@@ -102,10 +104,17 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
             candidate,
         )
 
-    @staticmethod
-    def _plan(frozen, *, max_steps: int = 16, max_runs: int = 4):
+    def _plan(
+        self,
+        frozen,
+        *,
+        max_steps: int = 16,
+        max_runs: int = 4,
+        workspace_root: Path | None = None,
+    ):
         return AutomationPlan.create(
             frozen_policy=frozen,
+            workspace_root=workspace_root or self.workspace,
             budget=AutomationBudget.create(
                 max_steps=max_steps,
                 max_runs=max_runs,
@@ -118,12 +127,11 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
         frozen = self.automation.register_plan(plan)
 
         self.assertEqual(frozen.plan, plan)
+        self.assertEqual(frozen.plan.workspace_root, str(self.workspace.resolve()))
         self.assertEqual(frozen.plan.required_runs, 4)
         self.assertEqual(frozen.baseline_event_sequence, 0)
         self.assertEqual(frozen.candidate_event_sequence, 0)
-        self.assertTrue(
-            frozen.plan.stop_policy.pause_on_authorization_required
-        )
+        self.assertTrue(frozen.plan.stop_policy.pause_on_authorization_required)
 
         run = ExperimentRun.create(
             manifest=baseline,
@@ -160,6 +168,21 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
         with self.assertRaises(LabIdentityConflictError):
             self.automation.register_plan(alternate)
 
+    def test_same_policy_cannot_switch_workspace_after_freeze(self) -> None:
+        frozen_policy, _baseline, _candidate = self._frozen_policy()
+        first = self._plan(frozen_policy)
+        self.automation.register_plan(first)
+
+        alternate_workspace = self.root / "alternate-workspace"
+        alternate_workspace.mkdir()
+        alternate = self._plan(
+            frozen_policy,
+            workspace_root=alternate_workspace,
+        )
+        self.assertNotEqual(alternate.plan_digest, first.plan_digest)
+        with self.assertRaises(LabIdentityConflictError):
+            self.automation.register_plan(alternate)
+
     def test_run_budget_cannot_exceed_declared_comparison_set(self) -> None:
         frozen_policy, _baseline, _candidate = self._frozen_policy()
         with self.assertRaises(InvalidLabRecordError):
@@ -182,6 +205,17 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
         plan = self._plan(frozen_policy)
         with self.assertRaises(InvalidLabRecordError):
             self.automation.register_plan(plan)
+
+    def test_missing_frozen_workspace_fails_recovery(self) -> None:
+        frozen_policy, _baseline, _candidate = self._frozen_policy()
+        plan = self._plan(frozen_policy)
+        self.automation.register_plan(plan)
+
+        moved = self.root / "moved-workspace"
+        self.workspace.rename(moved)
+
+        with self.assertRaises(LabPersistenceIntegrityError):
+            self.automation.recover(plan.automation_id)
 
     def test_persisted_plan_tamper_fails_recovery(self) -> None:
         frozen_policy, _baseline, _candidate = self._frozen_policy()
