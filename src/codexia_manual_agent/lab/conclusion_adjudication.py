@@ -130,7 +130,7 @@ def _conclusion_id(result_digest: str) -> str:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AdjudicatedConclusion:
     schema_version: int
     conclusion_id: str
@@ -150,6 +150,11 @@ class AdjudicatedConclusion:
     verdict: ConclusionVerdict
     summary: str
     conclusion_digest: str
+
+    def __init__(self) -> None:
+        raise TypeError(
+            "AdjudicatedConclusion is derived state; use create() or the strict decoder"
+        )
 
     @classmethod
     def create(
@@ -252,25 +257,11 @@ class AdjudicatedConclusion:
             "verdict": verdict.value,
             "summary": summary,
         }
-        return cls(
-            schema_version=ADJUDICATED_CONCLUSION_SCHEMA_VERSION,
-            conclusion_id=conclusion_id,
-            scope=ConclusionScope.FROZEN_COMPARISON_POLICY_V1,
-            hypothesis_id=hypothesis.hypothesis_id,
-            hypothesis_digest=hypothesis.hypothesis_digest,
-            baseline_experiment_id=baseline_manifest.experiment_id,
-            baseline_manifest_digest=baseline_manifest.manifest_digest,
-            candidate_experiment_id=candidate_manifest.experiment_id,
-            candidate_manifest_digest=candidate_manifest.manifest_digest,
-            policy_id=policy.policy_id,
-            policy_digest=policy.policy_digest,
-            freeze_digest=frozen.freeze_digest,
-            result_id=result.result_id,
-            result_digest=result.result_digest,
-            comparison_outcome=outcome,
-            verdict=verdict,
-            summary=summary,
-            conclusion_digest=_digest(base),
+        return _construct_adjudicated_conclusion(
+            {
+                **base,
+                "conclusion_digest": _digest(base),
+            }
         )
 
     def __post_init__(self) -> None:
@@ -357,7 +348,9 @@ class AdjudicatedConclusion:
         return {**self._payload(), "conclusion_digest": self.conclusion_digest}
 
 
-def adjudicated_conclusion_from_dict(value: Any) -> AdjudicatedConclusion:
+def _construct_adjudicated_conclusion(
+    value: Mapping[str, Any],
+) -> AdjudicatedConclusion:
     data = _exact_keys(
         value,
         {
@@ -382,4 +375,14 @@ def adjudicated_conclusion_from_dict(value: Any) -> AdjudicatedConclusion:
         },
         "adjudicated conclusion",
     )
-    return AdjudicatedConclusion(**data)
+    instance = object.__new__(AdjudicatedConclusion)
+    for field_name, field_value in data.items():
+        object.__setattr__(instance, field_name, field_value)
+    instance.__post_init__()
+    return instance
+
+
+def adjudicated_conclusion_from_dict(value: Any) -> AdjudicatedConclusion:
+    if not isinstance(value, Mapping):
+        raise InvalidLabRecordError("adjudicated conclusion must be an object")
+    return _construct_adjudicated_conclusion(value)
