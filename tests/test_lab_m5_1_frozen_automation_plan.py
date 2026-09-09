@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from codexia_manual_agent.lab import (
@@ -222,7 +223,7 @@ class M51FrozenAutomationPlanTests(unittest.TestCase):
         plan = self._plan(frozen_policy)
         self.automation.register_plan(plan)
 
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection:
             row = connection.execute(
                 """
                 SELECT payload_json
