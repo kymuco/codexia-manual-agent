@@ -11,6 +11,7 @@ from pathlib import Path
 from codexia_manual_agent.authority import ApprovalMode, LocalApprovalAuthority
 from codexia_manual_agent.lab import (
     AutomationBudget,
+    AutomationClosurePhase,
     AutomationPhase,
     AutomationPlan,
     AutomationRunArm,
@@ -21,13 +22,12 @@ from codexia_manual_agent.lab import (
     ConclusionScope,
     ConclusionVerdict,
     ExperimentManifest,
+    GovernedAutomationClosure,
     GovernedAutomationStateMachine,
     Hypothesis,
     PYTHON_JSON_PROFILE,
-    SqliteAdjudicatedConclusionRegistry,
     SqliteAutomationPlanRegistry,
     SqliteComparisonRegistry,
-    SqliteComparisonResultRegistry,
     SqliteLabRegistry,
     SqlitePhysicalEvidenceRegistry,
     SqliteRunExecutionRegistry,
@@ -41,56 +41,39 @@ RECOVERY_PROGRAM = textwrap.dedent(
     import sys
     from pathlib import Path
 
-    from codexia_manual_agent.lab import (
-        GovernedAutomationStateMachine,
-        SqliteAdjudicatedConclusionRegistry,
-        SqliteAutomationPlanRegistry,
-        SqliteComparisonRegistry,
-        SqliteComparisonResultRegistry,
-        SqliteLabRegistry,
-        SqlitePhysicalEvidenceRegistry,
-        SqliteRunExecutionRegistry,
-    )
+    from codexia_manual_agent.lab import GovernedAutomationClosure, SqliteLabRegistry
     from codexia_manual_agent.session_events import SqliteSessionEventStore
 
     db = Path(sys.argv[1]).resolve()
     automation_id = sys.argv[2]
 
-    lab = SqliteLabRegistry(db)
-    m3 = SqliteSessionEventStore(db)
-    comparisons = SqliteComparisonRegistry(lab)
-    plans = SqliteAutomationPlanRegistry(comparisons, lab)
-    frozen_plan = plans.recover(automation_id)
-    policy_id = frozen_plan.plan.policy_id
-
-    automation = GovernedAutomationStateMachine(lab, m3)
-    state = automation.recover(automation_id)
-
-    executions = SqliteRunExecutionRegistry(lab, m3)
-    physical = SqlitePhysicalEvidenceRegistry(lab, executions)
-    results = SqliteComparisonResultRegistry(comparisons, lab, physical)
-    conclusions = SqliteAdjudicatedConclusionRegistry(comparisons, results, lab)
-    result = results.recover_result(policy_id)
-    conclusion = conclusions.recover(policy_id)
+    state = GovernedAutomationClosure(
+        SqliteLabRegistry(db),
+        SqliteSessionEventStore(db),
+    ).recover(automation_id)
+    if state.result is None or state.conclusion is None:
+        raise RuntimeError("M5.3 terminal recovery lacks result/conclusion")
 
     print(json.dumps({
-        "automation_id": frozen_plan.plan.automation_id,
-        "plan_digest": frozen_plan.plan.plan_digest,
-        "policy_id": policy_id,
+        "automation_id": state.automation_id,
+        "plan_digest": state.plan_digest,
+        "policy_id": state.policy_id,
         "phase": state.phase.value,
         "steps_used": state.steps_used,
-        "runs_started": state.runs_started,
+        "run_steps_used": state.run_steps_used,
+        "closure_steps_used": state.closure_steps_used,
+        "max_steps": state.max_steps,
         "runs_completed": state.runs_completed,
         "required_runs": state.required_runs,
-        "result_id": result.result_id,
-        "result_digest": result.result_digest,
-        "outcome": result.outcome.value,
-        "effect": result.effect,
-        "conclusion_id": conclusion.conclusion_id,
-        "conclusion_digest": conclusion.conclusion_digest,
-        "scope": conclusion.scope.value,
-        "verdict": conclusion.verdict.value,
-        "summary": conclusion.summary,
+        "result_id": state.result.result_id,
+        "result_digest": state.result.result_digest,
+        "outcome": state.result.outcome.value,
+        "effect": state.result.effect,
+        "conclusion_id": state.conclusion.conclusion_id,
+        "conclusion_digest": state.conclusion.conclusion_digest,
+        "scope": state.conclusion.scope.value,
+        "verdict": state.conclusion.verdict.value,
+        "summary": state.conclusion.summary,
     }, sort_keys=True, separators=(",", ":")))
     """
 ).strip()
@@ -117,16 +100,6 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
         self.plans = SqliteAutomationPlanRegistry(self.comparisons, self.lab)
         self.executions = SqliteRunExecutionRegistry(self.lab, self.m3)
         self.physical = SqlitePhysicalEvidenceRegistry(self.lab, self.executions)
-        self.results = SqliteComparisonResultRegistry(
-            self.comparisons,
-            self.lab,
-            self.physical,
-        )
-        self.conclusions = SqliteAdjudicatedConclusionRegistry(
-            self.comparisons,
-            self.results,
-            self.lab,
-        )
 
     @staticmethod
     def _fixture_source() -> str:
@@ -169,7 +142,7 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
             actor="m5.3-test-human",
         )
 
-    def test_real_refuted_m4_loop_runs_through_bounded_automation_and_recovers_without_replay(self) -> None:
+    def _register_plan(self, *, seeds: tuple[int, ...], max_steps: int):
         hypothesis = Hypothesis.create(
             statement=(
                 "For n=8, trapezoid integration reduces the exact common-denominator "
@@ -183,8 +156,6 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
         candidate = self._manifest(hypothesis, method="trapezoid")
         self.lab.register_experiment(hypothesis, baseline)
         self.lab.register_experiment(hypothesis, candidate)
-
-        seeds = (101, 202)
         policy = ComparisonPolicy.create(
             hypothesis=hypothesis,
             baseline_manifest=baseline,
@@ -200,16 +171,25 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
         plan = AutomationPlan.create(
             frozen_policy=frozen_policy,
             workspace_root=self.workspace,
-            budget=AutomationBudget.create(max_steps=12, max_runs=4),
+            budget=AutomationBudget.create(
+                max_steps=max_steps,
+                max_runs=len(seeds) * 2,
+            ),
         )
         frozen_plan = self.plans.register_plan(plan)
+        return frozen_plan, frozen_policy, baseline, candidate
 
+    def _drive_run_set(
+        self,
+        plan: AutomationPlan,
+        *,
+        seeds: tuple[int, ...],
+    ) -> tuple[GovernedAutomationStateMachine, list[str]]:
         machine = GovernedAutomationStateMachine(self.lab, self.m3)
-        expected_slots = (
-            (AutomationRunArm.BASELINE, 0, 101),
-            (AutomationRunArm.BASELINE, 1, 202),
-            (AutomationRunArm.CANDIDATE, 0, 101),
-            (AutomationRunArm.CANDIDATE, 1, 202),
+        expected_slots = tuple(
+            (arm, ordinal, seed)
+            for arm in (AutomationRunArm.BASELINE, AutomationRunArm.CANDIDATE)
+            for ordinal, seed in enumerate(seeds)
         )
         run_ids: list[str] = []
 
@@ -238,7 +218,7 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
             )
             self.assertFalse(output.exists())
 
-            # The coordinator remains inert until authority is supplied externally.
+            # Repeated orchestration is inert until authority arrives externally.
             self.assertEqual(
                 machine.advance(plan.automation_id).to_dict(),
                 paused.to_dict(),
@@ -254,11 +234,21 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
 
         complete = machine.recover(plan.automation_id)
         self.assertEqual(complete.phase, AutomationPhase.RUN_SET_COMPLETE)
-        self.assertEqual(complete.steps_used, 12)
-        self.assertEqual(complete.runs_started, 4)
-        self.assertEqual(complete.runs_completed, 4)
-        self.assertEqual(complete.required_runs, 4)
+        self.assertEqual(complete.steps_used, len(seeds) * 2 * 3)
+        self.assertEqual(complete.runs_started, len(seeds) * 2)
+        self.assertEqual(complete.runs_completed, len(seeds) * 2)
+        self.assertEqual(complete.required_runs, len(seeds) * 2)
         self.assertIsNone(complete.proposal)
+        return machine, run_ids
+
+    def test_real_refuted_m4_loop_runs_through_bounded_automation_and_recovers_without_replay(self) -> None:
+        seeds = (101, 202)
+        frozen_plan, frozen_policy, _baseline, _candidate = self._register_plan(
+            seeds=seeds,
+            max_steps=16,
+        )
+        plan = frozen_plan.plan
+        machine, run_ids = self._drive_run_set(plan, seeds=seeds)
 
         physical_before: dict[str, tuple[Path, bytes, int]] = {}
         for run_id in run_ids:
@@ -270,32 +260,80 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
                 path.stat().st_mtime_ns,
             )
 
-        # M5.3 owns the post-run scientific closure and may crash between the
-        # two irreversible experiment seals. M5.2 recovery must remain stable.
-        self.lab.seal_experiment(baseline.experiment_id, baseline.manifest_digest)
-        one_arm_sealed = GovernedAutomationStateMachine(
+        closure = GovernedAutomationClosure(self.lab, self.m3)
+        initial = closure.recover(plan.automation_id)
+        self.assertEqual(initial.phase, AutomationClosurePhase.RUN_SET_COMPLETE)
+        self.assertEqual(initial.steps_used, 12)
+        self.assertEqual(initial.run_steps_used, 12)
+        self.assertEqual(initial.closure_steps_used, 0)
+        self.assertEqual(initial.max_steps, 16)
+        self.assertIsNone(initial.result)
+        self.assertIsNone(initial.conclusion)
+
+        baseline_sealed = closure.advance(plan.automation_id)
+        self.assertEqual(
+            baseline_sealed.phase,
+            AutomationClosurePhase.BASELINE_EXPERIMENT_SEALED,
+        )
+        self.assertEqual(baseline_sealed.steps_used, 13)
+        self.assertEqual(baseline_sealed.closure_steps_used, 1)
+
+        # A fresh coordinator after the first irreversible arm seal must derive
+        # the same stage and continue rather than requiring atomic two-arm sealing.
+        fresh_after_first_seal = GovernedAutomationClosure(
             SqliteLabRegistry(self.db),
             SqliteSessionEventStore(self.db),
         ).recover(plan.automation_id)
-        self.assertEqual(one_arm_sealed.phase, AutomationPhase.RUN_SET_COMPLETE)
-        self.assertEqual(one_arm_sealed.steps_used, 12)
+        self.assertEqual(fresh_after_first_seal.to_dict(), baseline_sealed.to_dict())
 
-        self.lab.seal_experiment(candidate.experiment_id, candidate.manifest_digest)
-        both_arms_sealed = machine.recover(plan.automation_id)
-        self.assertEqual(both_arms_sealed.phase, AutomationPhase.RUN_SET_COMPLETE)
+        experiments_sealed = closure.advance(plan.automation_id)
+        self.assertEqual(
+            experiments_sealed.phase,
+            AutomationClosurePhase.EXPERIMENTS_SEALED,
+        )
+        self.assertEqual(experiments_sealed.steps_used, 14)
+        self.assertEqual(experiments_sealed.closure_steps_used, 2)
+        self.assertIsNone(experiments_sealed.result)
 
-        result = self.results.evaluate(frozen_policy.policy.policy_id)
-        self.assertEqual(result.outcome, ComparisonOutcome.REFUTED)
-        self.assertEqual(result.baseline_mean, "184")
-        self.assertEqual(result.candidate_mean, "8")
-        self.assertEqual(result.effect, "176")
+        compared = closure.advance(plan.automation_id)
+        self.assertEqual(compared.phase, AutomationClosurePhase.COMPARISON_COMPLETE)
+        self.assertEqual(compared.steps_used, 15)
+        self.assertEqual(compared.closure_steps_used, 3)
+        self.assertIsNotNone(compared.result)
+        assert compared.result is not None
+        self.assertEqual(compared.result.outcome, ComparisonOutcome.REFUTED)
+        self.assertEqual(compared.result.baseline_mean, "184")
+        self.assertEqual(compared.result.candidate_mean, "8")
+        self.assertEqual(compared.result.effect, "176")
+        self.assertIsNone(compared.conclusion)
 
-        conclusion = self.conclusions.publish(frozen_policy.policy.policy_id)
-        self.assertEqual(conclusion.scope, ConclusionScope.FROZEN_COMPARISON_POLICY_V1)
-        self.assertEqual(conclusion.verdict, ConclusionVerdict.REFUTED)
-        self.assertEqual(conclusion.summary, REFUTED_SUMMARY)
-        self.assertEqual(conclusion.result_id, result.result_id)
-        self.assertEqual(conclusion.policy_id, frozen_policy.policy.policy_id)
+        terminal = closure.advance(plan.automation_id)
+        self.assertEqual(terminal.phase, AutomationClosurePhase.STOPPED_CONCLUSION)
+        self.assertEqual(terminal.steps_used, 16)
+        self.assertEqual(terminal.run_steps_used, 12)
+        self.assertEqual(terminal.closure_steps_used, 4)
+        self.assertEqual(terminal.runs_completed, 4)
+        self.assertEqual(terminal.required_runs, 4)
+        self.assertIsNotNone(terminal.result)
+        self.assertIsNotNone(terminal.conclusion)
+        assert terminal.result is not None
+        assert terminal.conclusion is not None
+        self.assertEqual(terminal.result.result_id, compared.result.result_id)
+        self.assertEqual(terminal.conclusion.scope, ConclusionScope.FROZEN_COMPARISON_POLICY_V1)
+        self.assertEqual(terminal.conclusion.verdict, ConclusionVerdict.REFUTED)
+        self.assertEqual(terminal.conclusion.summary, REFUTED_SUMMARY)
+        self.assertEqual(terminal.conclusion.result_id, terminal.result.result_id)
+        self.assertEqual(terminal.policy_id, frozen_policy.policy.policy_id)
+
+        # stop_on_conclusion is terminal: another advance cannot create more work.
+        self.assertEqual(
+            closure.advance(plan.automation_id).to_dict(),
+            terminal.to_dict(),
+        )
+        self.assertEqual(
+            machine.recover(plan.automation_id).phase,
+            AutomationPhase.RUN_SET_COMPLETE,
+        )
 
         completed = subprocess.run(
             [
@@ -318,17 +356,25 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
         self.assertEqual(recovered["automation_id"], frozen_plan.plan.automation_id)
         self.assertEqual(recovered["plan_digest"], frozen_plan.plan.plan_digest)
         self.assertEqual(recovered["policy_id"], frozen_policy.policy.policy_id)
-        self.assertEqual(recovered["phase"], AutomationPhase.RUN_SET_COMPLETE.value)
-        self.assertEqual(recovered["steps_used"], 12)
-        self.assertEqual(recovered["runs_started"], 4)
+        self.assertEqual(
+            recovered["phase"],
+            AutomationClosurePhase.STOPPED_CONCLUSION.value,
+        )
+        self.assertEqual(recovered["steps_used"], 16)
+        self.assertEqual(recovered["run_steps_used"], 12)
+        self.assertEqual(recovered["closure_steps_used"], 4)
+        self.assertEqual(recovered["max_steps"], 16)
         self.assertEqual(recovered["runs_completed"], 4)
         self.assertEqual(recovered["required_runs"], 4)
-        self.assertEqual(recovered["result_id"], result.result_id)
-        self.assertEqual(recovered["result_digest"], result.result_digest)
+        self.assertEqual(recovered["result_id"], terminal.result.result_id)
+        self.assertEqual(recovered["result_digest"], terminal.result.result_digest)
         self.assertEqual(recovered["outcome"], ComparisonOutcome.REFUTED.value)
         self.assertEqual(recovered["effect"], "176")
-        self.assertEqual(recovered["conclusion_id"], conclusion.conclusion_id)
-        self.assertEqual(recovered["conclusion_digest"], conclusion.conclusion_digest)
+        self.assertEqual(recovered["conclusion_id"], terminal.conclusion.conclusion_id)
+        self.assertEqual(
+            recovered["conclusion_digest"],
+            terminal.conclusion.conclusion_digest,
+        )
         self.assertEqual(
             recovered["scope"],
             ConclusionScope.FROZEN_COMPARISON_POLICY_V1.value,
@@ -339,6 +385,31 @@ class M53FirstRealBoundedAutomationClosureTests(unittest.TestCase):
         for path, before_bytes, before_mtime in physical_before.values():
             self.assertEqual(path.read_bytes(), before_bytes)
             self.assertEqual(path.stat().st_mtime_ns, before_mtime)
+
+    def test_frozen_budget_can_stop_after_comparison_before_conclusion(self) -> None:
+        seeds = (101,)
+        frozen_plan, _frozen_policy, _baseline, _candidate = self._register_plan(
+            seeds=seeds,
+            max_steps=9,
+        )
+        plan = frozen_plan.plan
+        self._drive_run_set(plan, seeds=seeds)
+
+        closure = GovernedAutomationClosure(self.lab, self.m3)
+        self.assertEqual(closure.advance(plan.automation_id).steps_used, 7)
+        self.assertEqual(closure.advance(plan.automation_id).steps_used, 8)
+        stopped = closure.advance(plan.automation_id)
+
+        self.assertEqual(stopped.phase, AutomationClosurePhase.STOPPED_BUDGET)
+        self.assertEqual(stopped.steps_used, 9)
+        self.assertEqual(stopped.run_steps_used, 6)
+        self.assertEqual(stopped.closure_steps_used, 3)
+        self.assertIsNotNone(stopped.result)
+        self.assertIsNone(stopped.conclusion)
+        self.assertEqual(
+            closure.advance(plan.automation_id).to_dict(),
+            stopped.to_dict(),
+        )
 
 
 if __name__ == "__main__":
