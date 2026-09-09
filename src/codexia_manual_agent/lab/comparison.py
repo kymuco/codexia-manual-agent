@@ -12,7 +12,7 @@ from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from codexia_manual_agent.lab.errors import (
     EvidenceBindingError,
@@ -190,6 +190,32 @@ def _same_hypothesis(manifest: ExperimentManifest, hypothesis: Hypothesis) -> bo
     )
 
 
+def _comparison_policy_id(
+    baseline_experiment_id: str,
+    baseline_manifest_digest: str,
+    candidate_experiment_id: str,
+    candidate_manifest_digest: str,
+) -> str:
+    """One deterministic v1 policy identity for one unordered exact manifest pair."""
+
+    arms = sorted(
+        (
+            (baseline_experiment_id, baseline_manifest_digest),
+            (candidate_experiment_id, candidate_manifest_digest),
+        )
+    )
+    scope = _canonical_json(
+        {
+            "schema": "codexia.m4.4.comparison-scope.v1",
+            "arms": [
+                {"experiment_id": experiment_id, "manifest_digest": manifest_digest}
+                for experiment_id, manifest_digest in arms
+            ],
+        }
+    )
+    return str(uuid5(NAMESPACE_URL, scope))
+
+
 @dataclass(frozen=True, slots=True)
 class ComparisonPolicy:
     schema_version: int
@@ -253,7 +279,17 @@ class ComparisonPolicy:
         _validate_unit(metric_unit)
         _validate_effect(minimum_effect)
         normalized_seeds = _validate_seeds(seeds)
-        policy_id = policy_id or str(uuid4())
+        expected_policy_id = _comparison_policy_id(
+            baseline_manifest.experiment_id,
+            baseline_manifest.manifest_digest,
+            candidate_manifest.experiment_id,
+            candidate_manifest.manifest_digest,
+        )
+        if policy_id is not None and policy_id != expected_policy_id:
+            raise InvalidLabRecordError(
+                "policy_id must be the deterministic identity of the exact manifest pair"
+            )
+        policy_id = expected_policy_id
         created_at = created_at or _new_timestamp()
         _validate_uuid(policy_id, "policy_id")
         _validate_timestamp(created_at, "created_at")
@@ -308,6 +344,16 @@ class ComparisonPolicy:
         _validate_digest(self.candidate_manifest_digest, "candidate_manifest_digest")
         if self.baseline_experiment_id == self.candidate_experiment_id:
             raise EvidenceBindingError("Comparison arms must use distinct experiments")
+        expected_policy_id = _comparison_policy_id(
+            self.baseline_experiment_id,
+            self.baseline_manifest_digest,
+            self.candidate_experiment_id,
+            self.candidate_manifest_digest,
+        )
+        if self.policy_id != expected_policy_id:
+            raise InvalidLabRecordError(
+                "policy_id does not match the deterministic exact-manifest-pair identity"
+            )
         try:
             direction = ComparisonDirection(self.direction)
             aggregation = ComparisonAggregation(self.aggregation)
