@@ -16,7 +16,6 @@ from codexia_manual_agent.lab import (
     EvidenceBindingError,
     ExperimentManifest,
     ExperimentRun,
-    FrozenComparisonPolicy,
     Hypothesis,
     InvalidLabRecordError,
     LabIdentityConflictError,
@@ -24,7 +23,6 @@ from codexia_manual_agent.lab import (
     LabRegistryStateError,
     SqliteComparisonRegistry,
     SqliteLabRegistry,
-    frozen_comparison_policy_from_dict,
 )
 
 
@@ -236,17 +234,29 @@ class FrozenComparisonPolicyTests(unittest.TestCase):
                 frozen.policy.policy_id
             )
 
-    def test_freeze_anchor_tamper_is_detected(self) -> None:
+    def test_freeze_anchor_tamper_is_detected_after_restart(self) -> None:
         frozen = self.comparisons.register_policy(self._policy())
-        value = frozen.to_dict()
-        value["baseline_event_digest"] = "0" * 64
-        payload = frozen_comparison_policy_from_dict(
-            {
-                **value,
-                "freeze_digest": frozen.freeze_digest,
-            }
-        )
-        self.assertIsInstance(payload, FrozenComparisonPolicy)
+        with closing(sqlite3.connect(self.db)) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM lab_comparison_policy_freezes WHERE policy_id = ?",
+                (frozen.policy.policy_id,),
+            ).fetchone()
+            assert row is not None
+            payload = json.loads(row[0])
+            payload["baseline_event_digest"] = "0" * 64
+            connection.execute(
+                "UPDATE lab_comparison_policy_freezes SET payload_json = ? WHERE policy_id = ?",
+                (
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    frozen.policy.policy_id,
+                ),
+            )
+            connection.commit()
+
+        with self.assertRaises(LabPersistenceIntegrityError):
+            SqliteComparisonRegistry(SqliteLabRegistry(self.db)).recover_policy(
+                frozen.policy.policy_id
+            )
 
     def test_unknown_policy_is_rejected(self) -> None:
         with self.assertRaises(InvalidLabRecordError):
