@@ -126,6 +126,22 @@ class M52GovernedAutomationTests(unittest.TestCase):
             actor="m5.2-test-human",
         )
 
+    def _complete_run_set(self, plan) -> None:
+        machine = self._machine()
+        for _ in range(2):
+            registered = machine.advance(plan.automation_id)
+            self.assertEqual(registered.phase, AutomationPhase.RUN_REGISTERED)
+            paused = machine.advance(plan.automation_id)
+            self.assertEqual(paused.phase, AutomationPhase.PAUSED_AUTHORIZATION_REQUIRED)
+            machine.continue_authorized(
+                plan.automation_id,
+                receipt=self._approve(paused),
+            )
+        self.assertEqual(
+            machine.recover(plan.automation_id).phase,
+            AutomationPhase.RUN_SET_COMPLETE,
+        )
+
     def test_pauses_before_process_and_fresh_recovery_keeps_exact_proposal(self) -> None:
         plan, _baseline, _candidate = self._plan()
         machine = self._machine()
@@ -209,6 +225,20 @@ class M52GovernedAutomationTests(unittest.TestCase):
             path = self.workspace / ".codexia" / "m4-runs" / run_id / "result.json"
             self.assertEqual(path.read_bytes(), before_bytes)
             self.assertEqual(path.stat().st_mtime_ns, before_mtime)
+
+    def test_completed_run_set_remains_recoverable_across_m5_3_arm_sealing(self) -> None:
+        plan, baseline, candidate = self._plan()
+        self._complete_run_set(plan)
+
+        self.lab.seal_experiment(baseline.experiment_id, baseline.manifest_digest)
+        after_first_seal = self._machine().recover(plan.automation_id)
+        self.assertEqual(after_first_seal.phase, AutomationPhase.RUN_SET_COMPLETE)
+        self.assertEqual(after_first_seal.runs_completed, 2)
+
+        self.lab.seal_experiment(candidate.experiment_id, candidate.manifest_digest)
+        after_second_seal = self._machine().recover(plan.automation_id)
+        self.assertEqual(after_second_seal.phase, AutomationPhase.RUN_SET_COMPLETE)
+        self.assertEqual(after_second_seal.to_dict(), after_first_seal.to_dict())
 
     def test_step_budget_can_stop_at_prepared_authorization_boundary(self) -> None:
         plan, _baseline, _candidate = self._plan(max_steps=2, max_runs=2)
