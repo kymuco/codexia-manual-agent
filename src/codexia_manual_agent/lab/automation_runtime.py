@@ -222,7 +222,7 @@ class GovernedAutomationStateMachine:
             "workspace": workspace_root,
             "prompt_version": _AUTOMATION_SESSION_PROMPT_VERSION,
             "mode": _AUTOMATION_SESSION_MODE,
-            "capabilities": ["execute_process"],
+            "capabilities": ("execute_process",),
             "provider": _AUTOMATION_SESSION_PROVIDER,
             "title": None,
             "model": None,
@@ -619,10 +619,6 @@ class GovernedAutomationStateMachine:
             break
 
         if active is None:
-            if baseline.experiment_sealed != candidate.experiment_sealed:
-                raise LabPersistenceIntegrityError(
-                    "Only one M5.2 comparison arm was sealed after run-set completion"
-                )
             return self._state(
                 plan,
                 AutomationPhase.RUN_SET_COMPLETE,
@@ -630,7 +626,8 @@ class GovernedAutomationStateMachine:
                 runs_started,
                 runs_completed,
                 None,
-                "Exact frozen run set is complete; comparison/conclusion remain M5.3 work",
+                "Exact frozen run set is complete; experiment sealing, comparison, and "
+                "conclusion remain M5.3 work",
             )
 
         if active.stage == 0:
