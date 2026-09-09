@@ -199,6 +199,37 @@ class FrozenComparisonPolicyTests(unittest.TestCase):
                 with self.assertRaises(InvalidLabRecordError):
                     self._policy(seeds=seeds)
 
+    def test_policy_id_is_deterministic_for_exact_unordered_manifest_pair(self) -> None:
+        policy = self._policy()
+        reversed_policy = self._policy(
+            baseline_manifest=self.candidate,
+            candidate_manifest=self.baseline,
+        )
+        self.assertEqual(policy.policy_id, reversed_policy.policy_id)
+        with self.assertRaises(InvalidLabRecordError):
+            self._policy(policy_id=str(uuid4()))
+
+    def test_same_manifest_pair_cannot_freeze_multiple_criteria(self) -> None:
+        first = self._policy()
+        self.comparisons.register_policy(first)
+        alternate_threshold = self._policy(minimum_effect=2)
+        self.assertEqual(alternate_threshold.policy_id, first.policy_id)
+
+        with self.assertRaises(LabIdentityConflictError):
+            self.comparisons.register_policy(alternate_threshold)
+
+    def test_reversed_arms_cannot_create_a_second_frozen_policy(self) -> None:
+        first = self._policy()
+        self.comparisons.register_policy(first)
+        reversed_policy = self._policy(
+            baseline_manifest=self.candidate,
+            candidate_manifest=self.baseline,
+        )
+        self.assertEqual(reversed_policy.policy_id, first.policy_id)
+
+        with self.assertRaises(LabIdentityConflictError):
+            self.comparisons.register_policy(reversed_policy)
+
     def test_policy_id_cannot_rebind_to_different_exact_policy(self) -> None:
         policy = self._policy()
         self.comparisons.register_policy(policy)
