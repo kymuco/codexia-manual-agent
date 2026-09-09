@@ -48,6 +48,8 @@ It does **not** accept:
 - caller-selected evidence records;
 - alternate policy/result digests.
 
+The normal dataclass constructor is disabled as an authoring path as well. `AdjudicatedConclusion(...)` cannot be used to bypass `create()` by supplying semantic fields directly. Valid construction is routed through the exact-object creation path or the structure-only strict decoder.
+
 The constructor verifies the full relationship:
 
 ```text
@@ -81,6 +83,8 @@ The runtime generates one bounded canonical summary per outcome.
 For example, a refuted comparison is summarized as refutation **limited to the declared frozen policy and evidence**. A caller cannot replace that wording with a stronger statement such as “the hypothesis is universally false” through the normal creation path.
 
 Direct decoding also requires the canonical summary associated with the embedded comparison outcome. Changing the wording or verdict while keeping the old digest fails before the record is admitted.
+
+The decoder is a structural/canonical decoder, not a provenance authority. A fully rewritten standalone payload with freshly recomputed identities is not considered scientifically authoritative merely because it decodes. M4.5.2 must re-derive durable validity from authoritative M4.4 state.
 
 ## Deterministic identity
 
@@ -130,6 +134,7 @@ M4.5.1 also does not claim:
 `tests/test_lab_conclusion_adjudication.py` covers:
 
 - absence of caller verdict/summary/id parameters on normal creation;
+- disabled direct semantic dataclass construction;
 - exact supported/refuted/inconclusive mapping;
 - deterministic identity/digest for one exact result;
 - baseline/candidate reversal rejection;
