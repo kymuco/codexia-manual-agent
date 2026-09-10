@@ -153,6 +153,19 @@ def test_worker_or_codexia_statement_cannot_be_human_objective() -> None:
         WorkHandoff.create(objective=worker_statement)
 
 
+def test_existing_worker_statement_cannot_be_relabelled_human_without_digest_failure() -> None:
+    worker_statement = WorkStatement.create(
+        author_kind=WorkActorKind.WORKER,
+        actor="chatgpt",
+        text="Continue with the next PR.",
+    )
+    tampered = worker_statement.to_dict()
+    tampered["author_kind"] = WorkActorKind.HUMAN.value
+
+    with pytest.raises(InvalidWorkRecordError, match="statement digest"):
+        WorkStatement.from_dict(tampered)
+
+
 def test_inferred_intent_cannot_claim_human_authorship() -> None:
     objective = _human("Prepare a useful answer while I work on something else.")
     handoff = WorkHandoff.create(objective=objective)
