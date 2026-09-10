@@ -17,6 +17,7 @@ Codexia-authored continuation != human instruction
 live worker output != admitted continuation
 conversation identity != authorship proof
 human chat activity invalidates stale continuation
+worker output from work A != follow-up for work B
 ```
 
 ## Existing transport
@@ -86,11 +87,14 @@ This is the first concrete implementation of the desired property that the human
 
 A completed peer turn exposes `followup_proposal()`, which binds the exact captured WORKER statement to the new cursor digest as a fresh M6.2 `ContinuationProposal` candidate.
 
+The peer turn also retains the exact handoff and interpretation identities/digests inherited from the admission. `followup_proposal()` requires those exact bindings again, so worker output from one delegated work cannot be transplanted into another work merely by passing different arguments to the convenience bridge.
+
 This is provenance wiring only:
 
 ```text
-captured worker response
-→ candidate proposal
+captured worker response from work A
+→ candidate proposal for exact work A
+!= proposal for work B
 != admitted continuation
 ```
 
@@ -124,4 +128,4 @@ M6.3 does not yet provide:
 
 ## Exit gate
 
-M6.3 is complete when an existing ChatGPT conversation can be attached, a fresh M6.2-admitted continuation can be sent as explicitly CODEXIA-authored work, the resulting ChatGPT answer is captured as WORKER output, a human-entered turn supersedes stale continuation without a mode switch, and the captured worker answer can become a new proposal candidate without ever being promoted to human authorship or execution authority.
+M6.3 is complete when an existing ChatGPT conversation can be attached, a fresh M6.2-admitted continuation can be sent as explicitly CODEXIA-authored work, the resulting ChatGPT answer is captured as WORKER output, a human-entered turn supersedes stale continuation without a mode switch, and the captured worker answer can become a new exact-work proposal candidate without being rebound to another work, promoted to human authorship, or treated as execution authority.
