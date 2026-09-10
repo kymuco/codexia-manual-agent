@@ -69,6 +69,24 @@ This preserves:
 worker suggestion != human instruction
 ```
 
+### Attribution non-claim
+
+M6.1 preserves attribution that has already been established by its caller; it does **not** authenticate the physical origin of a message.
+
+In particular:
+
+```text
+WorkActorKind.HUMAN
+!=
+cryptographic proof that a human typed the text
+```
+
+A capture/integration layer must establish whether an incoming ChatGPT-site message, Codexia continuation, worker output, or direct operator message should be attributed as HUMAN/CODEXIA/WORKER/SYSTEM before constructing the record. That trustworthy capture boundary belongs to the later real peer-loop integration work.
+
+Once a `WorkStatement` exists, its author kind, actor, text, and identity are jointly digest-bound. The regression suite includes actor-relabel tampering: changing an already-created worker statement to `human` without recreating its exact digest fails closed.
+
+Therefore M6.1 claims provenance preservation, not provenance authentication.
+
 ## Handoff versus interpretation audit
 
 The initial draft embedded `WorkIntentInterpretation` inside `WorkHandoff`. Source review rejected that shape because it would make a model-produced interpretation part of the identity of the human-authored delegation.
@@ -172,7 +190,8 @@ All M6.1 records use exact-key decoders and canonical SHA-256 digests.
 
 The regression suite verifies:
 
-- attributed statement tamper is rejected;
+- attributed statement text tamper is rejected;
+- actor-kind relabel tamper is rejected;
 - extra handoff fields are rejected;
 - an interpretation cannot bind a statement from another handoff;
 - an attention assessment cannot use an interpretation belonging to another handoff;
@@ -188,6 +207,8 @@ It also does not decide whether a worker's proposed next action should be admitt
 worker proposal != admitted continuation
 ```
 
+M6.1 also does not authenticate message origin at a provider/UI boundary, send Codexia-authored messages into ChatGPT, or distinguish a live human-site interaction from automation. Those are integration responsibilities, not semantic-record claims.
+
 ## Audit conclusion
 
-The M6.1 source surface is a semantic contract layer only. It makes human work handoff, derived intent interpretation, resource provenance, and dynamic attention judgment explicit without widening Codexia's existing execution authority.
+The M6.1 source surface is a semantic contract layer only. It makes human work handoff, derived intent interpretation, resource provenance, and dynamic attention judgment explicit without widening Codexia's existing execution authority. It preserves already-established authorship without claiming to authenticate the originating human or provider event.
