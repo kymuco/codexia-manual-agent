@@ -6,6 +6,8 @@ import pytest
 
 from codexia_manual_agent.work import (
     AttentionAlternativeShape,
+    AttentionConstraintCheck,
+    AttentionConstraintStatus,
     AttentionDisposition,
     AttentionOverride,
     AttentionReversibility,
@@ -123,6 +125,25 @@ def _admission(
     )
 
 
+def _checks(
+    handoff: WorkHandoff,
+    *,
+    status: AttentionConstraintStatus = AttentionConstraintStatus.CLEAR,
+) -> tuple[AttentionConstraintCheck, ...]:
+    return tuple(
+        AttentionConstraintCheck.create(
+            constraint=constraint,
+            status=status,
+            reason=(
+                "The exact human attention rule applies at this checkpoint."
+                if status is AttentionConstraintStatus.TRIGGERED
+                else "The exact human attention rule does not apply at this checkpoint."
+            ),
+        )
+        for constraint in handoff.attention_constraints
+    )
+
+
 def _context(
     handoff: WorkHandoff,
     interpretation: WorkIntentInterpretation,
@@ -132,23 +153,27 @@ def _context(
     reversibility: AttentionReversibility = AttentionReversibility.REVERSIBLE,
     trajectory_impact: AttentionTrajectoryImpact = AttentionTrajectoryImpact.ROUTINE,
     alternatives: AttentionAlternativeShape = AttentionAlternativeShape.NONE,
-    triggered_attention_constraints: tuple[WorkStatement, ...] = (),
+    attention_constraint_checks: tuple[AttentionConstraintCheck, ...] | None = None,
 ) -> DynamicAttentionContext:
     evidence = _statement(
         WorkActorKind.SYSTEM,
         "ci",
         "The observed failure is bounded to the already-delegated validation step.",
     )
+    if attention_constraint_checks is None:
+        attention_constraint_checks = _checks(handoff)
     return DynamicAttentionContext.create(
         handoff=handoff,
         interpretation=interpretation,
         proposal=proposal,
         admission=admission,
+        context_builder_kind=WorkActorKind.CODEXIA,
+        context_builder="codexia",
         basis_statements=(proposal.statement, evidence),
         reversibility=reversibility,
         trajectory_impact=trajectory_impact,
         alternatives=alternatives,
-        triggered_attention_constraints=triggered_attention_constraints,
+        attention_constraint_checks=attention_constraint_checks,
     )
 
 
@@ -231,7 +256,10 @@ def test_explicit_attention_constraint_overrides_keep_moving_recommendation() ->
         proposal,
         admission,
         trajectory_impact=AttentionTrajectoryImpact.DIRECTIONAL,
-        triggered_attention_constraints=(constraint,),
+        attention_constraint_checks=_checks(
+            handoff,
+            status=AttentionConstraintStatus.TRIGGERED,
+        ),
     )
 
     decision = DynamicAttentionDecision.evaluate(
@@ -247,6 +275,43 @@ def test_explicit_attention_constraint_overrides_keep_moving_recommendation() ->
         urgency=AttentionUrgency.HIGH,
         reason="An explicit human attention constraint applies at this checkpoint.",
         requested_response="Confirm or reject the proposed core architecture change.",
+    )
+
+    assert decision.needs_human is True
+    assert decision.override is AttentionOverride.EXPLICIT_HUMAN_CONSTRAINT
+
+
+def test_uncertain_explicit_attention_constraint_fails_closed_to_human() -> None:
+    handoff, interpretation, constraint = _work(with_attention_constraint=True)
+    assert constraint is not None
+    proposal = _proposal(handoff, interpretation)
+    admission = _admission(handoff, interpretation, proposal)
+    check = AttentionConstraintCheck.create(
+        constraint=constraint,
+        status=AttentionConstraintStatus.UNCERTAIN,
+        reason="Current evidence is insufficient to determine whether the rule applies.",
+    )
+    context = _context(
+        handoff,
+        interpretation,
+        proposal,
+        admission,
+        attention_constraint_checks=(check,),
+    )
+
+    decision = DynamicAttentionDecision.evaluate(
+        handoff=handoff,
+        interpretation=interpretation,
+        proposal=proposal,
+        admission=admission,
+        context=context,
+        assessor_kind=WorkActorKind.CODEXIA,
+        assessor="codexia",
+        cognitive_disposition=AttentionDisposition.KEEP_MOVING,
+        confidence_basis_points=6500,
+        urgency=AttentionUrgency.NORMAL,
+        reason="The explicit attention constraint cannot be resolved safely from current context.",
+        requested_response="Clarify whether this step is inside the attention boundary.",
     )
 
     assert decision.needs_human is True
@@ -325,8 +390,23 @@ def test_worker_revision_need_does_not_automatically_interrupt_human() -> None:
     assert decision.override is AttentionOverride.NONE
 
 
-def test_foreign_attention_constraint_cannot_be_smuggled_into_context() -> None:
-    handoff, interpretation, _ = _work()
+def test_every_explicit_attention_constraint_must_be_evaluated_exactly_once() -> None:
+    handoff, interpretation, _ = _work(with_attention_constraint=True)
+    proposal = _proposal(handoff, interpretation)
+    admission = _admission(handoff, interpretation, proposal)
+
+    with pytest.raises(InvalidWorkRecordError, match="every exact attention constraint"):
+        _context(
+            handoff,
+            interpretation,
+            proposal,
+            admission,
+            attention_constraint_checks=(),
+        )
+
+
+def test_foreign_attention_constraint_check_cannot_be_smuggled_into_context() -> None:
+    handoff, interpretation, _ = _work(with_attention_constraint=True)
     proposal = _proposal(handoff, interpretation)
     admission = _admission(handoff, interpretation, proposal)
     foreign = _statement(
@@ -334,14 +414,19 @@ def test_foreign_attention_constraint_cannot_be_smuggled_into_context() -> None:
         "operator",
         "Ask me before every single routine action.",
     )
+    foreign_check = AttentionConstraintCheck.create(
+        constraint=foreign,
+        status=AttentionConstraintStatus.TRIGGERED,
+        reason="Foreign rule must not enter another handoff.",
+    )
 
-    with pytest.raises(InvalidWorkRecordError, match="exact handoff"):
+    with pytest.raises(InvalidWorkRecordError, match="every exact attention constraint"):
         _context(
             handoff,
             interpretation,
             proposal,
             admission,
-            triggered_attention_constraints=(foreign,),
+            attention_constraint_checks=(foreign_check,),
         )
 
 
@@ -357,6 +442,8 @@ def test_attention_basis_must_include_exact_proposal_statement() -> None:
             interpretation=interpretation,
             proposal=proposal,
             admission=admission,
+            context_builder_kind=WorkActorKind.CODEXIA,
+            context_builder="codexia",
             basis_statements=(unrelated,),
             reversibility=AttentionReversibility.REVERSIBLE,
             trajectory_impact=AttentionTrajectoryImpact.ROUTINE,
@@ -364,12 +451,26 @@ def test_attention_basis_must_include_exact_proposal_statement() -> None:
         )
 
 
-def test_dynamic_attention_decision_must_be_codexia_authored() -> None:
+def test_context_and_attention_decision_must_be_codexia_authored() -> None:
     handoff, interpretation, _ = _work()
     proposal = _proposal(handoff, interpretation)
     admission = _admission(handoff, interpretation, proposal)
-    context = _context(handoff, interpretation, proposal, admission)
 
+    with pytest.raises(InvalidWorkRecordError, match="Codexia authorship"):
+        DynamicAttentionContext.create(
+            handoff=handoff,
+            interpretation=interpretation,
+            proposal=proposal,
+            admission=admission,
+            context_builder_kind=WorkActorKind.WORKER,
+            context_builder="chatgpt",
+            basis_statements=(proposal.statement,),
+            reversibility=AttentionReversibility.REVERSIBLE,
+            trajectory_impact=AttentionTrajectoryImpact.ROUTINE,
+            alternatives=AttentionAlternativeShape.NONE,
+        )
+
+    context = _context(handoff, interpretation, proposal, admission)
     with pytest.raises(InvalidWorkRecordError, match="Codexia authorship"):
         DynamicAttentionDecision.evaluate(
             handoff=handoff,
