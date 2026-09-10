@@ -23,6 +23,7 @@ from codexia_manual_agent.work.contracts import (
     WorkStatement,
     _digest,
     _validate_digest,
+    _validate_uuid,
 )
 
 CHAT_PEER_CURSOR_SCHEMA_VERSION = 1
@@ -351,6 +352,10 @@ class ChatPeerTurn:
     schema_version: int
     admission_id: str
     admission_digest: str
+    handoff_id: str
+    handoff_digest: str
+    interpretation_id: str
+    interpretation_digest: str
     before_cursor_digest: str
     codexia_message: CapturedChatPeerMessage
     worker_message: CapturedChatPeerMessage
@@ -376,6 +381,10 @@ class ChatPeerTurn:
             "schema_version": CHAT_PEER_TURN_SCHEMA_VERSION,
             "admission_id": admission.admission_id,
             "admission_digest": admission.admission_digest,
+            "handoff_id": admission.handoff_id,
+            "handoff_digest": admission.handoff_digest,
+            "interpretation_id": admission.interpretation_id,
+            "interpretation_digest": admission.interpretation_digest,
             "before_cursor_digest": before.cursor_digest,
             "codexia_message": codexia_message.to_dict(),
             "worker_message": worker_message.to_dict(),
@@ -385,6 +394,10 @@ class ChatPeerTurn:
             schema_version=CHAT_PEER_TURN_SCHEMA_VERSION,
             admission_id=admission.admission_id,
             admission_digest=admission.admission_digest,
+            handoff_id=admission.handoff_id,
+            handoff_digest=admission.handoff_digest,
+            interpretation_id=admission.interpretation_id,
+            interpretation_digest=admission.interpretation_digest,
             before_cursor_digest=before.cursor_digest,
             codexia_message=codexia_message,
             worker_message=worker_message,
@@ -395,12 +408,12 @@ class ChatPeerTurn:
     def __post_init__(self) -> None:
         if self.schema_version != CHAT_PEER_TURN_SCHEMA_VERSION:
             raise InvalidWorkRecordError("Unsupported chat peer turn schema")
-        object.__setattr__(
-            self,
-            "admission_id",
-            _bounded_id(self.admission_id, "admission_id"),
-        )
+        _validate_uuid(self.admission_id, "admission_id")
         _validate_digest(self.admission_digest, "admission_digest")
+        _validate_uuid(self.handoff_id, "handoff_id")
+        _validate_digest(self.handoff_digest, "handoff_digest")
+        _validate_uuid(self.interpretation_id, "interpretation_id")
+        _validate_digest(self.interpretation_digest, "interpretation_digest")
         _validate_digest(self.before_cursor_digest, "before_cursor_digest")
         if not isinstance(self.codexia_message, CapturedChatPeerMessage):
             raise InvalidWorkRecordError(
@@ -431,6 +444,10 @@ class ChatPeerTurn:
             "schema_version": self.schema_version,
             "admission_id": self.admission_id,
             "admission_digest": self.admission_digest,
+            "handoff_id": self.handoff_id,
+            "handoff_digest": self.handoff_digest,
+            "interpretation_id": self.interpretation_id,
+            "interpretation_digest": self.interpretation_digest,
             "before_cursor_digest": self.before_cursor_digest,
             "codexia_message": self.codexia_message.to_dict(),
             "worker_message": self.worker_message.to_dict(),
@@ -446,12 +463,21 @@ class ChatPeerTurn:
         handoff: WorkHandoff,
         interpretation: WorkIntentInterpretation,
     ) -> ContinuationProposal:
-        """Bind the exact captured worker response as a candidate next-work proposal.
+        """Bind the exact captured worker response as a candidate next-work proposal."""
 
-        This is only provenance wiring. Whether the worker text actually contains a
-        useful next action remains semantic cognition and M6.2 admission work.
-        """
-
+        interpretation.assert_binds(handoff)
+        if (
+            self.handoff_id != handoff.handoff_id
+            or not hmac.compare_digest(self.handoff_digest, handoff.handoff_digest)
+            or self.interpretation_id != interpretation.interpretation_id
+            or not hmac.compare_digest(
+                self.interpretation_digest,
+                interpretation.interpretation_digest,
+            )
+        ):
+            raise InvalidWorkRecordError(
+                "Peer turn follow-up does not bind the exact delegated work"
+            )
         return ContinuationProposal.create(
             handoff=handoff,
             interpretation=interpretation,
