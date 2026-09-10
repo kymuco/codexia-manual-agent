@@ -251,7 +251,7 @@ See `docs/m4_5_conclusion_adjudication_plan.md`, `docs/m4_5_2_durable_conclusion
 
 ## Near-term anti-drift rule
 
-M5 now closes automation of the already-proven manual M4 loop. The next work should validate practical value and real operator ergonomics before adding UI or broader autonomy. M6 remains optional rather than an automatic reason to add surface area. Security, persistence, and transport hardening should interrupt only for a concrete blocker, demonstrated vulnerability, or invariant violation.
+M5 closes bounded automation of the already-proven manual M4 loop. M6 must now prove practical delegated-work continuity rather than adding UI or generic autonomy for its own sake. Each M6 step should directly reduce the amount of routine human scheduling needed to keep real work moving. Security, persistence, and transport hardening should interrupt only for a concrete blocker, demonstrated vulnerability, or invariant violation.
 
 ## M5 — Bounded automation
 
@@ -350,6 +350,93 @@ frozen M4.4 policy
 
 See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`.
 
-## M6 — Optional TUI
+## M6 — Delegated Work Continuity
 
-Planned only if real use shows that an interactive TUI materially improves operator ergonomics. M5 completion does not automatically activate UI work or broader autonomy.
+**In progress through M6.1.**
+
+North-star property:
+
+```text
+human absence != work suspension
+```
+
+M6 generalizes Codexia from one bounded scientific automation vertical into a governed work runtime. The delegated unit is work, not necessarily a software project: ongoing coding, research, information gathering, analysis, artifact preparation, or another human objective may all use the same continuity layer.
+
+### M6.1 — General Work Handoff and Attention Boundary
+
+**Complete candidate.**
+
+Primary boundaries:
+
+```text
+human handoff != inferred work interpretation
+worker statement != human instruction
+resource reference != access authority
+dynamic attention judgment != execution authority
+plan != prerequisite for delegation
+```
+
+- `WorkStatement` preserves explicit `human / codexia / worker / system` provenance;
+- `WorkResourceRef` can point at chats, repositories, files, URLs, or other context without granting access;
+- `WorkHandoff` stores the exact HUMAN-authored objective, human constraints, optional plan reference, context resources, and human attention constraints;
+- a non-project research request is valid with no prewritten plan;
+- `WorkIntentInterpretation` is a separate derived record, so changing inferred completion/depth/scope never rewrites human handoff identity;
+- depth is free attributed interpretation rather than a fixed probe/MVP/production mode;
+- `AttentionAssessment` binds the exact handoff, interpretation, and work checkpoint while remaining non-authoritative;
+- strict decoding/digests reject statement tamper, cross-handoff rebinding, and smuggled authority-shaped fields;
+- no worker orchestration, continuation admission, scheduler, notification transport, persistence, local execution, or new authority is introduced.
+
+See `docs/m6_1_general_work_handoff_attention.md` and `docs/m6_1_source_audit.md`.
+
+### M6.2 — Continuation Admission
+
+**Next.**
+
+Decide whether a worker-proposed next action actually follows from the current handoff, exact interpretation, evidence, constraints, and delegation scope.
+
+Primary boundary:
+
+```text
+worker proposal != admitted continuation
+```
+
+Expected decisions are bounded equivalents of continue, revise, reject, or require human judgment; the admission layer must not mint execution authority.
+
+### M6.3 — Chat / Codexia Peer Loop
+
+Planned.
+
+Connect the real ChatGPT conversation surface so Codexia and the cognitive worker remain distinct peers. Codexia-authored continuation must never be recorded semantically as a HUMAN message, and the human must be able to enter the same chat directly without a manual-mode takeover ceremony.
+
+### M6.4 — Dynamic Attention
+
+Planned.
+
+Use exact work state, human constraints, current evidence, alternatives, reversibility, and cognition to decide whether work can continue without interruption. Attention preferences may later influence this judgment but must never become execution authority.
+
+### M6.5 — Background Work Supervisor
+
+Planned.
+
+Maintain multiple delegated works durably, react to worker/tool/external state, and keep ready work moving independently of whether the human is currently viewing the chat. Recovery must preserve exact pending work and must not replay ambiguous effects.
+
+### M6.6 — First General Daily-Use Pilot
+
+Planned.
+
+Prove two real verticals:
+
+1. an ongoing coding/research project advances through multiple continuation cycles without routine `continue / check CI / fix / next PR` human scheduling;
+2. a substantial non-project research request is iterated, challenged, deepened, and returned as a completed result without requiring the human between ordinary worker turns.
+
+The pilot should stop or notify only at a genuine human-attention boundary and allow a human answer outside the original worker chat to resume the exact suspended work.
+
+### M6.7 — Governed Local Worker
+
+Planned after the web/GitHub continuity vertical is proven.
+
+Expose narrow local gate capabilities such as test, lint, type-check, and Git inspection inside one fixed workspace without generic shell authority. Local mutation/network/Git write authority remains separate and governed.
+
+## Later human surfaces
+
+TUI, companion integration, mobile notifications, additional worker providers, and richer attention profiles remain downstream surfaces. They should be added in response to demonstrated daily-use friction rather than becoming prerequisites for the M6 continuity proof.
