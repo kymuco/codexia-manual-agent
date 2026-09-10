@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,11 +12,26 @@ from codexia_manual_agent.domain.models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ChatGPTConversationMessage:
+    """Stable normalized visible message from one ChatGPT current branch."""
+
+    node_id: str
+    message_id: str
+    role: str
+    text: str
+    create_time: float | None = None
+    recipient: str | None = None
+    model: str | None = None
+    finish_reason: str | None = None
+
+
 class ChatGPTWebProvider:
     """`chatgpt-web-adapter` stable-core transport for Codexia.
 
-    The provider only sends and continues text conversations. It never uses the
-    SDK's experimental approval helpers and never receives a local tool handle.
+    The provider sends and continues text conversations and can read the visible
+    user/assistant messages on the current branch. It never uses the SDK's
+    experimental approval helpers and never receives a local tool handle.
     """
 
     def __init__(
@@ -81,6 +97,58 @@ class ChatGPTWebProvider:
             raise ProviderError(f"chatgpt-web request failed: {exc}") from exc
         return self._normalize_response(raw)
 
+    def read_messages(self, conversation_id: str) -> tuple[ChatGPTConversationMessage, ...]:
+        """Read visible user/assistant messages from the exact current branch."""
+
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id is required")
+        conversation_id = conversation_id.strip()
+        try:
+            raw_messages = self._client.get_messages(
+                conversation_id,
+                roles=("user", "assistant"),
+                include_empty=False,
+            )
+        except Exception as exc:
+            raise ProviderError(f"chatgpt-web history read failed: {exc}") from exc
+        if not isinstance(raw_messages, (list, tuple)):
+            raise ProviderError("chatgpt-web history did not contain a message sequence")
+        normalized: list[ChatGPTConversationMessage] = []
+        seen_nodes: set[str] = set()
+        seen_messages: set[str] = set()
+        for raw in raw_messages:
+            node_id = _required_attr(raw, "node_id")
+            message_id = _required_attr(raw, "message_id")
+            role = _required_attr(raw, "role")
+            if role not in {"user", "assistant"}:
+                raise ProviderError(f"unsupported visible chatgpt-web role: {role!r}")
+            if node_id in seen_nodes or message_id in seen_messages:
+                raise ProviderError("chatgpt-web history contains duplicate message identity")
+            seen_nodes.add(node_id)
+            seen_messages.add(message_id)
+            text = getattr(raw, "text", None)
+            if not isinstance(text, str) or not text:
+                raise ProviderError("chatgpt-web visible message did not contain text")
+            create_time = getattr(raw, "create_time", None)
+            if create_time is not None:
+                try:
+                    create_time = float(create_time)
+                except (TypeError, ValueError) as exc:
+                    raise ProviderError("chatgpt-web message create_time is invalid") from exc
+            normalized.append(
+                ChatGPTConversationMessage(
+                    node_id=node_id,
+                    message_id=message_id,
+                    role=role,
+                    text=text,
+                    create_time=create_time,
+                    recipient=_optional_attr(raw, "recipient"),
+                    model=_optional_attr(raw, "model"),
+                    finish_reason=_optional_attr(raw, "finish_reason"),
+                )
+            )
+        return tuple(normalized)
+
     @staticmethod
     def _normalize_response(raw: Any) -> ProviderResponse:
         text = getattr(raw, "text", None)
@@ -129,3 +197,10 @@ def _optional_attr(value: Any, name: str) -> str | None:
         return None
     candidate = candidate.strip()
     return candidate or None
+
+
+def _required_attr(value: Any, name: str) -> str:
+    candidate = _optional_attr(value, name)
+    if candidate is None:
+        raise ProviderError(f"chatgpt-web visible message is missing {name}")
+    return candidate
