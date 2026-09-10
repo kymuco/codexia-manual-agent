@@ -251,11 +251,11 @@ See `docs/m4_5_conclusion_adjudication_plan.md`, `docs/m4_5_2_durable_conclusion
 
 ## Near-term anti-drift rule
 
-The next work should automate the already-proven manual M4 research loop rather than invent another execution or evidence architecture. Security, persistence, and transport hardening should interrupt that line only for a concrete blocker, demonstrated vulnerability, or invariant violation.
+M5 now closes automation of the already-proven manual M4 loop. The next work should validate practical value and real operator ergonomics before adding UI or broader autonomy. M6 remains optional rather than an automatic reason to add surface area. Security, persistence, and transport hardening should interrupt only for a concrete blocker, demonstrated vulnerability, or invariant violation.
 
 ## M5 — Bounded automation
 
-**In progress through M5.2.**
+**Complete through M5.3.**
 
 Primary invariant:
 
@@ -309,10 +309,47 @@ See `docs/m5_2_governed_automation_state_machine.md` and `docs/m5_2_source_audit
 
 ### M5.3 — First Real Bounded Automation Closure
 
-**Next active milestone.**
+**Complete.**
 
-Run the already-proven M4 comparison/conclusion vertical through the bounded coordinator with externally supplied authorization, deterministic budget/stop behavior, experiment sealing, exact M4.4 comparison, exact M4.5 conclusion, and fresh-process recovery. No second executor, evidence path, or authority system.
+Primary boundaries:
+
+```text
+bounded automation progress != execution authority
+scientific closure consumes the same frozen M5 budget
+```
+
+- the existing M4.4.3/M4.5.3 inconvenient `REFUTED` integration-error case is reused unchanged;
+- the M5.1 plan freezes an exact `16`-step / `4`-run budget before evidence: `12` governed run stages plus `4` scientific closure stages;
+- every process pauses at the M5.2 authorization boundary and proceeds only with an externally supplied exact HUMAN-source test receipt;
+- `GovernedAutomationClosure` accepts only `automation_id` and derives the exact policy, arm identities, and post-run targets from frozen durable state;
+- closure advances one non-authority durable stage at a time: baseline experiment seal → candidate experiment seal → exact M4.4 comparison → exact M4.5 bounded conclusion;
+- closure budget use is derived from irreversible M4 state rather than a new mutable M5 counter;
+- a budget-limited regression proves automation can stop after a durable comparison but before conclusion publication;
+- the precommitted threshold remains `180`; recovered effect remains `176`, so full automation preserves `REFUTED` rather than moving the criterion;
+- conclusion publication preserves the bounded `frozen_comparison_policy.v1` scope and reaches terminal `STOPPED_CONCLUSION`;
+- repeated advance after budget/conclusion stop is inert;
+- fresh-process recovery receives only SQLite path + stable `automation_id` and reconstructs the exact terminal plan/result/conclusion state;
+- all four governed physical result files remain byte-identical with unchanged `mtime_ns` across terminal fresh-process recovery;
+- no scheduler, second executor, alternate evidence path, policy selector, conclusion author, or new execution authority is introduced.
+
+The demonstrated complete bounded loop is:
+
+```text
+frozen M4.4 policy
+→ frozen M5.1 plan/workspace/budget/stop rules
+→ deterministic M5.2 run progression
+→ external HUMAN authorization at each process boundary
+→ existing M2/M3/M4.3 governed execution and physical evidence
+→ complete sealed run set at 12/16 steps
+→ deterministic M5.3 experiment seals
+→ exact M4.4 REFUTED comparison
+→ exact bounded M4.5 REFUTED conclusion
+→ STOPPED_CONCLUSION at 16/16 steps
+→ fresh-process recovery without replay
+```
+
+See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`.
 
 ## M6 — Optional TUI
 
-Planned only after CLI/runtime contracts are stable and the computational-research loop has demonstrated practical value.
+Planned only if real use shows that an interactive TUI materially improves operator ergonomics. M5 completion does not automatically activate UI work or broader autonomy.

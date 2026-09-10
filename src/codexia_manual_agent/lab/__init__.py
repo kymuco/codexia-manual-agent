@@ -15,6 +15,12 @@ from codexia_manual_agent.lab.automation import (
     automation_stop_policy_from_dict,
     frozen_automation_plan_from_dict,
 )
+from codexia_manual_agent.lab.automation_closure import (
+    AUTOMATION_CLOSURE_STATE_SCHEMA_VERSION,
+    AutomationClosurePhase,
+    AutomationClosureState,
+    GovernedAutomationClosure,
+)
 from codexia_manual_agent.lab.automation_runtime import (
     AUTOMATION_STATE_SCHEMA_VERSION,
     AutomationPhase,
@@ -124,6 +130,7 @@ from codexia_manual_agent.lab.serialization import (
 __all__ = [
     "ADJUDICATED_CONCLUSION_SCHEMA_VERSION",
     "AUTOMATION_BUDGET_SCHEMA_VERSION",
+    "AUTOMATION_CLOSURE_STATE_SCHEMA_VERSION",
     "AUTOMATION_PLAN_SCHEMA_VERSION",
     "AUTOMATION_STATE_SCHEMA_VERSION",
     "AUTOMATION_STOP_POLICY_SCHEMA_VERSION",
@@ -142,6 +149,8 @@ __all__ = [
     "AdjudicatedConclusion",
     "ArtifactRecord",
     "AutomationBudget",
+    "AutomationClosurePhase",
+    "AutomationClosureState",
     "AutomationPhase",
     "AutomationPlan",
     "AutomationRunArm",
@@ -163,6 +172,7 @@ __all__ = [
     "ExperimentRun",
     "FrozenAutomationPlan",
     "FrozenComparisonPolicy",
+    "GovernedAutomationClosure",
     "GovernedAutomationStateMachine",
     "GovernedPythonJsonRunner",
     "GovernedPythonRunResult",
