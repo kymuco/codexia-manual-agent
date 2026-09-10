@@ -34,6 +34,7 @@ from codexia_manual_agent.work.contracts import (
     _validate_uuid,
 )
 
+ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION = 1
 DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION = 1
 DYNAMIC_ATTENTION_DECISION_SCHEMA_VERSION = 1
 MAX_DYNAMIC_ATTENTION_BASIS = 64
@@ -65,6 +66,14 @@ class AttentionAlternativeShape(StrEnum):
     MATERIAL = "material"
 
 
+class AttentionConstraintStatus(StrEnum):
+    """Codexia's explicit evaluation of one HUMAN attention constraint."""
+
+    CLEAR = "clear"
+    TRIGGERED = "triggered"
+    UNCERTAIN = "uncertain"
+
+
 class AttentionDisposition(StrEnum):
     """Attention-only recommendation; never an execution permission."""
 
@@ -73,7 +82,7 @@ class AttentionDisposition(StrEnum):
 
 
 class AttentionOverride(StrEnum):
-    """Hard source that can force human attention despite cognitive preference."""
+    """Hard source that forces human attention despite cognitive preference."""
 
     NONE = "none"
     EXPLICIT_HUMAN_CONSTRAINT = "explicit_human_constraint"
@@ -107,6 +116,15 @@ def _normalize_alternative_shape(
         raise InvalidWorkRecordError("Unsupported attention alternative shape") from exc
 
 
+def _normalize_constraint_status(
+    value: AttentionConstraintStatus | str,
+) -> AttentionConstraintStatus:
+    try:
+        return AttentionConstraintStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidWorkRecordError("Unsupported attention constraint status") from exc
+
+
 def _normalize_disposition(
     value: AttentionDisposition | str,
 ) -> AttentionDisposition:
@@ -133,8 +151,101 @@ def _normalize_admission_decision(
 
 
 @dataclass(frozen=True, slots=True)
+class AttentionConstraintCheck:
+    """Complete, digest-bound evaluation of one explicit HUMAN attention rule."""
+
+    schema_version: int
+    statement_digest: str
+    status: AttentionConstraintStatus
+    reason: str
+    check_digest: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        constraint: WorkStatement,
+        status: AttentionConstraintStatus | str,
+        reason: str,
+    ) -> AttentionConstraintCheck:
+        if not isinstance(constraint, WorkStatement):
+            raise InvalidWorkRecordError("constraint must be a WorkStatement")
+        if constraint.author_kind is not WorkActorKind.HUMAN:
+            raise InvalidWorkRecordError(
+                "Attention constraint check must preserve HUMAN source provenance"
+            )
+        status = _normalize_constraint_status(status)
+        reason = _bounded_text(reason, "reason", MAX_ATTENTION_REASON_CHARS)
+        base = {
+            "schema_version": ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION,
+            "statement_digest": constraint.statement_digest,
+            "status": status.value,
+            "reason": reason,
+        }
+        return cls(
+            schema_version=ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION,
+            statement_digest=constraint.statement_digest,
+            status=status,
+            reason=reason,
+            check_digest=_digest(base),
+        )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION:
+            raise InvalidWorkRecordError("Unsupported attention constraint check schema")
+        _validate_digest(self.statement_digest, "statement_digest")
+        object.__setattr__(
+            self,
+            "status",
+            _normalize_constraint_status(self.status),
+        )
+        object.__setattr__(
+            self,
+            "reason",
+            _bounded_text(self.reason, "reason", MAX_ATTENTION_REASON_CHARS),
+        )
+        _validate_digest(self.check_digest, "check_digest")
+        if not hmac.compare_digest(self.check_digest, _digest(self._base_dict())):
+            raise InvalidWorkRecordError(
+                "Attention constraint check digest does not match its exact judgment"
+            )
+
+    def _base_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "statement_digest": self.statement_digest,
+            "status": self.status.value,
+            "reason": self.reason,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._base_dict(), "check_digest": self.check_digest}
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> AttentionConstraintCheck:
+        value = _exact_keys(
+            payload,
+            {
+                "schema_version",
+                "statement_digest",
+                "status",
+                "reason",
+                "check_digest",
+            },
+            "AttentionConstraintCheck",
+        )
+        return cls(
+            schema_version=value["schema_version"],
+            statement_digest=value["statement_digest"],
+            status=value["status"],
+            reason=value["reason"],
+            check_digest=value["check_digest"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DynamicAttentionContext:
-    """Exact cognitive context for deciding whether human attention is needed."""
+    """Exact Codexia-authored context for deciding whether human attention is needed."""
 
     schema_version: int
     context_id: str
@@ -145,15 +256,18 @@ class DynamicAttentionContext:
     interpretation_digest: str
     proposal_id: str
     proposal_digest: str
+    proposal_statement_digest: str
     admission_id: str
     admission_digest: str
     admission_decision: ContinuationDecision
     checkpoint_digest: str
+    context_builder_kind: WorkActorKind
+    context_builder: str
     basis_statements: tuple[WorkStatement, ...]
     reversibility: AttentionReversibility
     trajectory_impact: AttentionTrajectoryImpact
     alternatives: AttentionAlternativeShape
-    triggered_attention_constraint_digests: tuple[str, ...]
+    attention_constraint_checks: tuple[AttentionConstraintCheck, ...]
     context_digest: str
 
     @classmethod
@@ -164,11 +278,13 @@ class DynamicAttentionContext:
         interpretation: WorkIntentInterpretation,
         proposal: ContinuationProposal,
         admission: ContinuationAdmission,
+        context_builder_kind: WorkActorKind | str,
+        context_builder: str,
         basis_statements: Iterable[WorkStatement],
         reversibility: AttentionReversibility | str,
         trajectory_impact: AttentionTrajectoryImpact | str,
         alternatives: AttentionAlternativeShape | str,
-        triggered_attention_constraints: Iterable[WorkStatement] = (),
+        attention_constraint_checks: Iterable[AttentionConstraintCheck] = (),
         context_id: str | None = None,
         created_at: str | None = None,
     ) -> DynamicAttentionContext:
@@ -184,10 +300,20 @@ class DynamicAttentionContext:
             raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
         admission.assert_binds(handoff, interpretation, proposal)
 
+        builder_kind = _normalize_actor_kind(context_builder_kind)
+        if builder_kind is not WorkActorKind.CODEXIA:
+            raise InvalidWorkRecordError(
+                "Dynamic attention context must preserve explicit Codexia authorship"
+            )
+        context_builder = _bounded_text(
+            context_builder,
+            "context_builder",
+            MAX_ACTOR_CHARS,
+        )
         basis = tuple(basis_statements)
-        triggered = tuple(triggered_attention_constraints)
+        checks = tuple(attention_constraint_checks)
         cls._validate_basis(proposal, basis)
-        constraint_digests = cls._validate_triggered_constraints(handoff, triggered)
+        cls._validate_constraint_coverage(handoff, checks)
 
         reversibility = _normalize_reversibility(reversibility)
         trajectory_impact = _normalize_trajectory_impact(trajectory_impact)
@@ -204,15 +330,18 @@ class DynamicAttentionContext:
             "interpretation_digest": interpretation.interpretation_digest,
             "proposal_id": proposal.proposal_id,
             "proposal_digest": proposal.proposal_digest,
+            "proposal_statement_digest": proposal.statement.statement_digest,
             "admission_id": admission.admission_id,
             "admission_digest": admission.admission_digest,
             "admission_decision": admission.decision.value,
             "checkpoint_digest": proposal.checkpoint_digest,
+            "context_builder_kind": builder_kind.value,
+            "context_builder": context_builder,
             "basis_statements": [item.to_dict() for item in basis],
             "reversibility": reversibility.value,
             "trajectory_impact": trajectory_impact.value,
             "alternatives": alternatives.value,
-            "triggered_attention_constraint_digests": list(constraint_digests),
+            "attention_constraint_checks": [item.to_dict() for item in checks],
         }
         return cls(
             schema_version=DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION,
@@ -224,15 +353,18 @@ class DynamicAttentionContext:
             interpretation_digest=interpretation.interpretation_digest,
             proposal_id=proposal.proposal_id,
             proposal_digest=proposal.proposal_digest,
+            proposal_statement_digest=proposal.statement.statement_digest,
             admission_id=admission.admission_id,
             admission_digest=admission.admission_digest,
             admission_decision=admission.decision,
             checkpoint_digest=proposal.checkpoint_digest,
+            context_builder_kind=builder_kind,
+            context_builder=context_builder,
             basis_statements=basis,
             reversibility=reversibility,
             trajectory_impact=trajectory_impact,
             alternatives=alternatives,
-            triggered_attention_constraint_digests=constraint_digests,
+            attention_constraint_checks=checks,
             context_digest=_digest(base),
         )
 
@@ -260,25 +392,25 @@ class DynamicAttentionContext:
             )
 
     @staticmethod
-    def _validate_triggered_constraints(
+    def _validate_constraint_coverage(
         handoff: WorkHandoff,
-        triggered: tuple[WorkStatement, ...],
-    ) -> tuple[str, ...]:
-        if any(not isinstance(item, WorkStatement) for item in triggered):
+        checks: tuple[AttentionConstraintCheck, ...],
+    ) -> None:
+        if any(not isinstance(item, AttentionConstraintCheck) for item in checks):
             raise InvalidWorkRecordError(
-                "Triggered attention constraints must be WorkStatement records"
+                "attention_constraint_checks must contain AttentionConstraintCheck records"
             )
-        digests = tuple(item.statement_digest for item in triggered)
-        if len(set(digests)) != len(digests):
+        check_digests = tuple(item.statement_digest for item in checks)
+        if len(set(check_digests)) != len(check_digests):
             raise InvalidWorkRecordError(
-                "Triggered attention constraints must not contain duplicates"
+                "Attention constraints must be evaluated exactly once"
             )
-        allowed = {item.statement_digest for item in handoff.attention_constraints}
-        if not set(digests).issubset(allowed):
+        required = {item.statement_digest for item in handoff.attention_constraints}
+        actual = set(check_digests)
+        if actual != required:
             raise InvalidWorkRecordError(
-                "Triggered attention constraint does not belong to the exact handoff"
+                "Dynamic attention must explicitly evaluate every exact attention constraint"
             )
-        return digests
 
     def __post_init__(self) -> None:
         if self.schema_version != DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION:
@@ -291,6 +423,7 @@ class DynamicAttentionContext:
         _validate_digest(self.interpretation_digest, "interpretation_digest")
         _validate_uuid(self.proposal_id, "proposal_id")
         _validate_digest(self.proposal_digest, "proposal_digest")
+        _validate_digest(self.proposal_statement_digest, "proposal_statement_digest")
         _validate_uuid(self.admission_id, "admission_id")
         _validate_digest(self.admission_digest, "admission_digest")
         object.__setattr__(
@@ -299,6 +432,17 @@ class DynamicAttentionContext:
             _normalize_admission_decision(self.admission_decision),
         )
         _validate_digest(self.checkpoint_digest, "checkpoint_digest")
+        builder_kind = _normalize_actor_kind(self.context_builder_kind)
+        if builder_kind is not WorkActorKind.CODEXIA:
+            raise InvalidWorkRecordError(
+                "Dynamic attention context must preserve explicit Codexia authorship"
+            )
+        object.__setattr__(self, "context_builder_kind", builder_kind)
+        object.__setattr__(
+            self,
+            "context_builder",
+            _bounded_text(self.context_builder, "context_builder", MAX_ACTOR_CHARS),
+        )
 
         if not isinstance(self.basis_statements, tuple):
             raise InvalidWorkRecordError("basis_statements must be a tuple")
@@ -314,6 +458,10 @@ class DynamicAttentionContext:
         if len(set(basis_digests)) != len(basis_digests):
             raise InvalidWorkRecordError(
                 "Dynamic attention basis must not contain duplicate statements"
+            )
+        if self.proposal_statement_digest not in set(basis_digests):
+            raise InvalidWorkRecordError(
+                "Dynamic attention context lost its exact proposal statement"
             )
 
         object.__setattr__(
@@ -331,23 +479,35 @@ class DynamicAttentionContext:
             "alternatives",
             _normalize_alternative_shape(self.alternatives),
         )
-        if not isinstance(self.triggered_attention_constraint_digests, tuple):
-            raise InvalidWorkRecordError(
-                "triggered_attention_constraint_digests must be a tuple"
-            )
-        for item in self.triggered_attention_constraint_digests:
-            _validate_digest(item, "triggered_attention_constraint_digest")
-        if len(set(self.triggered_attention_constraint_digests)) != len(
-            self.triggered_attention_constraint_digests
+        if not isinstance(self.attention_constraint_checks, tuple):
+            raise InvalidWorkRecordError("attention_constraint_checks must be a tuple")
+        if any(
+            not isinstance(item, AttentionConstraintCheck)
+            for item in self.attention_constraint_checks
         ):
             raise InvalidWorkRecordError(
-                "triggered_attention_constraint_digests must not contain duplicates"
+                "attention_constraint_checks must contain AttentionConstraintCheck records"
+            )
+        check_statement_digests = tuple(
+            item.statement_digest for item in self.attention_constraint_checks
+        )
+        if len(set(check_statement_digests)) != len(check_statement_digests):
+            raise InvalidWorkRecordError(
+                "Attention constraints must be evaluated exactly once"
             )
         _validate_digest(self.context_digest, "context_digest")
         if not hmac.compare_digest(self.context_digest, _digest(self._base_dict())):
             raise InvalidWorkRecordError(
                 "Dynamic attention context digest does not match its exact evidence"
             )
+
+    @property
+    def has_attention_constraint_blocker(self) -> bool:
+        return any(
+            item.status
+            in {AttentionConstraintStatus.TRIGGERED, AttentionConstraintStatus.UNCERTAIN}
+            for item in self.attention_constraint_checks
+        )
 
     def assert_binds(
         self,
@@ -367,6 +527,10 @@ class DynamicAttentionContext:
             )
             or self.proposal_id != proposal.proposal_id
             or not hmac.compare_digest(self.proposal_digest, proposal.proposal_digest)
+            or not hmac.compare_digest(
+                self.proposal_statement_digest,
+                proposal.statement.statement_digest,
+            )
             or self.admission_id != admission.admission_id
             or not hmac.compare_digest(self.admission_digest, admission.admission_digest)
             or self.admission_decision is not admission.decision
@@ -383,11 +547,7 @@ class DynamicAttentionContext:
             raise InvalidWorkRecordError(
                 "Dynamic attention context lost the exact continuation proposal"
             )
-        allowed = {item.statement_digest for item in handoff.attention_constraints}
-        if not set(self.triggered_attention_constraint_digests).issubset(allowed):
-            raise InvalidWorkRecordError(
-                "Dynamic attention context references a foreign attention constraint"
-            )
+        self._validate_constraint_coverage(handoff, self.attention_constraint_checks)
 
     def _base_dict(self) -> dict[str, Any]:
         return {
@@ -400,17 +560,20 @@ class DynamicAttentionContext:
             "interpretation_digest": self.interpretation_digest,
             "proposal_id": self.proposal_id,
             "proposal_digest": self.proposal_digest,
+            "proposal_statement_digest": self.proposal_statement_digest,
             "admission_id": self.admission_id,
             "admission_digest": self.admission_digest,
             "admission_decision": self.admission_decision.value,
             "checkpoint_digest": self.checkpoint_digest,
+            "context_builder_kind": self.context_builder_kind.value,
+            "context_builder": self.context_builder,
             "basis_statements": [item.to_dict() for item in self.basis_statements],
             "reversibility": self.reversibility.value,
             "trajectory_impact": self.trajectory_impact.value,
             "alternatives": self.alternatives.value,
-            "triggered_attention_constraint_digests": list(
-                self.triggered_attention_constraint_digests
-            ),
+            "attention_constraint_checks": [
+                item.to_dict() for item in self.attention_constraint_checks
+            ],
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -430,28 +593,31 @@ class DynamicAttentionContext:
                 "interpretation_digest",
                 "proposal_id",
                 "proposal_digest",
+                "proposal_statement_digest",
                 "admission_id",
                 "admission_digest",
                 "admission_decision",
                 "checkpoint_digest",
+                "context_builder_kind",
+                "context_builder",
                 "basis_statements",
                 "reversibility",
                 "trajectory_impact",
                 "alternatives",
-                "triggered_attention_constraint_digests",
+                "attention_constraint_checks",
                 "context_digest",
             },
             "DynamicAttentionContext",
         )
         basis = value["basis_statements"]
-        triggered = value["triggered_attention_constraint_digests"]
+        checks = value["attention_constraint_checks"]
         if not isinstance(basis, list):
             raise InvalidWorkRecordError(
                 "basis_statements must decode from a JSON array"
             )
-        if not isinstance(triggered, list):
+        if not isinstance(checks, list):
             raise InvalidWorkRecordError(
-                "triggered_attention_constraint_digests must decode from a JSON array"
+                "attention_constraint_checks must decode from a JSON array"
             )
         return cls(
             schema_version=value["schema_version"],
@@ -463,15 +629,20 @@ class DynamicAttentionContext:
             interpretation_digest=value["interpretation_digest"],
             proposal_id=value["proposal_id"],
             proposal_digest=value["proposal_digest"],
+            proposal_statement_digest=value["proposal_statement_digest"],
             admission_id=value["admission_id"],
             admission_digest=value["admission_digest"],
             admission_decision=value["admission_decision"],
             checkpoint_digest=value["checkpoint_digest"],
+            context_builder_kind=value["context_builder_kind"],
+            context_builder=value["context_builder"],
             basis_statements=tuple(WorkStatement.from_dict(item) for item in basis),
             reversibility=value["reversibility"],
             trajectory_impact=value["trajectory_impact"],
             alternatives=value["alternatives"],
-            triggered_attention_constraint_digests=tuple(triggered),
+            attention_constraint_checks=tuple(
+                AttentionConstraintCheck.from_dict(item) for item in checks
+            ),
             context_digest=value["context_digest"],
         )
 
@@ -566,7 +737,7 @@ class DynamicAttentionDecision:
 
     @staticmethod
     def _derive_override(context: DynamicAttentionContext) -> AttentionOverride:
-        if context.triggered_attention_constraint_digests:
+        if context.has_attention_constraint_blocker:
             return AttentionOverride.EXPLICIT_HUMAN_CONSTRAINT
         if context.admission_decision is ContinuationDecision.ASK_HUMAN:
             return AttentionOverride.ADMISSION_REQUIRES_HUMAN
