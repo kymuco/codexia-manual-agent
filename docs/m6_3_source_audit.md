@@ -48,6 +48,13 @@ worker response
 != admitted follow-up
 ```
 
+The completed `ChatPeerTurn` also retains the exact handoff and interpretation identities/digests inherited from the admission. `followup_proposal()` revalidates those bindings before wrapping worker output, so a real response from delegated work A cannot be transplanted as the next-step proposal for unrelated delegated work B.
+
+```text
+worker response from work A
+!= proposal evidence for work B
+```
+
 ## Provider-response reconciliation audit
 
 M6.3 does not trust the response object alone. After the remote send it rereads the current branch and requires the observed assistant text to equal `ProviderResponse.text`; when the provider supplies a message id, the observed assistant message id must match it too.
@@ -110,6 +117,7 @@ transport user role != semantic human authorship
 Codexia continuation != human instruction
 human intervention invalidates stale continuation
 worker output != admitted continuation
+worker output from work A != follow-up for work B
 captured peer record != caller-rebindable provenance
 peer-loop continuation != local execution authority
 ```
