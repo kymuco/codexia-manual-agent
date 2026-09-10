@@ -16,4 +16,5 @@ Expected gates:
 10. provider response text/message identity must match the post-send current-branch observation;
 11. observation and peer-turn records reject post-capture digest/binding tamper;
 12. cursor transitions require the exact captured provider-message delta, not merely a caller-supplied after cursor;
-13. the pinned web adapter contract must expose current-branch history reads on both Ubuntu and Windows.
+13. a captured WORKER response from one exact handoff/interpretation cannot be rebound as a follow-up proposal for another delegated work;
+14. the pinned web adapter contract must expose current-branch history reads on both Ubuntu and Windows.
