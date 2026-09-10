@@ -352,7 +352,7 @@ See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`
 
 ## M6 — Delegated Work Continuity
 
-**In progress through M6.3.**
+**In progress through M6.4.**
 
 North-star property:
 
@@ -415,7 +415,7 @@ See `docs/m6_2_continuation_admission.md` and `docs/m6_2_source_audit.md`.
 
 ### M6.3 — Chat / Codexia Peer Loop
 
-**Complete candidate.**
+**Complete.**
 
 Primary boundaries:
 
@@ -442,13 +442,33 @@ See `docs/m6_3_chat_codexia_peer_loop.md`, `docs/m6_3_source_audit.md`, `docs/m6
 
 ### M6.4 — Dynamic Attention
 
-Planned.
+**Complete candidate.**
 
-Use exact work state, human constraints, current evidence, alternatives, reversibility, and cognition to decide whether work can continue without interruption. Attention preferences may later influence this judgment but must never become execution authority.
+Primary boundaries:
+
+```text
+attention recommendation != execution authority
+model preference != explicit human attention constraint
+worker problem != automatic human interruption
+```
+
+- the exact attention context binds handoff, interpretation, proposal, M6.2 admission, checkpoint, attributed basis statements, and structured cognition signals;
+- reversibility, trajectory impact, and alternative shape inform cognition without becoming a universal static threshold;
+- every explicit HUMAN attention constraint must be evaluated exactly once as `CLEAR`, `TRIGGERED`, or `UNCERTAIN`;
+- omitted, duplicate, or foreign attention-constraint checks fail closed;
+- `TRIGGERED` and `UNCERTAIN` explicit rules force human attention even when Codexia cognition prefers `KEEP_MOVING`;
+- an M6.2 `ASK_HUMAN` is a hard attention override and cannot be suppressed downstream;
+- Codexia may dynamically choose `ASK_HUMAN` for a contextual material choice even when no hard rule forces it;
+- routine `REVISE`/replanning may remain background work without automatically interrupting the human;
+- context construction and final assessment preserve explicit CODEXIA authorship, not WORKER authorship;
+- strict decoding, exact digests, proposal-statement binding, and cross-work/checkpoint checks reject tamper/rebinding;
+- `KEEP_MOVING` means only that human attention is not required; it grants no process, filesystem, Git, network, provider-send, merge, or other execution authority.
+
+See `docs/m6_4_dynamic_attention.md`, `docs/m6_4_source_audit.md`, `docs/m6_4_test_matrix.md`, and `docs/m6_4_nonclaims.md`.
 
 ### M6.5 — Background Work Supervisor
 
-Planned.
+**Next.**
 
 Maintain multiple delegated works durably, react to worker/tool/external state, and keep ready work moving independently of whether the human is currently viewing the chat. Recovery must preserve exact pending work and must not replay ambiguous effects.
 
