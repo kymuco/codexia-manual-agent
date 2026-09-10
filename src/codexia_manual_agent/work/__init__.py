@@ -1,0 +1,33 @@
+from codexia_manual_agent.work.contracts import (
+    ATTENTION_ASSESSMENT_SCHEMA_VERSION,
+    WORK_HANDOFF_SCHEMA_VERSION,
+    WORK_INTENT_INTERPRETATION_SCHEMA_VERSION,
+    WORK_RESOURCE_SCHEMA_VERSION,
+    WORK_STATEMENT_SCHEMA_VERSION,
+    AttentionAssessment,
+    AttentionUrgency,
+    InvalidWorkRecordError,
+    WorkActorKind,
+    WorkHandoff,
+    WorkIntentInterpretation,
+    WorkResourceKind,
+    WorkResourceRef,
+    WorkStatement,
+)
+
+__all__ = [
+    "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
+    "WORK_HANDOFF_SCHEMA_VERSION",
+    "WORK_INTENT_INTERPRETATION_SCHEMA_VERSION",
+    "WORK_RESOURCE_SCHEMA_VERSION",
+    "WORK_STATEMENT_SCHEMA_VERSION",
+    "AttentionAssessment",
+    "AttentionUrgency",
+    "InvalidWorkRecordError",
+    "WorkActorKind",
+    "WorkHandoff",
+    "WorkIntentInterpretation",
+    "WorkResourceKind",
+    "WorkResourceRef",
+    "WorkStatement",
+]
