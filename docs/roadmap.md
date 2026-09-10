@@ -352,7 +352,7 @@ See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`
 
 ## M6 — Delegated Work Continuity
 
-**In progress through M6.1.**
+**In progress through M6.2.**
 
 North-star property:
 
@@ -364,7 +364,7 @@ M6 generalizes Codexia from one bounded scientific automation vertical into a go
 
 ### M6.1 — General Work Handoff and Attention Boundary
 
-**Complete candidate.**
+**Complete.**
 
 Primary boundaries:
 
@@ -390,21 +390,32 @@ See `docs/m6_1_general_work_handoff_attention.md` and `docs/m6_1_source_audit.md
 
 ### M6.2 — Continuation Admission
 
-**Next.**
+**Complete candidate.**
 
-Decide whether a worker-proposed next action actually follows from the current handoff, exact interpretation, evidence, constraints, and delegation scope.
-
-Primary boundary:
+Primary boundaries:
 
 ```text
 worker proposal != admitted continuation
+admitted continuation != execution authority
 ```
 
-Expected decisions are bounded equivalents of continue, revise, reject, or require human judgment; the admission layer must not mint execution authority.
+- `ContinuationProposal` binds an exact WORKER/CODEXIA-authored next-step statement to the exact handoff, interpretation, and checkpoint;
+- HUMAN and SYSTEM statements cannot be silently down-cast into a worker proposal;
+- `ContinuationAdmission` is explicitly CODEXIA-authored; a worker cannot author its own admission record;
+- the admission decision is derived from explicit objective, human-constraint, scope, depth, evidence, and material-human-choice judgments rather than caller-authored decision text;
+- routine depth/evidence insufficiency yields `REVISE` without unnecessary human interruption;
+- objective or explicit human-constraint conflict yields `REJECT` rather than rewriting the delegation;
+- genuine ambiguity or a material direction change yields `ASK_HUMAN`;
+- only fully aligned non-material continuation yields `ADMIT`;
+- decoding recomputes the deterministic decision and rejects decision tamper or authority-shaped extra fields;
+- M6.2 does not yet claim to derive semantic-fit judgments from a live ChatGPT conversation and does not execute an admitted continuation;
+- no process, filesystem, Git, network, provider, scheduler, or authorization authority is introduced.
+
+See `docs/m6_2_continuation_admission.md` and `docs/m6_2_source_audit.md`.
 
 ### M6.3 — Chat / Codexia Peer Loop
 
-Planned.
+**Next.**
 
 Connect the real ChatGPT conversation surface so Codexia and the cognitive worker remain distinct peers. Codexia-authored continuation must never be recorded semantically as a HUMAN message, and the human must be able to enter the same chat directly without a manual-mode takeover ceremony.
 
