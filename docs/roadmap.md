@@ -352,7 +352,7 @@ See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`
 
 ## M6 — Delegated Work Continuity
 
-**In progress through M6.2.**
+**In progress through M6.3.**
 
 North-star property:
 
@@ -390,7 +390,7 @@ See `docs/m6_1_general_work_handoff_attention.md` and `docs/m6_1_source_audit.md
 
 ### M6.2 — Continuation Admission
 
-**Complete candidate.**
+**Complete.**
 
 Primary boundaries:
 
@@ -415,9 +415,30 @@ See `docs/m6_2_continuation_admission.md` and `docs/m6_2_source_audit.md`.
 
 ### M6.3 — Chat / Codexia Peer Loop
 
-**Next.**
+**Complete candidate.**
 
-Connect the real ChatGPT conversation surface so Codexia and the cognitive worker remain distinct peers. Codexia-authored continuation must never be recorded semantically as a HUMAN message, and the human must be able to enter the same chat directly without a manual-mode takeover ceremony.
+Primary boundaries:
+
+```text
+transport role "user" != semantic human authorship
+Codexia-authored continuation != human instruction
+live worker output != admitted continuation
+human chat activity invalidates stale continuation
+```
+
+- the existing `ChatGPTWebProvider` gains a read-only current-branch history surface backed by the already-pinned `chatgpt-web-adapter==0.1.5` public `get_messages()` contract;
+- `attach()` creates an exact digest-bound branch cursor without retroactively attributing pre-existing account-side messages;
+- newly observed external account-side user turns are represented as HUMAN-side delegated-work activity while assistant turns remain WORKER output;
+- `continue_admitted()` accepts only an exact M6.2 `ADMIT` bound to the current cursor and rereads the branch before any remote send;
+- unseen human/worker activity after admission makes the continuation stale and prevents the Codexia send;
+- Codexia provenance is derived from exact before/send/after branch reconciliation rather than from the transport `user` role or visible `[Codexia]` label;
+- the post-send delta must be exactly one matching Codexia user-role node followed by one assistant node matching the provider response;
+- concurrent account-side activity, current-branch rewrite, conversation-id drift, response mismatch, and provider-identity ambiguity fail closed;
+- digest-bound cursor/message/observation/turn records reject post-capture tamper and factory construction verifies the exact `before + captured delta == after` transition;
+- captured WORKER output can become a new M6.2 proposal candidate at the new cursor but cannot admit itself;
+- no background scheduler, durable supervisor queue, local process/filesystem/Git authority, or automatic execution is introduced.
+
+See `docs/m6_3_chat_codexia_peer_loop.md`, `docs/m6_3_source_audit.md`, `docs/m6_3_test_matrix.md`, and `docs/m6_3_nonclaims.md`.
 
 ### M6.4 — Dynamic Attention
 
