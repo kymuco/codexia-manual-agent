@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from codexia_manual_agent.work.contracts import (
     MAX_ACTOR_CHARS,
-    MAX_WORK_TEXT_CHARS,
     InvalidWorkRecordError,
     WorkActorKind,
     WorkHandoff,
