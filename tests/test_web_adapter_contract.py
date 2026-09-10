@@ -64,6 +64,17 @@ class WebAdapterContractTests(unittest.TestCase):
         self.assertIn("system", parameters)
         self.assertIn("reasoning_effort", parameters)
 
+    def test_stable_current_branch_history_surface_is_available(self) -> None:
+        from chatgpt_web_adapter import ChatGPTWebClient, ChatMessage
+
+        self.assertTrue(hasattr(ChatGPTWebClient, "get_messages"))
+        self.assertTrue(ChatMessage)
+        parameters = inspect.signature(ChatGPTWebClient.get_messages).parameters
+        self.assertIn("url_or_id", parameters)
+        self.assertIn("roles", parameters)
+        self.assertIn("include_empty", parameters)
+        self.assertIn("limit", parameters)
+
 
 if __name__ == "__main__":
     unittest.main()
