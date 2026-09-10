@@ -14,4 +14,6 @@ Expected gates:
 8. an admission from a different chat checkpoint cannot be reused;
 9. concurrent account-side activity during the Codexia send fails exact delta reconciliation;
 10. provider response text/message identity must match the post-send current-branch observation;
-11. the pinned web adapter contract must expose current-branch history reads on both Ubuntu and Windows.
+11. observation and peer-turn records reject post-capture digest/binding tamper;
+12. cursor transitions require the exact captured provider-message delta, not merely a caller-supplied after cursor;
+13. the pinned web adapter contract must expose current-branch history reads on both Ubuntu and Windows.
