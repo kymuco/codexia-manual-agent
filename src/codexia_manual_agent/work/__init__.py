@@ -8,9 +8,12 @@ from codexia_manual_agent.work.admission import (
     ContinuationProposal,
 )
 from codexia_manual_agent.work.attention import (
+    ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION,
     DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION,
     DYNAMIC_ATTENTION_DECISION_SCHEMA_VERSION,
     AttentionAlternativeShape,
+    AttentionConstraintCheck,
+    AttentionConstraintStatus,
     AttentionDisposition,
     AttentionOverride,
     AttentionReversibility,
@@ -50,6 +53,7 @@ from codexia_manual_agent.work.contracts import (
 
 __all__ = [
     "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
+    "ATTENTION_CONSTRAINT_CHECK_SCHEMA_VERSION",
     "CHAT_PEER_CURSOR_SCHEMA_VERSION",
     "CHAT_PEER_MESSAGE_SCHEMA_VERSION",
     "CHAT_PEER_OBSERVATION_SCHEMA_VERSION",
@@ -64,6 +68,8 @@ __all__ = [
     "WORK_STATEMENT_SCHEMA_VERSION",
     "AttentionAlternativeShape",
     "AttentionAssessment",
+    "AttentionConstraintCheck",
+    "AttentionConstraintStatus",
     "AttentionDisposition",
     "AttentionOverride",
     "AttentionReversibility",
