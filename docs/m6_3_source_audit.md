@@ -2,11 +2,11 @@
 
 ## Audit target
 
-M6.3 connects the delegated-work semantics from M6.1/M6.2 to the existing ChatGPT web provider. The audit asks whether transport-side `user` roles can be confused with human authorship, whether stale live conversation state can be overwritten, whether worker output can admit itself, or whether the peer loop widens local execution authority.
+M6.3 connects the delegated-work semantics from M6.1/M6.2 to the existing ChatGPT web provider. The audit asks whether transport-side `user` roles can be confused with human authorship, whether stale live conversation state can be overwritten, whether worker output can admit itself, whether peer records can be rebound after capture, or whether the peer loop widens local execution authority.
 
 ## Transport-role audit
 
-ChatGPT represents both a physical user's account-side turn and a Codexia-sent continuation as transport role `user`. Therefore M6.3 never derives semantic HUMAN solely from that role.
+ChatGPT represents both a physical user's account-side turn and a Codexia-sent continuation as transport role `user`. Therefore M6.3 never derives CODEXIA provenance from that role or from a textual label alone.
 
 For Codexia sends, semantic provenance is established by an exact sequence:
 
@@ -54,6 +54,23 @@ M6.3 does not trust the response object alone. After the remote send it rereads 
 
 Concurrent account-side activity during the send produces a delta other than exactly `user → assistant` and fails closed.
 
+## Peer-record integrity audit
+
+`ChatPeerCursor`, `CapturedChatPeerMessage`, `ChatPeerObservation`, and `ChatPeerTurn` all validate their schema and exact content digest on construction. A caller cannot mutate an already-captured observation or turn while retaining its old digest.
+
+Factory construction additionally verifies the exact cursor transition:
+
+```text
+before message fingerprints
++ fingerprints(exact captured delta)
+==
+after message fingerprints
+```
+
+Conversation identity must remain identical across the before cursor, every captured message, and the after cursor. This prevents a caller-supplied after cursor or cross-conversation capture from being silently rebound into an otherwise well-formed peer record.
+
+These records remain provenance records, not execution authority.
+
 ## Provider dependency audit
 
 Codexia continues to pin `chatgpt-web-adapter==0.1.5`. That exact stable-core release already exposes `ChatGPTWebClient.get_messages()` and `ChatMessage`; M6.3 therefore does not upgrade the transport dependency merely to obtain history reads.
@@ -74,6 +91,8 @@ An `EXTERNAL_USER` delta means a new account-side user-role message not emitted 
 
 M6.3 also assumes one tracked Codexia peer-loop writer for the attached cursor. Independent automation using the same account/conversation is treated as external activity and may invalidate or supersede the cursor rather than being silently attributed to Codexia.
 
+M6.3 does not yet persist a peer cursor or recover it across supervisor restarts; durable multi-work recovery belongs to the later supervisor milestone. A fresh attach therefore makes no authorship claims about pre-attachment history.
+
 ## Audit conclusion
 
 The M6.3 surface preserves the intended peer relationship:
@@ -91,5 +110,6 @@ transport user role != semantic human authorship
 Codexia continuation != human instruction
 human intervention invalidates stale continuation
 worker output != admitted continuation
+captured peer record != caller-rebindable provenance
 peer-loop continuation != local execution authority
 ```
