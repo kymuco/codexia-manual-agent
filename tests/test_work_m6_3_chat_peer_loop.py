@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from codexia_manual_agent.work import (
     ContinuationEvidenceFit,
     ContinuationFit,
     ContinuationProposal,
+    InvalidWorkRecordError,
     WorkActorKind,
     WorkHandoff,
     WorkIntentInterpretation,
@@ -227,7 +229,10 @@ def test_admitted_peer_turn_preserves_codexia_and_worker_provenance() -> None:
         handoff=handoff,
         interpretation=interpretation,
     )
-    assert followup.statement.statement_digest == turn.worker_message.statement.statement_digest
+    assert (
+        followup.statement.statement_digest
+        == turn.worker_message.statement.statement_digest
+    )
     assert followup.checkpoint_digest == turn.after_cursor.cursor_digest
 
 
@@ -237,7 +242,10 @@ def test_human_turn_after_admission_makes_continuation_stale_without_sending() -
     handoff, interpretation, proposal, admission = _admitted(cursor.cursor_digest)
     client.append_user("Stop here; I want to change one constraint first.")
 
-    with pytest.raises(PeerConversationChangedError, match="observe human/worker turns first"):
+    with pytest.raises(
+        PeerConversationChangedError,
+        match="observe human/worker turns first",
+    ):
         loop.continue_admitted(
             cursor=cursor,
             handoff=handoff,
@@ -322,7 +330,10 @@ def test_concurrent_user_message_during_codexia_send_fails_reconciliation() -> N
     handoff, interpretation, proposal, admission = _admitted(cursor.cursor_digest)
     client.inject_concurrent_user = True
 
-    with pytest.raises(PeerConversationChangedError, match="exact user/assistant branch delta"):
+    with pytest.raises(
+        PeerConversationChangedError,
+        match="exact user/assistant branch delta",
+    ):
         loop.continue_admitted(
             cursor=cursor,
             handoff=handoff,
@@ -338,7 +349,10 @@ def test_provider_response_must_match_observed_worker_message() -> None:
     handoff, interpretation, proposal, admission = _admitted(cursor.cursor_digest)
     client.response_text_override = "A different response body."
 
-    with pytest.raises(PeerConversationChangedError, match="differs from the provider response"):
+    with pytest.raises(
+        PeerConversationChangedError,
+        match="differs from the provider response",
+    ):
         loop.continue_admitted(
             cursor=cursor,
             handoff=handoff,
@@ -346,3 +360,30 @@ def test_provider_response_must_match_observed_worker_message() -> None:
             proposal=proposal,
             admission=admission,
         )
+
+
+def test_observation_record_rejects_post_capture_message_tamper() -> None:
+    loop, client = _loop()
+    cursor = loop.attach("conversation-1")
+    client.append_user("A fresh manual turn.")
+
+    observation = loop.observe(cursor)
+
+    with pytest.raises(InvalidWorkRecordError, match="observation digest"):
+        replace(observation, messages=())
+
+
+def test_peer_turn_record_rejects_admission_binding_tamper() -> None:
+    loop, _client = _loop()
+    cursor = loop.attach("conversation-1")
+    handoff, interpretation, proposal, admission = _admitted(cursor.cursor_digest)
+    turn = loop.continue_admitted(
+        cursor=cursor,
+        handoff=handoff,
+        interpretation=interpretation,
+        proposal=proposal,
+        admission=admission,
+    )
+
+    with pytest.raises(InvalidWorkRecordError, match="turn digest"):
+        replace(turn, admission_digest="0" * 64)
