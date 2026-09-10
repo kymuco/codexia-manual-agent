@@ -32,6 +32,28 @@ class FakeClient:
             ),
             metrics=FakeMetrics(),
         )
+        self.messages = [
+            SimpleNamespace(
+                node_id="n-user",
+                message_id="m-user",
+                role="user",
+                text="hello",
+                create_time=1.0,
+                recipient=None,
+                model=None,
+                finish_reason=None,
+            ),
+            SimpleNamespace(
+                node_id="n-assistant",
+                message_id="m-assistant",
+                role="assistant",
+                text="hi",
+                create_time=2.0,
+                recipient="all",
+                model="gpt-test",
+                finish_reason="stop",
+            ),
+        ]
 
     def send(self, prompt, **kwargs):
         self.calls.append(("send", prompt, kwargs))
@@ -40,6 +62,10 @@ class FakeClient:
     def send_to_conversation(self, conversation_id, prompt, **kwargs):
         self.calls.append(("continue", conversation_id, prompt, kwargs))
         return self.response
+
+    def get_messages(self, conversation_id, **kwargs):
+        self.calls.append(("history", conversation_id, kwargs))
+        return self.messages
 
 
 class ChatGPTWebProviderTests(unittest.TestCase):
@@ -88,6 +114,37 @@ class ChatGPTWebProviderTests(unittest.TestCase):
         self.assertFalse(client.calls[0][3]["preserve_model"])
         self.assertEqual(client.calls[0][3]["model"], "gpt-explicit")
 
+    def test_history_read_uses_current_branch_public_surface(self) -> None:
+        client = FakeClient()
+        provider = ChatGPTWebProvider(client=client)
+
+        messages = provider.read_messages("existing")
+
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0].node_id, "n-user")
+        self.assertEqual(messages[0].message_id, "m-user")
+        self.assertEqual(messages[0].role, "user")
+        self.assertEqual(messages[0].text, "hello")
+        self.assertEqual(messages[1].role, "assistant")
+        call = client.calls[0]
+        self.assertEqual(call[:2], ("history", "existing"))
+        self.assertEqual(call[2]["roles"], ("user", "assistant"))
+        self.assertFalse(call[2]["include_empty"])
+
+    def test_history_requires_exact_visible_message_identity(self) -> None:
+        client = FakeClient()
+        client.messages[0].node_id = None
+        provider = ChatGPTWebProvider(client=client)
+        with self.assertRaisesRegex(ProviderError, "missing node_id"):
+            provider.read_messages("existing")
+
+    def test_history_rejects_duplicate_provider_identity(self) -> None:
+        client = FakeClient()
+        client.messages[1].node_id = "n-user"
+        provider = ChatGPTWebProvider(client=client)
+        with self.assertRaisesRegex(ProviderError, "duplicate message identity"):
+            provider.read_messages("existing")
+
     def test_transport_exception_is_wrapped(self) -> None:
         class BrokenClient(FakeClient):
             def send(self, prompt, **kwargs):
@@ -96,6 +153,15 @@ class ChatGPTWebProviderTests(unittest.TestCase):
         provider = ChatGPTWebProvider(client=BrokenClient())
         with self.assertRaisesRegex(ProviderError, "backend changed"):
             provider.send(ProviderRequest(prompt="task"))
+
+    def test_history_exception_is_wrapped(self) -> None:
+        class BrokenClient(FakeClient):
+            def get_messages(self, conversation_id, **kwargs):
+                raise RuntimeError("history backend changed")
+
+        provider = ChatGPTWebProvider(client=BrokenClient())
+        with self.assertRaisesRegex(ProviderError, "history backend changed"):
+            provider.read_messages("existing")
 
     def test_missing_response_text_is_rejected(self) -> None:
         client = FakeClient()
