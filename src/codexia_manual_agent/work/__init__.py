@@ -1,3 +1,12 @@
+from codexia_manual_agent.work.admission import (
+    CONTINUATION_ADMISSION_SCHEMA_VERSION,
+    CONTINUATION_PROPOSAL_SCHEMA_VERSION,
+    ContinuationAdmission,
+    ContinuationDecision,
+    ContinuationEvidenceFit,
+    ContinuationFit,
+    ContinuationProposal,
+)
 from codexia_manual_agent.work.contracts import (
     ATTENTION_ASSESSMENT_SCHEMA_VERSION,
     WORK_HANDOFF_SCHEMA_VERSION,
@@ -17,12 +26,19 @@ from codexia_manual_agent.work.contracts import (
 
 __all__ = [
     "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
+    "CONTINUATION_ADMISSION_SCHEMA_VERSION",
+    "CONTINUATION_PROPOSAL_SCHEMA_VERSION",
     "WORK_HANDOFF_SCHEMA_VERSION",
     "WORK_INTENT_INTERPRETATION_SCHEMA_VERSION",
     "WORK_RESOURCE_SCHEMA_VERSION",
     "WORK_STATEMENT_SCHEMA_VERSION",
     "AttentionAssessment",
     "AttentionUrgency",
+    "ContinuationAdmission",
+    "ContinuationDecision",
+    "ContinuationEvidenceFit",
+    "ContinuationFit",
+    "ContinuationProposal",
     "InvalidWorkRecordError",
     "WorkActorKind",
     "WorkHandoff",
