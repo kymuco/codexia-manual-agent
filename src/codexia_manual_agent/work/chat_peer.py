@@ -21,7 +21,6 @@ from codexia_manual_agent.work.contracts import (
     WorkHandoff,
     WorkIntentInterpretation,
     WorkStatement,
-    _canonical_json,
     _digest,
     _validate_digest,
 )
@@ -63,6 +62,38 @@ def _message_fingerprint(message: ChatGPTConversationMessage) -> str:
     )
 
 
+def _captured_message_fingerprint(message: CapturedChatPeerMessage) -> str:
+    return _digest(
+        {
+            "node_id": message.node_id,
+            "message_id": message.provider_message_id,
+            "role": message.transport_role,
+            "text": message.statement.text,
+        }
+    )
+
+
+def _validate_cursor_transition(
+    before: ChatPeerCursor,
+    after: ChatPeerCursor,
+    messages: tuple[CapturedChatPeerMessage, ...],
+) -> None:
+    if before.conversation_id != after.conversation_id:
+        raise InvalidWorkRecordError("Chat peer transition changed conversation identity")
+    for message in messages:
+        if message.conversation_id != before.conversation_id:
+            raise InvalidWorkRecordError(
+                "Captured chat message changed conversation identity"
+            )
+    expected = before.message_fingerprints + tuple(
+        _captured_message_fingerprint(message) for message in messages
+    )
+    if after.message_fingerprints != expected:
+        raise InvalidWorkRecordError(
+            "Chat peer transition does not match its exact captured message delta"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ChatPeerCursor:
     """Exact current-branch checkpoint; it attributes no pre-existing message."""
@@ -77,7 +108,7 @@ class ChatPeerCursor:
         cls,
         conversation_id: str,
         messages: Iterable[ChatGPTConversationMessage],
-    ) -> "ChatPeerCursor":
+    ) -> ChatPeerCursor:
         conversation_id = _bounded_id(conversation_id, "conversation_id")
         fingerprints = tuple(_message_fingerprint(message) for message in messages)
         if len(fingerprints) > MAX_PEER_MESSAGES:
@@ -144,7 +175,7 @@ class CapturedChatPeerMessage:
         message: ChatGPTConversationMessage,
         origin: ChatPeerMessageOrigin,
         actor: str,
-    ) -> "CapturedChatPeerMessage":
+    ) -> CapturedChatPeerMessage:
         conversation_id = _bounded_id(conversation_id, "conversation_id")
         if message.role == "user":
             expected_kind = (
@@ -219,7 +250,10 @@ class CapturedChatPeerMessage:
             ChatPeerMessageOrigin.EXTERNAL_USER: ("user", WorkActorKind.HUMAN),
             ChatPeerMessageOrigin.ASSISTANT: ("assistant", WorkActorKind.WORKER),
         }[origin]
-        if self.transport_role != expected[0] or self.statement.author_kind is not expected[1]:
+        if (
+            self.transport_role != expected[0]
+            or self.statement.author_kind is not expected[1]
+        ):
             raise InvalidWorkRecordError(
                 "Captured chat message provenance does not match transport origin"
             )
@@ -257,8 +291,9 @@ class ChatPeerObservation:
         before: ChatPeerCursor,
         after: ChatPeerCursor,
         messages: Iterable[CapturedChatPeerMessage],
-    ) -> "ChatPeerObservation":
+    ) -> ChatPeerObservation:
         messages = tuple(messages)
+        _validate_cursor_transition(before, after, messages)
         base = {
             "schema_version": CHAT_PEER_OBSERVATION_SCHEMA_VERSION,
             "before_cursor_digest": before.cursor_digest,
@@ -272,6 +307,43 @@ class ChatPeerObservation:
             messages=messages,
             observation_digest=_digest(base),
         )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != CHAT_PEER_OBSERVATION_SCHEMA_VERSION:
+            raise InvalidWorkRecordError("Unsupported chat peer observation schema")
+        _validate_digest(self.before_cursor_digest, "before_cursor_digest")
+        if not isinstance(self.after_cursor, ChatPeerCursor):
+            raise InvalidWorkRecordError("after_cursor must be a ChatPeerCursor")
+        messages = tuple(self.messages)
+        if len(messages) > MAX_PEER_MESSAGES:
+            raise InvalidWorkRecordError("Chat peer observation exceeds its message budget")
+        for message in messages:
+            if not isinstance(message, CapturedChatPeerMessage):
+                raise InvalidWorkRecordError(
+                    "Chat peer observation messages must be captured messages"
+                )
+            if message.conversation_id != self.after_cursor.conversation_id:
+                raise InvalidWorkRecordError(
+                    "Chat peer observation changed conversation identity"
+                )
+        object.__setattr__(self, "messages", messages)
+        _validate_digest(self.observation_digest, "observation_digest")
+        if not hmac.compare_digest(
+            self.observation_digest,
+            _digest(self._base_dict()),
+        ):
+            raise InvalidWorkRecordError("Chat peer observation digest does not match")
+
+    def _base_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "before_cursor_digest": self.before_cursor_digest,
+            "after_cursor": self.after_cursor.to_dict(),
+            "messages": [message.to_dict() for message in self.messages],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._base_dict(), "observation_digest": self.observation_digest}
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +366,12 @@ class ChatPeerTurn:
         codexia_message: CapturedChatPeerMessage,
         worker_message: CapturedChatPeerMessage,
         after: ChatPeerCursor,
-    ) -> "ChatPeerTurn":
+    ) -> ChatPeerTurn:
+        _validate_cursor_transition(
+            before,
+            after,
+            (codexia_message, worker_message),
+        )
         base = {
             "schema_version": CHAT_PEER_TURN_SCHEMA_VERSION,
             "admission_id": admission.admission_id,
@@ -314,6 +391,54 @@ class ChatPeerTurn:
             after_cursor=after,
             turn_digest=_digest(base),
         )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != CHAT_PEER_TURN_SCHEMA_VERSION:
+            raise InvalidWorkRecordError("Unsupported chat peer turn schema")
+        object.__setattr__(
+            self,
+            "admission_id",
+            _bounded_id(self.admission_id, "admission_id"),
+        )
+        _validate_digest(self.admission_digest, "admission_digest")
+        _validate_digest(self.before_cursor_digest, "before_cursor_digest")
+        if not isinstance(self.codexia_message, CapturedChatPeerMessage):
+            raise InvalidWorkRecordError(
+                "codexia_message must be a CapturedChatPeerMessage"
+            )
+        if not isinstance(self.worker_message, CapturedChatPeerMessage):
+            raise InvalidWorkRecordError(
+                "worker_message must be a CapturedChatPeerMessage"
+            )
+        if not isinstance(self.after_cursor, ChatPeerCursor):
+            raise InvalidWorkRecordError("after_cursor must be a ChatPeerCursor")
+        if self.codexia_message.origin is not ChatPeerMessageOrigin.CODEXIA_SEND:
+            raise InvalidWorkRecordError("Peer turn Codexia message provenance is invalid")
+        if self.worker_message.origin is not ChatPeerMessageOrigin.ASSISTANT:
+            raise InvalidWorkRecordError("Peer turn worker message provenance is invalid")
+        conversation_id = self.after_cursor.conversation_id
+        if (
+            self.codexia_message.conversation_id != conversation_id
+            or self.worker_message.conversation_id != conversation_id
+        ):
+            raise InvalidWorkRecordError("Peer turn changed conversation identity")
+        _validate_digest(self.turn_digest, "turn_digest")
+        if not hmac.compare_digest(self.turn_digest, _digest(self._base_dict())):
+            raise InvalidWorkRecordError("Chat peer turn digest does not match")
+
+    def _base_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "admission_id": self.admission_id,
+            "admission_digest": self.admission_digest,
+            "before_cursor_digest": self.before_cursor_digest,
+            "codexia_message": self.codexia_message.to_dict(),
+            "worker_message": self.worker_message.to_dict(),
+            "after_cursor": self.after_cursor.to_dict(),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._base_dict(), "turn_digest": self.turn_digest}
 
     def followup_proposal(
         self,
