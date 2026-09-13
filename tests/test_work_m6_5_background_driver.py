@@ -12,6 +12,7 @@ from codexia_manual_agent.work import (
     BackgroundWorkDriver,
     BackgroundWorkSupervisor,
     ChatGPTPeerLoop,
+    ChatPeerTurn,
     ContinuationAdmission,
     ContinuationEvidenceFit,
     ContinuationFit,
@@ -166,18 +167,8 @@ def _attention(snapshot, proposal, admission, *, ask_human: bool = False):
     )
 
 
-def _checkpoint(snapshot, *, ask_human: bool = False):
-    proposal = ContinuationProposal.create(
-        handoff=snapshot.handoff,
-        interpretation=snapshot.interpretation,
-        checkpoint_digest=snapshot.cursor.cursor_digest,
-        statement=_statement(
-            WorkActorKind.WORKER,
-            "chatgpt",
-            "Continue the next bounded delegated-work step.",
-        ),
-    )
-    admission = ContinuationAdmission.evaluate(
+def _admission_for(snapshot, proposal, *, ask_human: bool = False):
+    return ContinuationAdmission.evaluate(
         handoff=snapshot.handoff,
         interpretation=snapshot.interpretation,
         proposal=proposal,
@@ -200,12 +191,35 @@ def _checkpoint(snapshot, *, ask_human: bool = False):
             else None
         ),
     )
+
+
+def _checkpoint(snapshot, *, ask_human: bool = False):
+    proposal = ContinuationProposal.create(
+        handoff=snapshot.handoff,
+        interpretation=snapshot.interpretation,
+        checkpoint_digest=snapshot.cursor.cursor_digest,
+        statement=_statement(
+            WorkActorKind.WORKER,
+            "chatgpt",
+            "Continue the next bounded delegated-work step.",
+        ),
+    )
+    admission = _admission_for(snapshot, proposal, ask_human=ask_human)
     return proposal, admission, _attention(
         snapshot,
         proposal,
         admission,
         ask_human=ask_human,
     )
+
+
+def _admit_exact_turn(snapshot, turn: ChatPeerTurn):
+    proposal = turn.followup_proposal(
+        handoff=snapshot.handoff,
+        interpretation=snapshot.interpretation,
+    )
+    admission = _admission_for(snapshot, proposal)
+    return proposal, admission, _attention(snapshot, proposal, admission)
 
 
 def _revision_checkpoint(snapshot):
@@ -253,9 +267,11 @@ def test_driver_runs_multiple_worker_turns_without_human_continue(tmp_path) -> N
     supervisor, snapshot, peer, client = _registered(tmp_path)
     driver = BackgroundWorkDriver(supervisor)
 
-    def source(current, _peer):
+    def source(current, _peer, latest_turn):
         if len(client.send_calls) >= 2:
             return None
+        if latest_turn is not None:
+            return _admit_exact_turn(current, latest_turn)
         return _checkpoint(current)
 
     result = driver.drive_chat_until_blocked(
@@ -278,7 +294,7 @@ def test_driver_stops_at_dynamic_human_attention_boundary(tmp_path) -> None:
     result = driver.drive_chat_until_blocked(
         snapshot.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda current, _peer: _checkpoint(
+        checkpoint_source=lambda current, _peer, _turn: _checkpoint(
             current,
             ask_human=True,
         ),
@@ -307,7 +323,7 @@ def test_driver_observes_human_before_claim_and_invalidates_prepared(tmp_path) -
     result = driver.drive_chat_until_blocked(
         prepared.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda _current, _peer: None,
+        checkpoint_source=lambda _current, _peer, _turn: None,
         max_steps=4,
     )
 
@@ -342,7 +358,7 @@ def test_driver_reconciles_in_flight_turn_without_second_send(tmp_path) -> None:
     result = BackgroundWorkDriver(restarted).drive_chat_until_blocked(
         prepared.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda _current, _peer: None,
+        checkpoint_source=lambda _current, _peer, _turn: None,
         max_steps=4,
     )
 
@@ -355,11 +371,13 @@ def test_driver_sends_worker_revision_then_continues_without_human_turn(tmp_path
     supervisor, snapshot, peer, client = _registered(tmp_path)
     driver = BackgroundWorkDriver(supervisor)
 
-    def source(current, _peer):
+    def source(current, _peer, latest_turn):
         if len(client.send_calls) == 0:
+            assert latest_turn is None
             return _revision_checkpoint(current)
         if len(client.send_calls) == 1:
-            return _checkpoint(current)
+            assert latest_turn is not None
+            return _admit_exact_turn(current, latest_turn)
         return None
 
     result = driver.drive_chat_until_blocked(
@@ -401,16 +419,24 @@ def test_driver_reconciles_revision_after_crash_without_resend(tmp_path) -> None
     client.send_to_conversation("conversation-1", prompt)
 
     restarted = BackgroundWorkSupervisor(tmp_path / "supervisor.sqlite3")
+    seen_turns: list[ChatPeerTurn | None] = []
+
+    def source(_current, _peer, latest_turn):
+        seen_turns.append(latest_turn)
+        return None
+
     result = BackgroundWorkDriver(restarted).drive_chat_until_blocked(
         prepared.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda _current, _peer: None,
+        checkpoint_source=source,
         max_steps=4,
     )
 
     assert result.stop is SupervisorDriveStop.NO_CHECKPOINT
     assert result.provider_turns == 0
     assert len(client.send_calls) == 1
+    assert len(seen_turns) == 1
+    assert seen_turns[0] is not None
 
 
 def test_driver_step_budget_bounds_repeated_worker_revision(tmp_path) -> None:
@@ -420,7 +446,7 @@ def test_driver_step_budget_bounds_repeated_worker_revision(tmp_path) -> None:
     result = driver.drive_chat_until_blocked(
         snapshot.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda current, _peer: _revision_checkpoint(current),
+        checkpoint_source=lambda current, _peer, _turn: _revision_checkpoint(current),
         max_steps=5,
     )
 
