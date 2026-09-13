@@ -155,7 +155,7 @@ def test_driver_uses_work_bound_capture_when_active_works_share_cursor(tmp_path)
     result = BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
         work_a.work_id,
         peer_loop=peer,
-        checkpoint_source=lambda _snapshot, _peer: None,
+        checkpoint_source=lambda _snapshot, _peer, _turn: None,
         max_steps=4,
     )
 
