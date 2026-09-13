@@ -13,6 +13,7 @@ from codexia_manual_agent.work.chat_peer import (
 )
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
+    SupervisorDispatchLease,
     SupervisorStateError,
 )
 
@@ -129,6 +130,10 @@ def _install_supervisor_guards() -> None:
         work_id: str,
         observation: ChatPeerObservation,
     ) -> None:
+        if not isinstance(observation, ChatPeerObservation):
+            raise SupervisorStateError(
+                "observation must be a ChatPeerObservation from live M6.3 capture"
+            )
         snapshot = self.recover(work_id)
         captured = _consume(
             _verified_observations,
@@ -221,6 +226,10 @@ def _install_supervisor_guards() -> None:
         *,
         turn: ChatPeerTurn,
     ):
+        if not isinstance(turn, ChatPeerTurn):
+            raise SupervisorStateError(
+                "turn must be a ChatPeerTurn from live M6.3 continuation or revision"
+            )
         snapshot = self.recover(work_id)
         if not _reconciliation_commit.get():
             captured = _consume(_verified_turns, turn.turn_digest)
@@ -244,9 +253,13 @@ def _install_supervisor_guards() -> None:
 
     def execute_claimed_chat(
         self: BackgroundWorkSupervisor,
-        lease,
+        lease: SupervisorDispatchLease,
         peer_loop: ChatGPTPeerLoop,
     ):
+        if not isinstance(lease, SupervisorDispatchLease):
+            raise SupervisorStateError("lease must be a SupervisorDispatchLease")
+        if not isinstance(peer_loop, ChatGPTPeerLoop):
+            raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
         token = _turn_work_id.set(lease.work_id)
         try:
             return original_execute(self, lease, peer_loop)
@@ -259,6 +272,8 @@ def _install_supervisor_guards() -> None:
         *,
         peer_loop: ChatGPTPeerLoop,
     ):
+        if not isinstance(peer_loop, ChatGPTPeerLoop):
+            raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
         token = _reconciliation_commit.set(True)
         try:
             return original_reconcile(
