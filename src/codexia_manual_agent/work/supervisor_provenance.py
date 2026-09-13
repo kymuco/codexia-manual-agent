@@ -112,12 +112,11 @@ def _install_supervisor_guards() -> None:
     original_execute = BackgroundWorkSupervisor.execute_claimed_chat
     original_reconcile = BackgroundWorkSupervisor.reconcile_in_flight_chat
 
-    def record_external_observation(
+    def _require_observation_ticket(
         self: BackgroundWorkSupervisor,
         work_id: str,
-        *,
         observation: ChatPeerObservation,
-    ):
+    ) -> None:
         snapshot = self.recover(work_id)
         captured = _consume(
             _verified_observations,
@@ -146,13 +145,46 @@ def _install_supervisor_guards() -> None:
         ) != 1:
             raise SupervisorStateError(
                 "Unbound live observation is ambiguous across multiple delegated works; "
-                "use observe_external_chat() for exact work binding"
+                "use capture_external_chat() for exact work binding"
             )
+
+    def record_external_observation(
+        self: BackgroundWorkSupervisor,
+        work_id: str,
+        *,
+        observation: ChatPeerObservation,
+    ):
+        _require_observation_ticket(self, work_id, observation)
         return original_record_external(
             self,
             work_id,
             observation=observation,
         )
+
+    def capture_external_chat(
+        self: BackgroundWorkSupervisor,
+        work_id: str,
+        *,
+        peer_loop: ChatGPTPeerLoop,
+    ) -> ChatPeerObservation:
+        if not isinstance(peer_loop, ChatGPTPeerLoop):
+            raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
+        snapshot = self.recover(work_id)
+        token = _observation_work_id.set(work_id)
+        try:
+            return peer_loop.observe(snapshot.cursor)
+        finally:
+            _observation_work_id.reset(token)
+
+    def discard_external_observation(
+        self: BackgroundWorkSupervisor,
+        work_id: str,
+        *,
+        observation: ChatPeerObservation,
+    ) -> None:
+        """Consume one exact live evidence ticket without changing durable state."""
+
+        _require_observation_ticket(self, work_id, observation)
 
     def observe_external_chat(
         self: BackgroundWorkSupervisor,
@@ -160,14 +192,11 @@ def _install_supervisor_guards() -> None:
         *,
         peer_loop: ChatGPTPeerLoop,
     ):
-        if not isinstance(peer_loop, ChatGPTPeerLoop):
-            raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
-        snapshot = self.recover(work_id)
-        token = _observation_work_id.set(work_id)
-        try:
-            observation = peer_loop.observe(snapshot.cursor)
-        finally:
-            _observation_work_id.reset(token)
+        observation = capture_external_chat(
+            self,
+            work_id,
+            peer_loop=peer_loop,
+        )
         return record_external_observation(
             self,
             work_id,
@@ -230,6 +259,10 @@ def _install_supervisor_guards() -> None:
 
     BackgroundWorkSupervisor.record_external_observation = (  # type: ignore[method-assign]
         record_external_observation
+    )
+    BackgroundWorkSupervisor.capture_external_chat = capture_external_chat  # type: ignore[attr-defined]
+    BackgroundWorkSupervisor.discard_external_observation = (  # type: ignore[attr-defined]
+        discard_external_observation
     )
     BackgroundWorkSupervisor.observe_external_chat = observe_external_chat  # type: ignore[attr-defined]
     BackgroundWorkSupervisor.record_peer_turn = record_peer_turn  # type: ignore[method-assign]
