@@ -3,17 +3,12 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import inspect
+import json
 import unittest
 
 
-_EXPECTED_ADAPTER_VERSION = "0.1.5"
-_REQUIRED_SEND_PARAMETERS = {
-    "prompt",
-    "model",
-    "system",
-    "reasoning_effort",
-    "conversation",
-}
+_EXPECTED_ADAPTER_VERSION = "0.3.0"
+_EXPECTED_ADAPTER_COMMIT = "b3e27cf1f53323d946953b4d962994733482bbae"
 
 
 @unittest.skipUnless(
@@ -21,59 +16,57 @@ _REQUIRED_SEND_PARAMETERS = {
     "chatgpt-web-adapter optional dependency is not installed",
 )
 class WebAdapterContractTests(unittest.TestCase):
-    def test_pinned_adapter_version_is_installed(self) -> None:
-        self.assertEqual(
-            importlib.metadata.version("chatgpt-web-adapter"),
-            _EXPECTED_ADAPTER_VERSION,
+    def test_exact_source_revision_is_installed(self) -> None:
+        distribution = importlib.metadata.distribution("chatgpt-web-adapter")
+        self.assertEqual(distribution.version, _EXPECTED_ADAPTER_VERSION)
+
+        direct_url_text = distribution.read_text("direct_url.json")
+        self.assertIsNotNone(
+            direct_url_text,
+            "CWA must be installed from the exact VCS source dependency",
         )
+        direct_url = json.loads(direct_url_text)
+        vcs_info = direct_url.get("vcs_info") or {}
+        self.assertEqual(vcs_info.get("vcs"), "git")
+        self.assertEqual(vcs_info.get("commit_id"), _EXPECTED_ADAPTER_COMMIT)
+        requested = vcs_info.get("requested_revision")
+        if requested is not None:
+            self.assertEqual(requested, _EXPECTED_ADAPTER_COMMIT)
 
-    def test_stable_send_surface_is_available(self) -> None:
-        from chatgpt_web_adapter import ChatGPTWebClient
+    def test_product_runtime_primary_surface_is_available(self) -> None:
+        from chatgpt_web_adapter import ChatGPTProductRuntime, assemble_product_runtime
 
-        send = ChatGPTWebClient.send
-        self.assertTrue(callable(send))
+        self.assertTrue(callable(assemble_product_runtime))
+        assembly = inspect.signature(assemble_product_runtime).parameters
+        self.assertIn("transport", assembly)
+        self.assertIn("auth_file", assembly)
+        self.assertIn("client_timeout", assembly)
 
-        parameters = inspect.signature(send).parameters
-        if _REQUIRED_SEND_PARAMETERS.issubset(parameters):
-            return
-
-        # chatgpt-web-adapter 0.1.5 wraps send() for metrics collection.
-        # The public wrapper intentionally exposes (self, *args, **kwargs),
-        # while provider unit tests verify the exact named arguments Codexia
-        # sends through that wrapper.
-        supports_keyword_forwarding = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        )
-        self.assertTrue(
-            supports_keyword_forwarding,
-            "ChatGPTWebClient.send must expose the documented named parameters "
-            "or a public **kwargs forwarding wrapper",
-        )
-
-    def test_stable_continue_surface_is_available(self) -> None:
-        from chatgpt_web_adapter import ChatGPTWebClient
-
-        self.assertTrue(hasattr(ChatGPTWebClient, "send_to_conversation"))
-        parameters = inspect.signature(
-            ChatGPTWebClient.send_to_conversation
+        observed_send = inspect.signature(
+            ChatGPTProductRuntime.send_text_observed
         ).parameters
-        self.assertIn("url_or_id", parameters)
-        self.assertIn("prompt", parameters)
-        self.assertIn("preserve_model", parameters)
-        self.assertIn("system", parameters)
-        self.assertIn("reasoning_effort", parameters)
+        self.assertIn("text", observed_send)
+        self.assertIn("conversation", observed_send)
+        self.assertIn("timeout", observed_send)
+        self.assertIn("model_profile", observed_send)
 
-    def test_stable_current_branch_history_surface_is_available(self) -> None:
-        from chatgpt_web_adapter import ChatGPTWebClient, ChatMessage
+        self.assertTrue(callable(ChatGPTProductRuntime.get_messages))
+        self.assertTrue(callable(ChatGPTProductRuntime.attach_conversation))
+        self.assertTrue(callable(ChatGPTProductRuntime.health))
 
-        self.assertTrue(hasattr(ChatGPTWebClient, "get_messages"))
-        self.assertTrue(ChatMessage)
-        parameters = inspect.signature(ChatGPTWebClient.get_messages).parameters
-        self.assertIn("url_or_id", parameters)
-        self.assertIn("roles", parameters)
-        self.assertIn("include_empty", parameters)
-        self.assertIn("limit", parameters)
+    def test_canonical_message_identity_surface_is_available(self) -> None:
+        from chatgpt_web_adapter import ChatMessage
+
+        message = ChatMessage(
+            node_id="node",
+            message_id="message",
+            role="assistant",
+            text="ok",
+        )
+        self.assertEqual(message.node_id, "node")
+        self.assertEqual(message.message_id, "message")
+        self.assertEqual(message.role, "assistant")
+        self.assertEqual(message.text, "ok")
 
 
 if __name__ == "__main__":
