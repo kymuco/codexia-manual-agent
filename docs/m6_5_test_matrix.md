@@ -13,9 +13,11 @@ Expected gates:
 7. exact post-crash Codexia/assistant history can be reconciled without a second send;
 8. no visible post-crash provider effect remains `IN_FLIGHT` and does not manufacture retry permission;
 9. M6.4 `ASK_HUMAN` state becomes durable `WAITING_HUMAN` with no pending dispatch;
-10. an exact external human observation resumes `WAITING_HUMAN` work;
+10. a fresh live M6.3 external-human observation resumes `WAITING_HUMAN` work;
 11. external human activity invalidates an unclaimed `PREPARED` continuation;
-12. event payload tamper fails recovery;
-13. strict supervisor-dispatch decoding rejects authority-shaped extra fields;
-14. WORKER output cannot directly declare supervisor completion;
-15. multiple delegated works recover independently from the same durable supervisor database.
+12. a structurally valid but synthetic external-human observation cannot advance supervisor state;
+13. an unbound live observation cannot arbitrarily choose between two active works at the same chat cursor;
+14. event payload tamper fails recovery;
+15. strict supervisor-dispatch decoding rejects authority-shaped extra fields;
+16. WORKER output cannot directly declare supervisor completion;
+17. multiple delegated works recover independently from the same durable supervisor database.
