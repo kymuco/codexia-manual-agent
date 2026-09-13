@@ -64,6 +64,7 @@ from codexia_manual_agent.work.supervisor import (
     SupervisorStatus,
     SupervisorWorkSnapshot,
 )
+import codexia_manual_agent.work.supervisor_provenance  # noqa: F401
 
 __all__ = [
     "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
