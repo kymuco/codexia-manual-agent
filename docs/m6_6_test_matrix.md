@@ -8,7 +8,10 @@ The candidate must prove the live cognition bridge without weakening existing M6
 |---|---|
 | Two routine worker turns in one driver call | advances without human `continue` and ends only at a governed stop/completion |
 | Genuine material choice | enters `WAITING_HUMAN` before provider send |
-| External human answer | exact `EXTERNAL_USER` observation is durably recorded and supplied to resumed cognition |
+| Pilot human answer | explicit HUMAN answer outside worker chat binds exact waiting state and returns only to `READY` |
+| Human answer cursor isolation | recording the answer does not modify the worker ChatGPT cursor/history |
+| Unsolicited human answer | answer outside exact `WAITING_HUMAN` fails closed |
+| Account-side human activity | existing M6.3 `EXTERNAL_USER` observation path remains valid and distinct from pilot answer evidence |
 | Worker follow-up provenance | cognition cannot replace terminal exact worker text |
 | Completion authorship | WORKER-authored completion is rejected |
 | Completion evidence | completion before terminal worker evidence is rejected |
@@ -57,9 +60,10 @@ Across either vertical, demonstrate at least one real case where:
 
 ```text
 WAITING_HUMAN
-→ human answers outside the Codexia worker send
-→ exact EXTERNAL_USER observation
-→ same work_id resumes
+→ human answers through the Codexia pilot surface, not worker chat
+→ answer binds exact waiting event + attention decision
+→ same work_id becomes READY with unchanged worker cursor
+→ fresh M6.2/M6.4 judgment
 → next governed worker turn
 ```
 
