@@ -2,7 +2,7 @@
 
 ## Audit target
 
-M6.5 introduces durable orchestration over exact M6.1–M6.4 work state. The audit asks whether background persistence creates a second authority root, whether stale or concurrent work can be advanced, whether a provider side effect can be replayed after crash, whether human activity can be overwritten by a prepared continuation, whether caller-supplied records can impersonate live provider evidence, and whether worker output can terminate work by declaration.
+M6.5 introduces durable orchestration over exact M6.1–M6.4 work state. The audit asks whether background persistence creates a second authority root, whether stale or concurrent work can be advanced, whether a provider side effect can be replayed after crash, whether human activity can be overwritten by a prepared continuation, whether caller-supplied records can impersonate live provider evidence, whether the runtime actually removes routine human scheduling, and whether worker output can terminate work by declaration.
 
 ## Authority audit
 
@@ -15,7 +15,7 @@ READY / PREPARED / IN_FLIGHT / WAITING_HUMAN / COMPLETED
 
 A provider dispatch can only be constructed from an exact M6.2 `ADMIT` plus exact M6.4 `KEEP_MOVING` result bound to the current peer cursor. The supervisor neither changes the admission decision nor suppresses an attention boundary.
 
-No supervisor record contains local process, filesystem, Git mutation, network capability, merge authority, authorization receipt, or generic command payload.
+No supervisor or driver record contains local process, filesystem, Git mutation, network capability, merge authority, authorization receipt, or generic command payload.
 
 ## Second-truth audit
 
@@ -45,6 +45,31 @@ Post-crash reconciliation is the intentional exception for a peer turn: M6.5 rec
 
 This preserves the older Codexia rule: do not trust caller-supplied evidence when the authoritative source can be reread.
 
+## Background-driver audit
+
+Persistence alone would leave the human as the scheduler. `BackgroundWorkDriver.drive_chat_until_blocked()` closes that gap with one bounded host-invoked event pump.
+
+For each iteration it recovers the exact durable work state, synchronizes live peer activity before any unclaimed provider dispatch, invokes an injected Codexia-side checkpoint source only from `READY`, and routes every returned checkpoint through the existing supervisor validation path.
+
+The checkpoint source therefore does not gain orchestration or execution authority. It can propose only an exact `(ContinuationProposal, ContinuationAdmission, DynamicAttentionDecision)` tuple or no checkpoint. `record_checkpoint()` still revalidates M6.1 handoff/interpretation identity, M6.2 admission, M6.4 attention, and the exact current cursor before any `PREPARED` dispatch can exist.
+
+A single driver call can cross multiple routine worker turns:
+
+```text
+READY
+→ exact checkpoint
+→ PREPARED
+→ durable claim
+→ one M6.3 peer turn
+→ READY
+→ next exact checkpoint
+→ ...
+```
+
+No human `continue` event is required between those ordinary turns. The loop remains explicitly bounded by `max_steps`, so repeated `REVISE`/replanning cannot become an unbounded autonomous loop.
+
+The driver stops rather than widening authority on `WAITING_HUMAN`, ambiguous `IN_FLIGHT`, completion, absent next checkpoint, or step-budget exhaustion.
+
 ## Provider replay audit
 
 The provider send is the first M6.5 effect that cannot be made transactionally atomic with SQLite.
@@ -71,11 +96,13 @@ If later messages exist after the exact Codexia/assistant pair, reconciliation a
 
 ## Human-precedence audit
 
-A `PREPARED` continuation has not produced a side effect. If the conversation advances before claim, `observe_external_chat()` rereads the live M6.3 branch; the verified observation clears that pending dispatch and returns the work to `READY` at the live cursor.
+A `PREPARED` continuation has not produced a side effect. Before claiming it, the background driver rereads the live M6.3 branch. If the conversation advanced, the verified observation clears that pending dispatch and returns the work to `READY` at the live cursor.
 
 `WAITING_HUMAN` can resume only from a fresh live M6.3 observation containing an actual `EXTERNAL_USER` message. Assistant-only activity cannot fabricate the human answer, and a hand-constructed observation cannot impersonate one.
 
 Generic observation is forbidden while `IN_FLIGHT`; the attempted dispatch must be reconciled first so a Codexia transport-role `user` message cannot be mislabeled as HUMAN.
+
+The first ChatGPT adapter still has one narrow liveness race: live state may change after the durable claim but before provider send begins. M6.3 prevents the stale send, while M6.5 conservatively retains `IN_FLIGHT` instead of assuming retry is safe. This is a fail-closed liveness limit, not an authority leak or replay path.
 
 ## Completion audit
 
@@ -99,7 +126,7 @@ Replay validates canonical event digests, previous-digest chaining, contiguous s
 
 The first M6.5 candidate is intentionally single-database/single-host orchestration, not a distributed scheduler. Its first proven transport adapter is the existing M6.3 ChatGPT peer loop; the delegated-work semantics are general, but other worker/tool transports have not yet been proven against this supervisor boundary.
 
-It does not generate wake-up timers or notifications. It also does not invent a new interpretation-lineage model for human evidence after the original M6.1 handoff. A crash after durable claim but before any provider-visible effect may conservatively leave work `IN_FLIGHT`; absence of a visible effect is not treated as proof that retry is safe.
+It does not generate wake-up timers, a resident daemon, or notifications. A host/runtime must invoke the bounded driver when work is ready to advance. It also does not invent a new interpretation-lineage model for human evidence after the original M6.1 handoff. A crash or race after durable claim but before any safely attributable provider-visible effect may conservatively leave work `IN_FLIGHT`; absence of a visible effect is not treated as proof that retry is safe.
 
 These are bounded non-claims rather than hidden assumptions.
 
@@ -114,8 +141,10 @@ remain authoritative boundaries
 while
 
 Codexia can durably remember what work is ready,
-what work is waiting for the human,
-and what remote dispatch may already have happened.
+react to verified live state,
+cross multiple routine worker turns without human scheduling,
+stop at genuine human judgment,
+and remember what remote dispatch may already have happened.
 ```
 
-The new persistence layer advances orchestration continuity without minting a second execution authority or trusting synthetic live evidence.
+The new persistence and bounded-driver layers advance delegated-work continuity without minting a second execution authority, trusting synthetic live evidence, or turning ambiguity into retry permission.
