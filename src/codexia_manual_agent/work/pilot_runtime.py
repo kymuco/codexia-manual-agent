@@ -14,6 +14,7 @@ from codexia_manual_agent.work.contracts import (
 from codexia_manual_agent.work.pilot_checkpoint import PilotCheckpointSource
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
+    SupervisorStateError,
     SupervisorWorkSnapshot,
 )
 from codexia_manual_agent.work.supervisor_driver import (
@@ -134,6 +135,27 @@ def drive_daily_use_pilot(
         checkpoint_source=source,
         max_steps=max_steps,
     )
+
+
+def answer_daily_use_pilot(
+    *,
+    database_path: str | Path,
+    work_id: str,
+    answer: str,
+    human_actor: str = "human",
+) -> SupervisorWorkSnapshot:
+    """Record an explicit HUMAN answer for exact WAITING_HUMAN pilot work."""
+
+    supervisor = BackgroundWorkSupervisor(database_path)
+    recorder = getattr(supervisor, "record_pilot_human_answer", None)
+    if not callable(recorder):
+        raise SupervisorStateError("Pilot human-answer extension is not installed")
+    statement = WorkStatement.create(
+        author_kind=WorkActorKind.HUMAN,
+        actor=human_actor,
+        text=answer,
+    )
+    return recorder(work_id, answer=statement)
 
 
 def daily_use_pilot_status(
