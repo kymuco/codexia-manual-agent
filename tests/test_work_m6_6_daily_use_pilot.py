@@ -143,6 +143,41 @@ def _registered(tmp_path):
     return supervisor, snapshot, peer, client
 
 
+def _registered_with_attention_constraint(tmp_path):
+    client = FakeLiveChatClient()
+    peer = ChatGPTPeerLoop(ChatGPTWebProvider(client=client))
+    objective = _statement(
+        WorkActorKind.HUMAN,
+        "operator",
+        "Produce the delegated result.",
+    )
+    attention_constraint = _statement(
+        WorkActorKind.HUMAN,
+        "operator",
+        "Ask me before choosing a materially different direction.",
+    )
+    handoff = WorkHandoff.create(
+        objective=objective,
+        attention_constraints=(attention_constraint,),
+    )
+    interpretation = WorkIntentInterpretation.create(
+        handoff=handoff,
+        interpreter_kind=WorkActorKind.CODEXIA,
+        interpreter="codexia",
+        basis_statements=(objective, attention_constraint),
+        completion_expectation="Return a finished result.",
+        continuation_scope="Stay inside the delegated objective.",
+        depth_interpretation="Use sufficient evidence and depth.",
+    )
+    supervisor = BackgroundWorkSupervisor(tmp_path / "supervisor.sqlite3")
+    snapshot = supervisor.register(
+        handoff=handoff,
+        interpretation=interpretation,
+        cursor=peer.attach("conversation-1"),
+    )
+    return supervisor, snapshot, peer, client, attention_constraint
+
+
 def _checkpoint(*, proposal_text, ask_human: bool = False):
     return {
         "mode": "checkpoint",
@@ -302,6 +337,88 @@ def test_pilot_cannot_complete_before_worker_evidence(tmp_path) -> None:
     source = PilotCheckpointSource(supervisor=supervisor, provider=cognition)
 
     with pytest.raises(InvalidWorkRecordError):
+        BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
+            snapshot.work_id,
+            peer_loop=peer,
+            checkpoint_source=source,
+            max_steps=4,
+        )
+
+
+def test_pilot_cannot_complete_from_stale_worker_evidence_after_human_activity(tmp_path) -> None:
+    supervisor, snapshot, peer, client = _registered(tmp_path)
+    first_source = PilotCheckpointSource(
+        supervisor=supervisor,
+        provider=FakeCognitionProvider(
+            [_checkpoint(proposal_text="Produce one bounded worker result.")]
+        ),
+    )
+    first = BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
+        snapshot.work_id,
+        peer_loop=peer,
+        checkpoint_source=first_source,
+        max_steps=2,
+    )
+    assert first.stop is SupervisorDriveStop.STEP_BUDGET
+    assert first.provider_turns == 1
+
+    client.append_user("New human evidence arrived after that worker result.")
+    completion_source = PilotCheckpointSource(
+        supervisor=supervisor,
+        provider=FakeCognitionProvider(
+            [
+                {
+                    "mode": "complete",
+                    "completion_summary": "Try to close using the older worker result.",
+                }
+            ]
+        ),
+    )
+    with pytest.raises(
+        InvalidWorkRecordError,
+        match="terminal exact worker turn",
+    ):
+        BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
+            snapshot.work_id,
+            peer_loop=peer,
+            checkpoint_source=completion_source,
+            max_steps=4,
+        )
+
+
+def test_pilot_rejects_authority_shaped_extra_cognition_field(tmp_path) -> None:
+    supervisor, snapshot, peer, _client = _registered(tmp_path)
+    payload = _checkpoint(proposal_text="Continue the bounded work.")
+    payload["execute"] = True
+    source = PilotCheckpointSource(
+        supervisor=supervisor,
+        provider=FakeCognitionProvider([payload]),
+    )
+
+    with pytest.raises(InvalidWorkRecordError, match="keys mismatch"):
+        BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
+            snapshot.work_id,
+            peer_loop=peer,
+            checkpoint_source=source,
+            max_steps=4,
+        )
+
+
+def test_pilot_requires_exact_attention_constraint_coverage(tmp_path) -> None:
+    supervisor, snapshot, peer, _client, _constraint = _registered_with_attention_constraint(
+        tmp_path
+    )
+    source = PilotCheckpointSource(
+        supervisor=supervisor,
+        provider=FakeCognitionProvider(
+            [_checkpoint(proposal_text="Continue without evaluating the human rule.")]
+        ),
+    )
+
+    with pytest.raises(
+        InvalidWorkRecordError,
+        match="evaluate every exact HUMAN attention constraint once",
+    ):
         BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
             snapshot.work_id,
             peer_loop=peer,
