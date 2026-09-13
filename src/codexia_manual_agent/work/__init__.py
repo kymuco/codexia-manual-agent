@@ -64,6 +64,12 @@ from codexia_manual_agent.work.supervisor import (
     SupervisorStatus,
     SupervisorWorkSnapshot,
 )
+from codexia_manual_agent.work.supervisor_driver import (
+    MAX_SUPERVISOR_DRIVE_STEPS,
+    BackgroundWorkDriver,
+    SupervisorDriveResult,
+    SupervisorDriveStop,
+)
 import codexia_manual_agent.work.supervisor_provenance  # noqa: F401
 
 __all__ = [
@@ -77,6 +83,7 @@ __all__ = [
     "CONTINUATION_PROPOSAL_SCHEMA_VERSION",
     "DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION",
     "DYNAMIC_ATTENTION_DECISION_SCHEMA_VERSION",
+    "MAX_SUPERVISOR_DRIVE_STEPS",
     "SUPERVISOR_DISPATCH_SCHEMA_VERSION",
     "SUPERVISOR_EVENT_SCHEMA_VERSION",
     "WORK_HANDOFF_SCHEMA_VERSION",
@@ -92,6 +99,7 @@ __all__ = [
     "AttentionReversibility",
     "AttentionTrajectoryImpact",
     "AttentionUrgency",
+    "BackgroundWorkDriver",
     "BackgroundWorkSupervisor",
     "CapturedChatPeerMessage",
     "ChatGPTPeerLoop",
@@ -111,6 +119,8 @@ __all__ = [
     "SupervisorConcurrencyError",
     "SupervisorDispatch",
     "SupervisorDispatchLease",
+    "SupervisorDriveResult",
+    "SupervisorDriveStop",
     "SupervisorEventKind",
     "SupervisorIntegrityError",
     "SupervisorPersistenceError",
