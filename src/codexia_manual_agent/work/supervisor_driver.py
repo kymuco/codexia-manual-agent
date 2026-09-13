@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from contextlib import closing
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Callable
@@ -12,13 +14,18 @@ from codexia_manual_agent.work.attention import DynamicAttentionDecision
 from codexia_manual_agent.work.chat_peer import (
     ChatGPTPeerLoop,
     ChatPeerMessageOrigin,
+    ChatPeerTurn,
     PeerConversationChangedError,
 )
+from codexia_manual_agent.work.contracts import InvalidWorkRecordError, _exact_keys
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
+    SupervisorEventKind,
+    SupervisorIntegrityError,
     SupervisorStateError,
     SupervisorStatus,
     SupervisorWorkSnapshot,
+    _turn_from_dict,
 )
 
 MAX_SUPERVISOR_DRIVE_STEPS = 128
@@ -29,7 +36,7 @@ SupervisorCheckpoint = tuple[
     DynamicAttentionDecision,
 ]
 SupervisorCheckpointSource = Callable[
-    [SupervisorWorkSnapshot, ChatGPTPeerLoop],
+    [SupervisorWorkSnapshot, ChatGPTPeerLoop, ChatPeerTurn | None],
     SupervisorCheckpoint | None,
 ]
 
@@ -172,7 +179,8 @@ class BackgroundWorkDriver:
                     f"Unsupported supervisor drive state: {snapshot.status.value}"
                 )
 
-            checkpoint = checkpoint_source(snapshot, peer_loop)
+            latest_turn = self._latest_exact_peer_turn(snapshot)
+            checkpoint = checkpoint_source(snapshot, peer_loop, latest_turn)
             if checkpoint is None:
                 return self._result(
                     snapshot,
@@ -199,6 +207,58 @@ class BackgroundWorkDriver:
             max_steps,
             provider_turns,
         )
+
+    def _latest_exact_peer_turn(
+        self,
+        snapshot: SupervisorWorkSnapshot,
+    ) -> ChatPeerTurn | None:
+        """Return only the peer turn that is the exact terminal durable event."""
+
+        with closing(self.supervisor._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT kind, payload_json
+                FROM work_supervisor_events
+                WHERE work_id = ? AND sequence = ?
+                """,
+                (snapshot.work_id, snapshot.last_sequence),
+            ).fetchone()
+        if row is None:
+            raise SupervisorIntegrityError(
+                "Supervisor terminal event disappeared while driving work"
+            )
+        if row["kind"] != SupervisorEventKind.PEER_TURN_RECORDED.value:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+            value = _exact_keys(
+                payload,
+                {"dispatch_digest", "turn"},
+                "Supervisor PEER_TURN_RECORDED payload",
+            )
+            turn = _turn_from_dict(value["turn"])
+        except (InvalidWorkRecordError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SupervisorIntegrityError(
+                "Terminal peer-turn event failed exact decoding"
+            ) from exc
+        if (
+            turn.after_cursor.conversation_id != snapshot.cursor.conversation_id
+            or turn.after_cursor.cursor_digest != snapshot.cursor.cursor_digest
+            or turn.handoff_id != snapshot.handoff.handoff_id
+            or turn.interpretation_id != snapshot.interpretation.interpretation_id
+        ):
+            raise SupervisorIntegrityError(
+                "Terminal peer turn does not bind the recovered READY cursor"
+            )
+        confirmed = self.supervisor.recover(snapshot.work_id)
+        if (
+            confirmed.last_sequence != snapshot.last_sequence
+            or confirmed.last_event_digest != snapshot.last_event_digest
+        ):
+            raise SupervisorStateError(
+                "Delegated work advanced while deriving exact worker evidence"
+            )
+        return turn
 
     @staticmethod
     def _result(
