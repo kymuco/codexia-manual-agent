@@ -18,24 +18,54 @@ from codexia_manual_agent.work.supervisor import (
 
 _MAX_LIVE_EVIDENCE = 4096
 _registry_lock = Lock()
-_verified_observations: dict[str, str] = {}
-_verified_turns: dict[str, str] = {}
+_verified_observations: dict[str, tuple[str, str | None]] = {}
+_verified_turns: dict[str, tuple[str, str | None]] = {}
+_observation_work_id: ContextVar[str | None] = ContextVar(
+    "m6_5_observation_work_id",
+    default=None,
+)
+_turn_work_id: ContextVar[str | None] = ContextVar(
+    "m6_5_turn_work_id",
+    default=None,
+)
 _reconciliation_commit: ContextVar[bool] = ContextVar(
     "m6_5_reconciliation_commit",
     default=False,
 )
 
 
-def _remember(registry: dict[str, str], digest: str, before_cursor_digest: str) -> None:
+def _remember(
+    registry: dict[str, tuple[str, str | None]],
+    digest: str,
+    before_cursor_digest: str,
+    work_id: str | None,
+) -> None:
     with _registry_lock:
         if len(registry) >= _MAX_LIVE_EVIDENCE:
             registry.pop(next(iter(registry)))
-        registry[digest] = before_cursor_digest
+        registry[digest] = (before_cursor_digest, work_id)
 
 
-def _consume(registry: dict[str, str], digest: str) -> str | None:
+def _consume(
+    registry: dict[str, tuple[str, str | None]],
+    digest: str,
+) -> tuple[str, str | None] | None:
     with _registry_lock:
         return registry.pop(digest, None)
+
+
+def _same_cursor_work_count(
+    supervisor: BackgroundWorkSupervisor,
+    *,
+    conversation_id: str,
+    cursor_digest: str,
+) -> int:
+    return sum(
+        1
+        for item in supervisor.list_active()
+        if item.cursor.conversation_id == conversation_id
+        and hmac.compare_digest(item.cursor.cursor_digest, cursor_digest)
+    )
 
 
 def _install_peer_capture() -> None:
@@ -54,6 +84,7 @@ def _install_peer_capture() -> None:
             _verified_observations,
             observation.observation_digest,
             observation.before_cursor_digest,
+            _observation_work_id.get(),
         )
         return observation
 
@@ -63,6 +94,7 @@ def _install_peer_capture() -> None:
             _verified_turns,
             turn.turn_digest,
             turn.before_cursor_digest,
+            _turn_work_id.get(),
         )
         return turn
 
@@ -77,6 +109,7 @@ def _install_supervisor_guards() -> None:
 
     original_record_external = BackgroundWorkSupervisor.record_external_observation
     original_record_peer_turn = BackgroundWorkSupervisor.record_peer_turn
+    original_execute = BackgroundWorkSupervisor.execute_claimed_chat
     original_reconcile = BackgroundWorkSupervisor.reconcile_in_flight_chat
 
     def record_external_observation(
@@ -86,17 +119,34 @@ def _install_supervisor_guards() -> None:
         observation: ChatPeerObservation,
     ):
         snapshot = self.recover(work_id)
-        captured_before = _consume(
+        captured = _consume(
             _verified_observations,
             observation.observation_digest,
         )
-        if captured_before is None or not hmac.compare_digest(
+        if captured is None:
+            raise SupervisorStateError(
+                "External observation must come from one fresh live M6.3 observe() call"
+            )
+        captured_before, captured_work_id = captured
+        if not hmac.compare_digest(
             captured_before,
             snapshot.cursor.cursor_digest,
         ):
             raise SupervisorStateError(
-                "External observation must come from one fresh live M6.3 observe() "
-                "call at the exact supervisor cursor"
+                "Live external observation does not bind the exact supervisor cursor"
+            )
+        if captured_work_id is not None and captured_work_id != work_id:
+            raise SupervisorStateError(
+                "Live external observation is bound to different delegated work"
+            )
+        if captured_work_id is None and _same_cursor_work_count(
+            self,
+            conversation_id=snapshot.cursor.conversation_id,
+            cursor_digest=snapshot.cursor.cursor_digest,
+        ) != 1:
+            raise SupervisorStateError(
+                "Unbound live observation is ambiguous across multiple delegated works; "
+                "use observe_external_chat() for exact work binding"
             )
         return original_record_external(
             self,
@@ -113,7 +163,11 @@ def _install_supervisor_guards() -> None:
         if not isinstance(peer_loop, ChatGPTPeerLoop):
             raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
         snapshot = self.recover(work_id)
-        observation = peer_loop.observe(snapshot.cursor)
+        token = _observation_work_id.set(work_id)
+        try:
+            observation = peer_loop.observe(snapshot.cursor)
+        finally:
+            _observation_work_id.reset(token)
         return record_external_observation(
             self,
             work_id,
@@ -128,16 +182,35 @@ def _install_supervisor_guards() -> None:
     ):
         snapshot = self.recover(work_id)
         if not _reconciliation_commit.get():
-            captured_before = _consume(_verified_turns, turn.turn_digest)
-            if captured_before is None or not hmac.compare_digest(
+            captured = _consume(_verified_turns, turn.turn_digest)
+            if captured is None:
+                raise SupervisorStateError(
+                    "Peer turn must come from one fresh live M6.3 continuation"
+                )
+            captured_before, captured_work_id = captured
+            if not hmac.compare_digest(
                 captured_before,
                 snapshot.cursor.cursor_digest,
             ):
                 raise SupervisorStateError(
-                    "Peer turn must come from one fresh live M6.3 continuation "
-                    "at the exact supervisor cursor"
+                    "Live peer turn does not bind the exact supervisor cursor"
+                )
+            if captured_work_id is not None and captured_work_id != work_id:
+                raise SupervisorStateError(
+                    "Live peer turn is bound to different delegated work"
                 )
         return original_record_peer_turn(self, work_id, turn=turn)
+
+    def execute_claimed_chat(
+        self: BackgroundWorkSupervisor,
+        lease,
+        peer_loop: ChatGPTPeerLoop,
+    ):
+        token = _turn_work_id.set(lease.work_id)
+        try:
+            return original_execute(self, lease, peer_loop)
+        finally:
+            _turn_work_id.reset(token)
 
     def reconcile_in_flight_chat(
         self: BackgroundWorkSupervisor,
@@ -160,6 +233,7 @@ def _install_supervisor_guards() -> None:
     )
     BackgroundWorkSupervisor.observe_external_chat = observe_external_chat  # type: ignore[attr-defined]
     BackgroundWorkSupervisor.record_peer_turn = record_peer_turn  # type: ignore[method-assign]
+    BackgroundWorkSupervisor.execute_claimed_chat = execute_claimed_chat  # type: ignore[method-assign]
     BackgroundWorkSupervisor.reconcile_in_flight_chat = (  # type: ignore[method-assign]
         reconcile_in_flight_chat
     )
