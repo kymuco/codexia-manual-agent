@@ -17,7 +17,12 @@ from codexia_manual_agent.work.chat_peer import (
     ChatPeerTurn,
     PeerConversationChangedError,
 )
-from codexia_manual_agent.work.contracts import InvalidWorkRecordError, _exact_keys
+from codexia_manual_agent.work.contracts import (
+    InvalidWorkRecordError,
+    WorkActorKind,
+    WorkStatement,
+    _exact_keys,
+)
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
     SupervisorEventKind,
@@ -35,9 +40,32 @@ SupervisorCheckpoint = tuple[
     ContinuationAdmission,
     DynamicAttentionDecision,
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorCompletion:
+    """Codexia-authored completion judgment returned by a checkpoint source.
+
+    Completion is orchestration state only. It does not grant process, filesystem,
+    Git, network, merge, or provider authority, and a WORKER statement cannot be
+    down-cast into completion.
+    """
+
+    completion: WorkStatement
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.completion, WorkStatement):
+            raise InvalidWorkRecordError("completion must be a WorkStatement")
+        if self.completion.author_kind is not WorkActorKind.CODEXIA:
+            raise InvalidWorkRecordError(
+                "Supervisor completion outcome must preserve explicit Codexia authorship"
+            )
+
+
+SupervisorCheckpointResult = SupervisorCheckpoint | SupervisorCompletion | None
 SupervisorCheckpointSource = Callable[
     [SupervisorWorkSnapshot, ChatGPTPeerLoop, ChatPeerTurn | None],
-    SupervisorCheckpoint | None,
+    SupervisorCheckpointResult,
 ]
 
 
@@ -61,9 +89,9 @@ class SupervisorDriveResult:
 class BackgroundWorkDriver:
     """Bounded event-driven pump over one durable delegated work.
 
-    The driver owns no semantic admission, attention, or execution authority. It
-    only connects exact supervisor readiness state to an injected Codexia-side
-    checkpoint source and the already-governed M6.3 peer transport.
+    The driver owns no semantic admission, attention, completion, or execution
+    authority. It only connects exact supervisor readiness state to an injected
+    Codexia-side checkpoint source and the already-governed M6.3 peer transport.
     """
 
     def __init__(self, supervisor: BackgroundWorkSupervisor) -> None:
@@ -180,19 +208,31 @@ class BackgroundWorkDriver:
                 )
 
             latest_turn = self._latest_exact_peer_turn(snapshot)
-            checkpoint = checkpoint_source(snapshot, peer_loop, latest_turn)
-            if checkpoint is None:
+            outcome = checkpoint_source(snapshot, peer_loop, latest_turn)
+            if outcome is None:
                 return self._result(
                     snapshot,
                     SupervisorDriveStop.NO_CHECKPOINT,
                     step + 1,
                     provider_turns,
                 )
-            if not isinstance(checkpoint, tuple) or len(checkpoint) != 3:
-                raise SupervisorStateError(
-                    "checkpoint_source must return (proposal, admission, attention) or None"
+            if isinstance(outcome, SupervisorCompletion):
+                completed = self.supervisor.complete(
+                    work_id,
+                    completion=outcome.completion,
                 )
-            proposal, admission, attention = checkpoint
+                return self._result(
+                    completed,
+                    SupervisorDriveStop.COMPLETED,
+                    step + 1,
+                    provider_turns,
+                )
+            if not isinstance(outcome, tuple) or len(outcome) != 3:
+                raise SupervisorStateError(
+                    "checkpoint_source must return (proposal, admission, attention), "
+                    "SupervisorCompletion, or None"
+                )
+            proposal, admission, attention = outcome
             self.supervisor.record_checkpoint(
                 work_id,
                 proposal=proposal,
