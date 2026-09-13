@@ -61,6 +61,26 @@ REVISE/REJECT + KEEP_MOVING
 
 `REVISE` or `REJECT` is never transformed into provider-send permission.
 
+## Live peer evidence
+
+M6.5 does not trust an arbitrary caller merely because it can construct a valid `ChatPeerObservation` or `ChatPeerTurn`.
+
+The M6.3 live capture methods mint bounded process-local, single-use evidence tickets for the exact observation/turn digest and its pre-event cursor. Supervisor-owned capture additionally binds the ticket to the exact `work_id` before the provider is read.
+
+Preferred human/external observation path:
+
+```text
+BackgroundWorkSupervisor.observe_external_chat(work_id, peer_loop=...)
+→ recover exact supervisor cursor
+→ ChatGPTPeerLoop.observe(exact cursor)
+→ exact live observation ticket bound to work_id
+→ durable supervisor transition
+```
+
+A synthetic record receives no ticket and cannot advance supervisor state. An unbound live observation is accepted only when its exact chat cursor belongs to one active delegated work; if multiple works share that cursor, Codexia must use the work-bound supervisor path instead of guessing which work the human meant.
+
+This is a provenance boundary, not an execution-authority mechanism.
+
 ## The no-replay dispatch boundary
 
 The dangerous case is a process crash around a remote provider send.
@@ -107,7 +127,7 @@ Later branch activity after the exact recovered Codexia/assistant pair is not si
 
 A checkpoint whose M6.4 result requires the human enters `WAITING_HUMAN` and has no pending dispatch.
 
-An externally observed M6.3 turn can resume it only when that observation contains an actual `EXTERNAL_USER` message. The same observation mechanism invalidates a merely `PREPARED` dispatch if the live conversation advanced before it was claimed.
+A fresh live M6.3 turn can resume it only when that observation contains an actual `EXTERNAL_USER` message. The same live observation mechanism invalidates a merely `PREPARED` dispatch if the conversation advanced before it was claimed.
 
 Thus:
 
@@ -140,6 +160,10 @@ Recovery checks:
 - terminal head sequence/digest;
 - legal state transition.
 
+## Transport scope
+
+The supervisor state model is about general delegated work, but this first background-dispatch proof is intentionally wired to the existing M6.3 ChatGPT peer loop. Other cognitive workers and tool/event adapters must preserve the same admission, attention, provenance and no-replay boundaries; M6.5 does not claim those adapters already exist.
+
 ## Exit gate
 
 M6.5 is a complete candidate when the runtime proves:
@@ -151,6 +175,8 @@ M6.5 is a complete candidate when the runtime proves:
 5. an exact already-visible Codexia/worker pair can be reconciled after crash without another send;
 6. absence or partial visibility after crash remains `IN_FLIGHT` rather than manufacturing retry authority;
 7. M6.4 human-attention outcomes become durable `WAITING_HUMAN` state;
-8. real external human activity can resume waiting work and invalidates stale prepared work;
-9. persisted event tamper/rebinding fails closed;
-10. no supervisor state grants process, filesystem, Git, network, merge or other execution authority.
+8. fresh live external human activity can resume waiting work and invalidate stale prepared work;
+9. synthetic live-evidence records cannot advance supervisor state;
+10. ambiguous unbound observations cannot choose between multiple works sharing one chat cursor;
+11. persisted event tamper/rebinding fails closed;
+12. no supervisor state grants process, filesystem, Git, network, merge or other execution authority.
