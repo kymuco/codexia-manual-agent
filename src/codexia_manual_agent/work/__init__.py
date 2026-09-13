@@ -50,6 +50,29 @@ from codexia_manual_agent.work.contracts import (
     WorkResourceRef,
     WorkStatement,
 )
+from codexia_manual_agent.work.supervisor import (
+    SUPERVISOR_DISPATCH_SCHEMA_VERSION,
+    SUPERVISOR_EVENT_SCHEMA_VERSION,
+    BackgroundWorkSupervisor,
+    SupervisorConcurrencyError,
+    SupervisorDispatch,
+    SupervisorDispatchLease,
+    SupervisorEventKind,
+    SupervisorIntegrityError,
+    SupervisorPersistenceError,
+    SupervisorStateError,
+    SupervisorStatus,
+    SupervisorWorkSnapshot,
+)
+import codexia_manual_agent.work.supervisor_revision  # noqa: F401
+import codexia_manual_agent.work.supervisor_peer_validation  # noqa: F401
+from codexia_manual_agent.work.supervisor_driver import (
+    MAX_SUPERVISOR_DRIVE_STEPS,
+    BackgroundWorkDriver,
+    SupervisorDriveResult,
+    SupervisorDriveStop,
+)
+import codexia_manual_agent.work.supervisor_provenance  # noqa: F401
 
 __all__ = [
     "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
@@ -62,6 +85,9 @@ __all__ = [
     "CONTINUATION_PROPOSAL_SCHEMA_VERSION",
     "DYNAMIC_ATTENTION_CONTEXT_SCHEMA_VERSION",
     "DYNAMIC_ATTENTION_DECISION_SCHEMA_VERSION",
+    "MAX_SUPERVISOR_DRIVE_STEPS",
+    "SUPERVISOR_DISPATCH_SCHEMA_VERSION",
+    "SUPERVISOR_EVENT_SCHEMA_VERSION",
     "WORK_HANDOFF_SCHEMA_VERSION",
     "WORK_INTENT_INTERPRETATION_SCHEMA_VERSION",
     "WORK_RESOURCE_SCHEMA_VERSION",
@@ -75,6 +101,8 @@ __all__ = [
     "AttentionReversibility",
     "AttentionTrajectoryImpact",
     "AttentionUrgency",
+    "BackgroundWorkDriver",
+    "BackgroundWorkSupervisor",
     "CapturedChatPeerMessage",
     "ChatGPTPeerLoop",
     "ChatPeerCursor",
@@ -90,6 +118,17 @@ __all__ = [
     "DynamicAttentionDecision",
     "InvalidWorkRecordError",
     "PeerConversationChangedError",
+    "SupervisorConcurrencyError",
+    "SupervisorDispatch",
+    "SupervisorDispatchLease",
+    "SupervisorDriveResult",
+    "SupervisorDriveStop",
+    "SupervisorEventKind",
+    "SupervisorIntegrityError",
+    "SupervisorPersistenceError",
+    "SupervisorStateError",
+    "SupervisorStatus",
+    "SupervisorWorkSnapshot",
     "WorkActorKind",
     "WorkHandoff",
     "WorkIntentInterpretation",

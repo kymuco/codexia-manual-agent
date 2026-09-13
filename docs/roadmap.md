@@ -352,7 +352,7 @@ See `docs/m5_3_first_real_bounded_automation.md` and `docs/m5_3_source_audit.md`
 
 ## M6 — Delegated Work Continuity
 
-**In progress through M6.4.**
+**In progress through M6.5.**
 
 North-star property:
 
@@ -442,7 +442,7 @@ See `docs/m6_3_chat_codexia_peer_loop.md`, `docs/m6_3_source_audit.md`, `docs/m6
 
 ### M6.4 — Dynamic Attention
 
-**Complete candidate.**
+**Complete.**
 
 Primary boundaries:
 
@@ -468,9 +468,30 @@ See `docs/m6_4_dynamic_attention.md`, `docs/m6_4_source_audit.md`, `docs/m6_4_te
 
 ### M6.5 — Background Work Supervisor
 
-**Next.**
+**Complete candidate.**
 
-Maintain multiple delegated works durably, react to worker/tool/external state, and keep ready work moving independently of whether the human is currently viewing the chat. Recovery must preserve exact pending work and must not replay ambiguous effects.
+Primary boundaries:
+
+```text
+human absence != work suspension
+background progress != autonomous authority
+ambiguous provider effect != retry permission
+```
+
+- delegated works are recovered from append-only SQLite event chains bound to exact M6.1 handoff/interpretation and M6.3 cursor state;
+- `READY / PREPARED / IN_FLIGHT / WAITING_HUMAN / COMPLETED` are orchestration states only and grant no execution authority;
+- exact M6.2 `ADMIT` and worker-side `REVISE` can become provider dispatches only when exact M6.4 attention says `KEEP_MOVING`;
+- `REVISE + ASK_HUMAN` remains `WAITING_HUMAN` and cannot use worker revision to suppress a human-attention boundary;
+- each provider attempt is preceded by a durable `DISPATCH_STARTED` claim and an ephemeral process-local lease, so restart cannot manufacture replay permission;
+- exact continuation or revision turns can be reconciled after crash from live provider history without resending an ambiguous effect;
+- process-local one-shot live-evidence tickets prevent caller-constructed observations or peer turns from impersonating current provider evidence;
+- same-cursor multi-work ambiguity requires work-bound capture instead of arbitrary routing;
+- the bounded background driver synchronizes live state before claim, preserves human precedence, and can cross multiple routine worker turns without human `continue` scheduling;
+- exact persisted `ChatPeerTurn` evidence is supplied to the next READY cognition checkpoint rather than reconstructed from loose chat history;
+- repeated worker revision is explicitly step-bounded and cannot become an unbounded background loop;
+- worker output cannot declare work complete, and no supervisor/driver state grants process, filesystem, Git, network, merge, or generic local-machine authority.
+
+See `docs/m6_5_background_work_supervisor.md`, `docs/m6_5_source_audit.md`, `docs/m6_5_test_matrix.md`, and `docs/m6_5_nonclaims.md`.
 
 ### M6.6 — First General Daily-Use Pilot
 
