@@ -111,12 +111,14 @@ class PilotCheckpointSource:
             )
 
         external_observation = self._latest_exact_external_observation(snapshot)
+        human_answer = self._latest_exact_pilot_human_answer(snapshot)
         response = self.provider.send(
             ProviderRequest(
                 prompt=self._render_prompt(
                     snapshot=snapshot,
                     latest_turn=latest_turn,
                     external_observation=external_observation,
+                    human_answer=human_answer,
                 ),
                 system=self._system_prompt(),
                 conversation=self._cognition_conversation,
@@ -181,6 +183,7 @@ class PilotCheckpointSource:
                 snapshot=snapshot,
                 proposal=proposal,
                 external_observation=external_observation,
+                human_answer=human_answer,
             ),
             reversibility=payload["reversibility"],
             trajectory_impact=payload["trajectory_impact"],
@@ -403,12 +406,13 @@ class PilotCheckpointSource:
         snapshot: SupervisorWorkSnapshot,
         proposal: ContinuationProposal,
         external_observation: ChatPeerObservation | None,
+        human_answer: WorkStatement | None,
     ) -> tuple[WorkStatement, ...]:
-        # Fresh external evidence must outrank large static context so a human answer
-        # that resumed WAITING_HUMAN cannot be silently truncated from the attention
-        # basis. Exact HUMAN attention constraints are also prioritized ahead of
-        # general context.
+        # Fresh human/external evidence must outrank large static context so a
+        # resume answer cannot be silently truncated from the bounded M6.4 basis.
         candidates: list[WorkStatement] = [proposal.statement, snapshot.handoff.objective]
+        if human_answer is not None:
+            candidates.append(human_answer)
         if external_observation is not None:
             candidates.extend(item.statement for item in external_observation.messages)
         candidates.extend(snapshot.handoff.attention_constraints)
@@ -429,6 +433,77 @@ class PilotCheckpointSource:
         self,
         snapshot: SupervisorWorkSnapshot,
     ) -> ChatPeerObservation | None:
+        row = self._terminal_event_row(snapshot)
+        if row["kind"] != SupervisorEventKind.EXTERNAL_OBSERVED.value:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SupervisorIntegrityError(
+                "Terminal external event payload is not valid JSON"
+            ) from exc
+        if isinstance(payload, Mapping) and "pilot_human_answer" in payload:
+            return None
+        try:
+            value = _exact_keys(
+                payload,
+                {"observation"},
+                "Supervisor EXTERNAL_OBSERVED payload",
+            )
+            observation = _observation_from_dict(value["observation"])
+        except (InvalidWorkRecordError, TypeError, ValueError) as exc:
+            raise SupervisorIntegrityError(
+                "Terminal external observation failed exact decoding"
+            ) from exc
+        if (
+            observation.after_cursor.conversation_id != snapshot.cursor.conversation_id
+            or observation.after_cursor.cursor_digest != snapshot.cursor.cursor_digest
+        ):
+            raise SupervisorIntegrityError(
+                "Terminal external observation does not bind recovered pilot cursor"
+            )
+        self._confirm_terminal_snapshot(snapshot)
+        return observation
+
+    def _latest_exact_pilot_human_answer(
+        self,
+        snapshot: SupervisorWorkSnapshot,
+    ) -> WorkStatement | None:
+        row = self._terminal_event_row(snapshot)
+        if row["kind"] != SupervisorEventKind.EXTERNAL_OBSERVED.value:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SupervisorIntegrityError(
+                "Terminal external event payload is not valid JSON"
+            ) from exc
+        if not isinstance(payload, Mapping) or "pilot_human_answer" not in payload:
+            return None
+        try:
+            value = _exact_keys(
+                payload,
+                {
+                    "pilot_human_answer",
+                    "waiting_sequence",
+                    "waiting_event_digest",
+                    "attention_decision_digest",
+                },
+                "Supervisor pilot human-answer payload",
+            )
+            answer = WorkStatement.from_dict(value["pilot_human_answer"])
+        except (InvalidWorkRecordError, TypeError, ValueError) as exc:
+            raise SupervisorIntegrityError(
+                "Terminal pilot human answer failed exact decoding"
+            ) from exc
+        if answer.author_kind is not WorkActorKind.HUMAN:
+            raise SupervisorIntegrityError(
+                "Terminal pilot human answer lost HUMAN authorship"
+            )
+        self._confirm_terminal_snapshot(snapshot)
+        return answer
+
+    def _terminal_event_row(self, snapshot: SupervisorWorkSnapshot):
         with closing(self.supervisor._connect()) as connection:
             row = connection.execute(
                 """
@@ -442,27 +517,9 @@ class PilotCheckpointSource:
             raise SupervisorIntegrityError(
                 "Supervisor terminal event disappeared during pilot cognition"
             )
-        if row["kind"] != SupervisorEventKind.EXTERNAL_OBSERVED.value:
-            return None
-        try:
-            payload = json.loads(row["payload_json"])
-            value = _exact_keys(
-                payload,
-                {"observation"},
-                "Supervisor EXTERNAL_OBSERVED payload",
-            )
-            observation = _observation_from_dict(value["observation"])
-        except (InvalidWorkRecordError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise SupervisorIntegrityError(
-                "Terminal external observation failed exact decoding"
-            ) from exc
-        if (
-            observation.after_cursor.conversation_id != snapshot.cursor.conversation_id
-            or observation.after_cursor.cursor_digest != snapshot.cursor.cursor_digest
-        ):
-            raise SupervisorIntegrityError(
-                "Terminal external observation does not bind recovered pilot cursor"
-            )
+        return row
+
+    def _confirm_terminal_snapshot(self, snapshot: SupervisorWorkSnapshot) -> None:
         confirmed = self.supervisor.recover(snapshot.work_id)
         if (
             confirmed.last_sequence != snapshot.last_sequence
@@ -471,7 +528,6 @@ class PilotCheckpointSource:
             raise SupervisorStateError(
                 "Delegated work advanced while deriving exact external evidence"
             )
-        return observation
 
     @staticmethod
     def _system_prompt() -> str:
@@ -490,6 +546,7 @@ class PilotCheckpointSource:
         snapshot: SupervisorWorkSnapshot,
         latest_turn: ChatPeerTurn | None,
         external_observation: ChatPeerObservation | None,
+        human_answer: WorkStatement | None,
     ) -> str:
         exact_state = {
             "handoff": snapshot.handoff.to_dict(),
@@ -513,6 +570,9 @@ class PilotCheckpointSource:
                 None
                 if external_observation is None
                 else external_observation.to_dict()
+            ),
+            "latest_exact_pilot_human_answer": (
+                None if human_answer is None else human_answer.to_dict()
             ),
         }
         constraint_template = [
@@ -542,6 +602,7 @@ class PilotCheckpointSource:
             "- admitted continuation != execution authority\n"
             "- attention recommendation != execution authority\n"
             "- worker output != work completion\n"
+            "- a pilot HUMAN answer is evidence for this work, not admission or execution authority\n"
             "- explicit HUMAN attention constraints must each be evaluated exactly once\n"
             "- ask the human only for genuine material judgment or an explicit attention rule\n"
             "- routine insufficiency should prefer worker REVISE over human interruption\n"
@@ -552,7 +613,7 @@ class PilotCheckpointSource:
             "If completion is allowed and the objective is complete, return exactly:\n"
             '{"mode":"complete","completion_summary":"bounded Codexia-authored explanation of why the objective is complete"}\n\n'
             "Otherwise return exactly this checkpoint shape. Every enum field must contain "
-            "one real value from the allowed set shown in parentheses:\n"
+            "one real value from the allowed set shown below:\n"
             + json.dumps(
                 {
                     "mode": "checkpoint",
