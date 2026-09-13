@@ -2,7 +2,7 @@
 
 ## Audit target
 
-M6.6 connects live cognition to the already-governed M6.1–M6.5 work loop. The audit asks whether this convenience layer accidentally creates a new semantic authority, execution authority, completion authority, human-impersonation path, or replay path.
+M6.6 connects live cognition and one minimal human-answer surface to the already-governed M6.1–M6.5 work loop. The audit asks whether these convenience layers accidentally create a new semantic authority, execution authority, completion authority, human-impersonation path, or replay path.
 
 ## Cognition authority audit
 
@@ -29,18 +29,36 @@ The pilot adds a stronger evidence rule: `mode=complete` is accepted only when t
 
 ```text
 worker says done != work complete
-old worker result + newer external activity != completion evidence
+old worker result + newer human/external activity != completion evidence
 ```
 
 A completion claim before worker evidence, or after a newer human/external event, fails closed.
 
-## Human precedence and resume audit
+## Human precedence and answer audit
 
 M6.5 continues to synchronize live peer state before claiming a prepared dispatch. M6.6 does not bypass that path.
 
-When work is `WAITING_HUMAN`, only a fresh M6.3 `EXTERNAL_USER` observation can resume it. That exact observation is durably recorded and recovered for the next pilot cognition checkpoint. The observation is included in the exact prompt and is prioritized near the front of the bounded M6.4 attention basis so large static handoff context cannot silently displace the fresh human answer.
+M6.6 additionally allows an explicit human answer outside the worker ChatGPT conversation. The pilot answer transition requires exact `WAITING_HUMAN` state, a HUMAN-authored `WorkStatement`, the exact waiting sequence/event digest, and the exact M6.4 attention-decision digest. It is appended to the same supervisor hash chain as an external-observed pilot payload.
 
-The original handoff identity remains unchanged.
+The transition performs only:
+
+```text
+WAITING_HUMAN → READY
+```
+
+It does not move the ChatGPT cursor, create a `ContinuationAdmission`, construct a dispatch, mint a provider lease, or grant local authority. A second or unsolicited answer in `READY` fails closed.
+
+On recovery, the pilot extension revalidates the HUMAN statement and all waiting/attention bindings before accepting the transition. The exact terminal answer is then supplied separately to cognition as `latest_exact_pilot_human_answer`; it is not mislabeled as an M6.3 provider observation.
+
+The existing M6.3 `EXTERNAL_USER` route also remains valid for real account-side human chat activity. Pilot cognition distinguishes the two evidence sources.
+
+Fresh human evidence is prioritized near the front of the bounded M6.4 attention basis so large static handoff context cannot silently displace the answer that resumed the work. The original handoff identity remains unchanged.
+
+This preserves:
+
+```text
+human answer != arbitrary execution authority
+```
 
 ## Explicit attention-constraint audit
 
@@ -60,6 +78,7 @@ The pilot may reuse an ephemeral cognition conversation within one process. That
 
 - register a handoff against an existing conversation;
 - drive a registered work with bounded `max_steps`;
+- record one exact human answer for `WAITING_HUMAN` work;
 - recover status.
 
 It introduces no resident daemon, timer, notification channel, arbitrary shell, filesystem mutation, Git mutation, merge authority, or generic local-machine control.
@@ -75,7 +94,12 @@ HUMAN handoff
 → existing M6.4 attention
 → existing M6.5 durable driver
 → exact M6.3 worker evidence
-→ repeat or CODEXIA completion
+→ repeat / WAITING_HUMAN / CODEXIA completion
+
+WAITING_HUMAN
+→ exact pilot HUMAN answer
+→ READY only
+→ fresh M6.2/M6.4 judgment before any next dispatch
 ```
 
 The remaining milestone risk is product quality, not an intentionally widened authority boundary. M6.6 should remain incomplete until both real daily-use verticals are demonstrated.
