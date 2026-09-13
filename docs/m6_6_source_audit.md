@@ -23,16 +23,30 @@ The cognition model therefore cannot replace a captured worker response with a m
 
 ## Completion audit
 
-`SupervisorCompletion` accepts only a CODEXIA-authored `WorkStatement`. The driver forwards it through the existing `BackgroundWorkSupervisor.complete(...)` boundary.
+`SupervisorCompletion` accepts only a CODEXIA-authored `WorkStatement`. The pilot additionally accepts `mode=complete` only when the checkpoint source received a non-null `latest_turn`, which by construction means the pre-cognition terminal durable event is the exact current worker turn.
 
-The pilot adds a stronger evidence rule: `mode=complete` is accepted only when the driver supplied a non-null `latest_turn`, which by construction means the terminal durable event is the exact current worker turn.
+That pre-cognition check is not sufficient by itself because cognition is a live provider call. Human or worker activity may arrive while Codexia is deciding whether the terminal worker result is complete. M6.6 therefore adds a second boundary immediately before the durable terminal transition:
+
+```text
+terminal exact worker turn
+→ completion cognition
+→ final exact live-peer reread   # external-state linearization point
+→ no visible intervening activity
+→ CAS against the pre-cognition supervisor sequence/digest
+→ durable COMPLETED
+```
+
+If the final reread sees any new peer activity, that activity is durably recorded first and the completion judgment is discarded; the next loop requires fresh cognition over the new state. If another supervisor process advances the durable event chain after cognition, the compare-and-swap append loses and completion is retried only through fresh recovery/cognition.
+
+This preserves:
 
 ```text
 worker says done != work complete
-old worker result + newer human/external activity != completion evidence
+old worker result + newer visible human/external activity != completion evidence
+concurrent durable transition != stale completion permission
 ```
 
-A completion claim before worker evidence, or after a newer human/external event, fails closed.
+The final provider reread is the explicit cross-system linearization point: activity visible by that read precedes completion and invalidates it; activity that occurs after that read is logically after the completion boundary. This avoids pretending that SQLite and the remote conversation can be atomically committed together.
 
 ## Human precedence and answer audit
 
@@ -64,9 +78,13 @@ human answer != arbitrary execution authority
 
 The cognition response must contain exactly one judgment for every exact HUMAN attention-constraint statement digest. Missing, duplicate, substituted, or foreign checks fail before `DynamicAttentionContext` is created, and M6.4 independently validates exact coverage again.
 
+A `TRIGGERED` or `UNCERTAIN` explicit rule remains a hard M6.4 override even when cognition returns `KEEP_MOVING`. The pilot does not normalize an inconsistent attention payload: for example, an override that requires human attention together with `urgency=none` fails closed rather than silently rewriting the model judgment.
+
 ## Provider and replay audit
 
 The pilot does not call ChatGPT worker transport directly. Worker continuation/revision still passes through M6.5 durable `DISPATCH_STARTED`, the ephemeral live lease, M6.3 before/send/after reconciliation, provenance tickets, and crash reconciliation.
+
+Routine insufficient worker output can derive M6.2 `REVISE` and remain background work when M6.4 says `KEEP_MOVING`; the revision still uses the existing governed provider-dispatch path rather than creating a second transport authority.
 
 The cognition provider call is a reasoning input, not a delegated-work side effect. Its response cannot itself mutate local files, Git, processes, network targets, or the worker conversation. A cognition failure therefore fails the current drive call without creating provider-dispatch retry permission.
 
@@ -94,7 +112,7 @@ HUMAN handoff
 → existing M6.4 attention
 → existing M6.5 durable driver
 → exact M6.3 worker evidence
-→ repeat / WAITING_HUMAN / CODEXIA completion
+→ repeat / WAITING_HUMAN / final-live-reread + CODEXIA completion
 
 WAITING_HUMAN
 → exact pilot HUMAN answer
