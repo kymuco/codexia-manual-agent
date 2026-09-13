@@ -5,12 +5,14 @@ from types import SimpleNamespace
 import pytest
 
 from codexia_manual_agent.work import (
+    BackgroundWorkDriver,
     BackgroundWorkSupervisor,
     CapturedChatPeerMessage,
     ChatGPTPeerLoop,
     ChatPeerCursor,
     ChatPeerMessageOrigin,
     ChatPeerObservation,
+    SupervisorDriveStop,
     SupervisorStateError,
     WorkActorKind,
     WorkHandoff,
@@ -124,3 +126,41 @@ def test_unbound_live_observation_cannot_choose_between_same_cursor_works(tmp_pa
             work_a.work_id,
             observation=observation,
         )
+
+
+def test_driver_uses_work_bound_capture_when_active_works_share_cursor(tmp_path) -> None:
+    before_messages = (
+        _message(1, "user", "Shared human context."),
+        _message(2, "assistant", "Ready to continue."),
+    )
+    before = ChatPeerCursor.from_messages("conversation-1", before_messages)
+    supervisor = BackgroundWorkSupervisor(tmp_path / "supervisor.sqlite3")
+    handoff_a, interpretation_a = _work("A")
+    handoff_b, interpretation_b = _work("B")
+    work_a = supervisor.register(
+        handoff=handoff_a,
+        interpretation=interpretation_a,
+        cursor=before,
+    )
+    work_b = supervisor.register(
+        handoff=handoff_b,
+        interpretation=interpretation_b,
+        cursor=before,
+    )
+
+    human = _message(3, "user", "Advance the routed delegated work.")
+    worker = _message(4, "assistant", "Understood.")
+    peer = ChatGPTPeerLoop(_ReadOnlyProvider((*before_messages, human, worker)))
+
+    result = BackgroundWorkDriver(supervisor).drive_chat_until_blocked(
+        work_a.work_id,
+        peer_loop=peer,
+        checkpoint_source=lambda _snapshot, _peer: None,
+        max_steps=4,
+    )
+
+    assert result.stop is SupervisorDriveStop.NO_CHECKPOINT
+    assert len(result.snapshot.cursor.message_fingerprints) == 4
+    unchanged_b = supervisor.recover(work_b.work_id)
+    assert unchanged_b.cursor == before
+    assert unchanged_b.last_sequence == 0
