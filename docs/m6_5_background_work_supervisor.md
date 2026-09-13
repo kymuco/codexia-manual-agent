@@ -81,6 +81,37 @@ A synthetic record receives no ticket and cannot advance supervisor state. An un
 
 This is a provenance boundary, not an execution-authority mechanism.
 
+## Bounded background driver
+
+Durable state alone is not the M6.5 product property. `BackgroundWorkDriver` is the event-driven pump that keeps one delegated work moving across routine worker turns without requiring the human to act as the scheduler.
+
+One host invocation can perform the bounded loop:
+
+```text
+recover exact work
+→ synchronize live peer activity
+→ READY: ask injected Codexia checkpoint source for the next exact checkpoint
+→ PREPARED: claim one dispatch and execute one M6.3 peer turn
+→ READY again: continue the same loop
+→ stop only when blocked or budgeted
+```
+
+The checkpoint source is cognition-only input. It may return an exact `(proposal, admission, attention)` tuple or `None`; it cannot bypass `BackgroundWorkSupervisor.record_checkpoint()`, so M6.2 admission, M6.4 attention, exact cursor binding, and all existing no-authority invariants are revalidated before a dispatch can be prepared.
+
+The driver stops on explicit bounded reasons:
+
+- `NO_CHECKPOINT` — Codexia-side cognition has no next checkpoint to admit now;
+- `WAITING_HUMAN` — M6.4 requires genuine human judgment;
+- `IN_FLIGHT_AMBIGUOUS` — an already-claimed provider effect cannot be safely replayed;
+- `COMPLETED` — the durable supervisor work is terminal;
+- `STEP_BUDGET` — the bounded pump reached its explicit iteration ceiling.
+
+The step budget prevents a `REVISE → READY → REVISE` cognition loop from becoming unbounded background activity.
+
+Before claiming a `PREPARED` dispatch, the driver rereads the live chat. Ordinary human activity therefore invalidates the stale prepared continuation before provider send and becomes the new exact `READY` cursor. If a conversation race occurs only after the durable claim, the driver never converts that ambiguity into retry permission; it stops at the existing `IN_FLIGHT` reconciliation boundary.
+
+M6.5 intentionally does not add cron, a resident daemon, timers, or OS wake-up semantics. A host/runtime may invoke the bounded driver whenever work becomes ready; the important property is that routine continuation cycles no longer require a human `continue` turn.
+
 ## The no-replay dispatch boundary
 
 The dangerous case is a process crash around a remote provider send.
@@ -178,5 +209,8 @@ M6.5 is a complete candidate when the runtime proves:
 8. fresh live external human activity can resume waiting work and invalidate stale prepared work;
 9. synthetic live-evidence records cannot advance supervisor state;
 10. ambiguous unbound observations cannot choose between multiple works sharing one chat cursor;
-11. persisted event tamper/rebinding fails closed;
-12. no supervisor state grants process, filesystem, Git, network, merge or other execution authority.
+11. one bounded driver call can cross multiple routine worker turns without human `continue` scheduling;
+12. background replanning is explicitly step-bounded and cannot loop indefinitely;
+13. the driver preserves human precedence by synchronizing live peer activity before an unclaimed provider dispatch;
+14. persisted event tamper/rebinding fails closed;
+15. no supervisor or driver state grants process, filesystem, Git, network, merge or other execution authority.
