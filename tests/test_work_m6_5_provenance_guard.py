@@ -7,6 +7,7 @@ import pytest
 from codexia_manual_agent.work import (
     BackgroundWorkSupervisor,
     CapturedChatPeerMessage,
+    ChatGPTPeerLoop,
     ChatPeerCursor,
     ChatPeerMessageOrigin,
     ChatPeerObservation,
@@ -27,11 +28,11 @@ def _message(index: int, role: str, text: str) -> SimpleNamespace:
     )
 
 
-def test_synthetic_external_observation_cannot_resume_supervisor_work(tmp_path) -> None:
+def _work(label: str) -> tuple[WorkHandoff, WorkIntentInterpretation]:
     objective = WorkStatement.create(
         author_kind=WorkActorKind.HUMAN,
         actor="operator",
-        text="Keep this delegated work moving without trusting synthetic evidence.",
+        text=f"Keep delegated work {label} moving from exact observed evidence.",
     )
     handoff = WorkHandoff.create(objective=objective)
     interpretation = WorkIntentInterpretation.create(
@@ -43,6 +44,20 @@ def test_synthetic_external_observation_cannot_resume_supervisor_work(tmp_path) 
         continuation_scope="Stay inside the delegated work.",
         depth_interpretation="Use the depth implied by the human request.",
     )
+    return handoff, interpretation
+
+
+class _ReadOnlyProvider:
+    def __init__(self, messages) -> None:
+        self.messages = tuple(messages)
+
+    def read_messages(self, conversation_id: str):
+        assert conversation_id == "conversation-1"
+        return self.messages
+
+
+def test_synthetic_external_observation_cannot_resume_supervisor_work(tmp_path) -> None:
+    handoff, interpretation = _work("A")
     before_messages = (
         _message(1, "user", "Existing human context."),
         _message(2, "assistant", "Ready to continue."),
@@ -76,4 +91,36 @@ def test_synthetic_external_observation_cannot_resume_supervisor_work(tmp_path) 
         supervisor.record_external_observation(
             registered.work_id,
             observation=forged_observation,
+        )
+
+
+def test_unbound_live_observation_cannot_choose_between_same_cursor_works(tmp_path) -> None:
+    before_messages = (
+        _message(1, "user", "Shared human context."),
+        _message(2, "assistant", "Ready to continue."),
+    )
+    before = ChatPeerCursor.from_messages("conversation-1", before_messages)
+    supervisor = BackgroundWorkSupervisor(tmp_path / "supervisor.sqlite3")
+    handoff_a, interpretation_a = _work("A")
+    handoff_b, interpretation_b = _work("B")
+    work_a = supervisor.register(
+        handoff=handoff_a,
+        interpretation=interpretation_a,
+        cursor=before,
+    )
+    supervisor.register(
+        handoff=handoff_b,
+        interpretation=interpretation_b,
+        cursor=before,
+    )
+
+    human = _message(3, "user", "This answer is for one delegated work.")
+    worker = _message(4, "assistant", "Understood.")
+    peer = ChatGPTPeerLoop(_ReadOnlyProvider((*before_messages, human, worker)))
+    observation = peer.observe(before)
+
+    with pytest.raises(SupervisorStateError, match="ambiguous across multiple"):
+        supervisor.record_external_observation(
+            work_a.work_id,
+            observation=observation,
         )
