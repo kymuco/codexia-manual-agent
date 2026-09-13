@@ -2,7 +2,7 @@
 
 ## Audit target
 
-M6.5 introduces durable orchestration over exact M6.1–M6.4 work state. The audit asks whether background persistence creates a second authority root, whether stale or concurrent work can be advanced, whether a provider side effect can be replayed after crash, whether human activity can be overwritten by a prepared continuation, and whether worker output can terminate work by declaration.
+M6.5 introduces durable orchestration over exact M6.1–M6.4 work state. The audit asks whether background persistence creates a second authority root, whether stale or concurrent work can be advanced, whether a provider side effect can be replayed after crash, whether human activity can be overwritten by a prepared continuation, whether caller-supplied records can impersonate live provider evidence, and whether worker output can terminate work by declaration.
 
 ## Authority audit
 
@@ -22,6 +22,28 @@ No supervisor record contains local process, filesystem, Git mutation, network c
 The supervisor does not replace `WorkHandoff`, `WorkIntentInterpretation`, `ContinuationAdmission`, `DynamicAttentionDecision`, or `ChatPeerCursor`. It stores those exact digest-bound records as evidence for orchestration transitions.
 
 Recovered supervisor status is replay-derived from an append-only event chain. The head row stores only terminal sequence/digest integrity metadata.
+
+## Live-evidence provenance audit
+
+A structurally valid `ChatPeerObservation` or `ChatPeerTurn` is not sufficient proof that the live provider actually produced it. M6.5 therefore installs process-local, single-use provenance tickets at the M6.3 capture boundary:
+
+```text
+ChatGPTPeerLoop.observe()
+→ exact observation digest ticket
+→ supervisor may consume once
+
+ChatGPTPeerLoop.continue_admitted()
+→ exact turn digest ticket
+→ supervisor may consume once
+```
+
+A caller that merely constructs an equivalent observation/turn object does not receive a ticket and cannot use that object to advance supervisor state. Tickets bind the exact pre-event cursor and are consumed on commit.
+
+`observe_external_chat()` is the preferred supervisor surface: the supervisor recovers its exact cursor, invokes the live M6.3 peer observation itself, and immediately commits only that verified result.
+
+Post-crash reconciliation is the intentional exception for a peer turn: M6.5 reconstructs the exact turn itself from the live current branch under `reconcile_in_flight_chat()`, so that internal reconciliation path receives a narrowly scoped commit allowance without manufacturing a reusable external ticket.
+
+This preserves the older Codexia rule: do not trust caller-supplied evidence when the authoritative source can be reread.
 
 ## Provider replay audit
 
@@ -49,9 +71,9 @@ If later messages exist after the exact Codexia/assistant pair, reconciliation a
 
 ## Human-precedence audit
 
-A `PREPARED` continuation has not produced a side effect. If the conversation advances before claim, an exact external observation clears that pending dispatch and returns the work to `READY` at the live cursor.
+A `PREPARED` continuation has not produced a side effect. If the conversation advances before claim, `observe_external_chat()` rereads the live M6.3 branch; the verified observation clears that pending dispatch and returns the work to `READY` at the live cursor.
 
-`WAITING_HUMAN` can resume through `record_external_observation()` only if the observation contains an M6.3 `EXTERNAL_USER` message. Assistant-only activity cannot fabricate the human answer.
+`WAITING_HUMAN` can resume only from a fresh live M6.3 observation containing an actual `EXTERNAL_USER` message. Assistant-only activity cannot fabricate the human answer, and a hand-constructed observation cannot impersonate one.
 
 Generic observation is forbidden while `IN_FLIGHT`; the attempted dispatch must be reconciled first so a Codexia transport-role `user` message cannot be mislabeled as HUMAN.
 
@@ -75,7 +97,9 @@ Replay validates canonical event digests, previous-digest chaining, contiguous s
 
 ## Known limits
 
-The first M6.5 candidate is intentionally single-database/single-host orchestration, not a distributed scheduler. It does not generate wake-up timers or notifications. It also does not invent a new interpretation-lineage model for human evidence after the original M6.1 handoff.
+The first M6.5 candidate is intentionally single-database/single-host orchestration, not a distributed scheduler. Its first proven transport adapter is the existing M6.3 ChatGPT peer loop; the delegated-work semantics are general, but other worker/tool transports have not yet been proven against this supervisor boundary.
+
+It does not generate wake-up timers or notifications. It also does not invent a new interpretation-lineage model for human evidence after the original M6.1 handoff. A crash after durable claim but before any provider-visible effect may conservatively leave work `IN_FLIGHT`; absence of a visible effect is not treated as proof that retry is safe.
 
 These are bounded non-claims rather than hidden assumptions.
 
@@ -94,4 +118,4 @@ what work is waiting for the human,
 and what remote dispatch may already have happened.
 ```
 
-The new persistence layer advances orchestration continuity without minting a second execution authority.
+The new persistence layer advances orchestration continuity without minting a second execution authority or trusting synthetic live evidence.
