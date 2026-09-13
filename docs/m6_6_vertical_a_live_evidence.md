@@ -32,7 +32,7 @@ completion = null
 
 The private ChatGPT conversation id and local database path are intentionally not recorded in repository evidence.
 
-## Interpretation
+## R1 interpretation
 
 The failure occurred before any durable M6.2 admission, M6.4 attention decision, M6.5 dispatch, or worker peer turn existed. Therefore the failed live attempt did not create an ambiguous worker write or replay permission.
 
@@ -47,7 +47,7 @@ M6.6 orchestration reached the live product boundary
 → no worker dispatch / no ambiguous replay state
 ```
 
-## Repair decision
+## R1 repair decision
 
 Do not patch the obsolete backend conversation body in Codexia.
 
@@ -69,16 +69,67 @@ semantic provenance / admission / attention / durable delegated-work continuity
 
 The CWA revision is pinned by exact Git commit rather than a moving `main` reference. The published `0.3.0` version string remains present in that source tree, but the selected source revision contains substantial post-0.3 merged work.
 
+## R2 — healthy browser-owned transport exposed an oversized cognition envelope
+
+After R1 repair, browser-native status and CWA doctor were healthy. The same durable pilot work was driven again and reached the current browser-owned write boundary. The cognition turn then failed before any worker dispatch with:
+
+```text
+codexia-pilot: chatgpt product-runtime request failed: text is too large for browser-native turn
+```
+
+The pinned CWA source rejects browser-native turn text above 200,000 characters. The M6.6 cognition renderer was serializing the complete `ChatPeerCursor.to_dict()` into model input. A cursor intentionally retains up to 4,096 SHA-256 message fingerprints so the peer runtime can prove exact current-branch prefix identity. That transport verification material can itself exceed the browser-native text budget for a long-lived real conversation.
+
+The model did not need the fingerprint array to judge continuation. It needed the semantic handoff/evidence plus the exact digest that binds the retained cursor.
+
+This is the second Vertical A finding:
+
+```text
+browser-owned product transport healthy
+→ real long-lived worker chat produces a large exact cursor
+→ M6.6 leaked full transport-prefix proof into cognition prompt
+→ cognition write rejected before worker dispatch
+```
+
+## R2 repair decision
+
+Keep full cursor fingerprints durable and unchanged inside M6.3/M6.5 runtime verification, but project them out of cognition input.
+
+The cognition projection now carries:
+
+```text
+conversation_id
+message_count
+cursor_digest
+```
+
+instead of the full `message_fingerprints[]` array. Exact peer turns and external observations likewise preserve their exact statement/digest evidence while projecting nested cursors through the same bounded representation.
+
+The repair does **not** truncate semantic evidence silently. M6.6 now owns an explicit 120,000-character cognition-prompt budget. If human/work evidence itself exceeds that semantic budget, cognition fails closed before any product write with an explicit Codexia error.
+
+This preserves the separation:
+
+```text
+transport identity proof != model cognition context
+
+full fingerprints
+    remain durable runtime verification material
+
+cursor_digest + message_count
+    become the model-visible binding to that exact retained runtime state
+```
+
+An adversarial regression constructs the maximum 4,096-message cursor and verifies that the cognition prompt remains bounded and contains no `message_fingerprints` array. A second regression verifies that genuinely oversized semantic evidence is rejected rather than truncated.
+
 ## Resume requirement
 
-R1 does not close Vertical A. After deterministic CI validates the migration, the same durable pilot work should be recovered and driven again rather than registering a replacement handoff merely to obtain a clean run.
+Neither R1 nor R2 closes Vertical A. After deterministic CI validates the latest repair, the same durable pilot work should be recovered and driven again rather than registering a replacement handoff merely to obtain a clean run.
 
 A successful repair therefore needs to demonstrate:
 
 ```text
 same durable work
 → READY recovery
-→ current product-runtime cognition write
+→ bounded current product-runtime cognition write
 → normal M6.2/M6.4 checkpoint
 → governed worker continuation
 ```
