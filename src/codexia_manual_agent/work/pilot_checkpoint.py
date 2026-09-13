@@ -26,7 +26,9 @@ from codexia_manual_agent.work.attention import (
     DynamicAttentionDecision,
 )
 from codexia_manual_agent.work.chat_peer import (
+    CapturedChatPeerMessage,
     ChatGPTPeerLoop,
+    ChatPeerCursor,
     ChatPeerObservation,
     ChatPeerTurn,
 )
@@ -51,6 +53,7 @@ from codexia_manual_agent.work.supervisor_driver import (
 )
 
 MAX_PILOT_COGNITION_RESPONSE_CHARS = 65_536
+MAX_PILOT_COGNITION_PROMPT_CHARS = 120_000
 MAX_PILOT_ATTENTION_BASIS = 64
 
 
@@ -541,17 +544,76 @@ class PilotCheckpointSource:
         )
 
     @staticmethod
+    def _cursor_projection(cursor: ChatPeerCursor) -> dict[str, Any]:
+        """Expose semantic cursor identity without leaking its full prefix proof."""
+
+        return {
+            "schema_version": cursor.schema_version,
+            "conversation_id": cursor.conversation_id,
+            "message_count": len(cursor.message_fingerprints),
+            "cursor_digest": cursor.cursor_digest,
+        }
+
+    @staticmethod
+    def _captured_message_projection(
+        message: CapturedChatPeerMessage,
+    ) -> dict[str, Any]:
+        return {
+            "conversation_id": message.conversation_id,
+            "node_id": message.node_id,
+            "provider_message_id": message.provider_message_id,
+            "transport_role": message.transport_role,
+            "origin": message.origin.value,
+            "statement": message.statement.to_dict(),
+            "capture_digest": message.capture_digest,
+        }
+
+    @classmethod
+    def _peer_turn_projection(cls, turn: ChatPeerTurn) -> dict[str, Any]:
+        return {
+            "schema_version": turn.schema_version,
+            "admission_id": turn.admission_id,
+            "admission_digest": turn.admission_digest,
+            "handoff_id": turn.handoff_id,
+            "handoff_digest": turn.handoff_digest,
+            "interpretation_id": turn.interpretation_id,
+            "interpretation_digest": turn.interpretation_digest,
+            "before_cursor_digest": turn.before_cursor_digest,
+            "codexia_message": cls._captured_message_projection(turn.codexia_message),
+            "worker_message": cls._captured_message_projection(turn.worker_message),
+            "after_cursor": cls._cursor_projection(turn.after_cursor),
+            "turn_digest": turn.turn_digest,
+        }
+
+    @classmethod
+    def _external_observation_projection(
+        cls,
+        observation: ChatPeerObservation,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": observation.schema_version,
+            "before_cursor_digest": observation.before_cursor_digest,
+            "after_cursor": cls._cursor_projection(observation.after_cursor),
+            "messages": [
+                cls._captured_message_projection(message)
+                for message in observation.messages
+            ],
+            "observation_digest": observation.observation_digest,
+        }
+
+    @classmethod
     def _render_prompt(
+        cls,
         *,
         snapshot: SupervisorWorkSnapshot,
         latest_turn: ChatPeerTurn | None,
         external_observation: ChatPeerObservation | None,
         human_answer: WorkStatement | None,
     ) -> str:
-        exact_state = {
+        semantic_state = {
             "handoff": snapshot.handoff.to_dict(),
             "interpretation": snapshot.interpretation.to_dict(),
-            "cursor": snapshot.cursor.to_dict(),
+            "cursor": cls._cursor_projection(snapshot.cursor),
             "last_proposal": (
                 None if snapshot.last_proposal is None else snapshot.last_proposal.to_dict()
             ),
@@ -564,12 +626,12 @@ class PilotCheckpointSource:
                 None if snapshot.last_attention is None else snapshot.last_attention.to_dict()
             ),
             "latest_exact_peer_turn": (
-                None if latest_turn is None else latest_turn.to_dict()
+                None if latest_turn is None else cls._peer_turn_projection(latest_turn)
             ),
             "latest_exact_external_observation": (
                 None
                 if external_observation is None
-                else external_observation.to_dict()
+                else cls._external_observation_projection(external_observation)
             ),
             "latest_exact_pilot_human_answer": (
                 None if human_answer is None else human_answer.to_dict()
@@ -595,8 +657,8 @@ class PilotCheckpointSource:
             if latest_turn is not None
             else "mode=complete is forbidden because the terminal exact event is not a worker turn."
         )
-        return (
-            "Evaluate the exact delegated-work state below.\n\n"
+        prompt = (
+            "Evaluate the exact delegated-work semantic projection below.\n\n"
             "Important invariants:\n"
             "- worker proposal != admitted continuation\n"
             "- admitted continuation != execution authority\n"
@@ -607,7 +669,9 @@ class PilotCheckpointSource:
             "- ask the human only for genuine material judgment or an explicit attention rule\n"
             "- routine insufficiency should prefer worker REVISE over human interruption\n"
             "- completion means the human objective and interpreted completion expectation are "
-            "actually satisfied by terminal exact worker evidence\n\n"
+            "actually satisfied by terminal exact worker evidence\n"
+            "- cursor fingerprint arrays are runtime verification material, not semantic model "
+            "evidence; message_count + cursor_digest bind the exact retained cursor\n\n"
             f"Proposal rule: {proposal_rule}\n"
             f"Completion rule: {completion_rule}\n\n"
             "If completion is allowed and the objective is complete, return exactly:\n"
@@ -650,6 +714,11 @@ class PilotCheckpointSource:
             + "attention constraint status: clear, triggered, uncertain\n"
             + "cognitive_disposition: keep_moving, ask_human\n"
             + "urgency: none, low, normal, high\n\n"
-            + "Exact state:\n"
-            + json.dumps(exact_state, ensure_ascii=False, indent=2, sort_keys=True)
+            + "Exact semantic projection:\n"
+            + json.dumps(semantic_state, ensure_ascii=False, indent=2, sort_keys=True)
         )
+        if len(prompt) > MAX_PILOT_COGNITION_PROMPT_CHARS:
+            raise InvalidWorkRecordError(
+                "Pilot cognition semantic projection exceeds its prompt budget"
+            )
+        return prompt
