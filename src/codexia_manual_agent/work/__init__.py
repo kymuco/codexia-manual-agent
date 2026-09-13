@@ -64,6 +64,7 @@ from codexia_manual_agent.work.supervisor import (
     SupervisorStatus,
     SupervisorWorkSnapshot,
 )
+import codexia_manual_agent.work.supervisor_revision  # noqa: F401
 from codexia_manual_agent.work.supervisor_driver import (
     MAX_SUPERVISOR_DRIVE_STEPS,
     BackgroundWorkDriver,
