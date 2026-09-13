@@ -54,7 +54,7 @@ class SupervisorDriveResult:
 class BackgroundWorkDriver:
     """Bounded event-driven pump over one durable delegated work.
 
-    The driver owns no semantic admission, attention, or execution authority.  It
+    The driver owns no semantic admission, attention, or execution authority. It
     only connects exact supervisor readiness state to an injected Codexia-side
     checkpoint source and the already-governed M6.3 peer transport.
     """
@@ -78,7 +78,10 @@ class BackgroundWorkDriver:
             raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
         if not callable(checkpoint_source):
             raise SupervisorStateError("checkpoint_source must be callable")
-        if type(max_steps) is not int or not 1 <= max_steps <= MAX_SUPERVISOR_DRIVE_STEPS:
+        if (
+            type(max_steps) is not int
+            or not 1 <= max_steps <= MAX_SUPERVISOR_DRIVE_STEPS
+        ):
             raise SupervisorStateError(
                 f"max_steps must be an integer from 1 to {MAX_SUPERVISOR_DRIVE_STEPS}"
             )
@@ -109,12 +112,19 @@ class BackgroundWorkDriver:
                     )
                 continue
 
-            observation = peer_loop.observe(snapshot.cursor)
+            observation = self.supervisor.capture_external_chat(
+                work_id,
+                peer_loop=peer_loop,
+            )
             if observation.messages:
                 if snapshot.status is SupervisorStatus.WAITING_HUMAN and not any(
                     item.origin is ChatPeerMessageOrigin.EXTERNAL_USER
                     for item in observation.messages
                 ):
+                    self.supervisor.discard_external_observation(
+                        work_id,
+                        observation=observation,
+                    )
                     return self._result(
                         snapshot,
                         SupervisorDriveStop.WAITING_HUMAN,
@@ -126,6 +136,11 @@ class BackgroundWorkDriver:
                     observation=observation,
                 )
                 continue
+
+            self.supervisor.discard_external_observation(
+                work_id,
+                observation=observation,
+            )
 
             if snapshot.status is SupervisorStatus.WAITING_HUMAN:
                 return self._result(
@@ -140,7 +155,7 @@ class BackgroundWorkDriver:
                 try:
                     self.supervisor.execute_claimed_chat(lease, peer_loop)
                 except PeerConversationChangedError:
-                    # The durable claim already prevents replay.  A conversation
+                    # The durable claim already prevents replay. A conversation
                     # race here is therefore a reconciliation boundary, not retry
                     # permission.
                     return self._result(
