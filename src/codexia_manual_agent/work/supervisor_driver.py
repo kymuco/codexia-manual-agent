@@ -25,6 +25,7 @@ from codexia_manual_agent.work.contracts import (
 )
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
+    SupervisorConcurrencyError,
     SupervisorEventKind,
     SupervisorIntegrityError,
     SupervisorStateError,
@@ -217,10 +218,13 @@ class BackgroundWorkDriver:
                     provider_turns,
                 )
             if isinstance(outcome, SupervisorCompletion):
-                completed = self.supervisor.complete(
-                    work_id,
-                    completion=outcome.completion,
+                completed = self._complete_if_still_current(
+                    snapshot=snapshot,
+                    outcome=outcome,
+                    peer_loop=peer_loop,
                 )
+                if completed is None:
+                    continue
                 return self._result(
                     completed,
                     SupervisorDriveStop.COMPLETED,
@@ -247,6 +251,50 @@ class BackgroundWorkDriver:
             max_steps,
             provider_turns,
         )
+
+    def _complete_if_still_current(
+        self,
+        *,
+        snapshot: SupervisorWorkSnapshot,
+        outcome: SupervisorCompletion,
+        peer_loop: ChatGPTPeerLoop,
+    ) -> SupervisorWorkSnapshot | None:
+        """Linearize completion only after one final exact live-peer reread.
+
+        The provider read is the external-state linearization point. Any activity
+        visible there is durably observed first and forces fresh cognition. The
+        event append then uses the pre-cognition supervisor snapshot so a concurrent
+        durable transition cannot be silently completed from stale evidence.
+        """
+
+        if snapshot.status is not SupervisorStatus.READY:
+            raise SupervisorStateError("Completion requires exact READY supervisor state")
+
+        observation = self.supervisor.capture_external_chat(
+            snapshot.work_id,
+            peer_loop=peer_loop,
+        )
+        if observation.messages:
+            self.supervisor.record_external_observation(
+                snapshot.work_id,
+                observation=observation,
+            )
+            return None
+
+        self.supervisor.discard_external_observation(
+            snapshot.work_id,
+            observation=observation,
+        )
+        try:
+            return self.supervisor._append(
+                snapshot,
+                SupervisorEventKind.COMPLETED,
+                {"completion": outcome.completion.to_dict()},
+            )
+        except SupervisorConcurrencyError:
+            # Another durable transition won after cognition. Recover on the next
+            # loop iteration rather than completing against the newer state.
+            return None
 
     def _latest_exact_peer_turn(
         self,
