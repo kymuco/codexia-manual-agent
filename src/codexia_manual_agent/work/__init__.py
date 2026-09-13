@@ -50,6 +50,7 @@ from codexia_manual_agent.work.contracts import (
     WorkResourceRef,
     WorkStatement,
 )
+from codexia_manual_agent.work.pilot_checkpoint import PilotCheckpointSource
 from codexia_manual_agent.work.supervisor import (
     SUPERVISOR_DISPATCH_SCHEMA_VERSION,
     SUPERVISOR_EVENT_SCHEMA_VERSION,
@@ -69,6 +70,7 @@ import codexia_manual_agent.work.supervisor_peer_validation  # noqa: F401
 from codexia_manual_agent.work.supervisor_driver import (
     MAX_SUPERVISOR_DRIVE_STEPS,
     BackgroundWorkDriver,
+    SupervisorCompletion,
     SupervisorDriveResult,
     SupervisorDriveStop,
 )
@@ -118,6 +120,8 @@ __all__ = [
     "DynamicAttentionDecision",
     "InvalidWorkRecordError",
     "PeerConversationChangedError",
+    "PilotCheckpointSource",
+    "SupervisorCompletion",
     "SupervisorConcurrencyError",
     "SupervisorDispatch",
     "SupervisorDispatchLease",
