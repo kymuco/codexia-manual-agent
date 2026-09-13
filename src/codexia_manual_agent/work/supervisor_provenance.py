@@ -74,6 +74,7 @@ def _install_peer_capture() -> None:
 
     original_observe = ChatGPTPeerLoop.observe
     original_continue = ChatGPTPeerLoop.continue_admitted
+    original_revision = ChatGPTPeerLoop.revise_requested  # type: ignore[attr-defined]
 
     def observe(
         self: ChatGPTPeerLoop,
@@ -98,8 +99,19 @@ def _install_peer_capture() -> None:
         )
         return turn
 
+    def revise_requested(self: ChatGPTPeerLoop, **kwargs: Any) -> ChatPeerTurn:
+        turn = original_revision(self, **kwargs)
+        _remember(
+            _verified_turns,
+            turn.turn_digest,
+            turn.before_cursor_digest,
+            _turn_work_id.get(),
+        )
+        return turn
+
     ChatGPTPeerLoop.observe = observe  # type: ignore[method-assign]
     ChatGPTPeerLoop.continue_admitted = continue_admitted  # type: ignore[method-assign]
+    ChatGPTPeerLoop.revise_requested = revise_requested  # type: ignore[attr-defined]
     ChatGPTPeerLoop._m6_5_provenance_hardened = True  # type: ignore[attr-defined]
 
 
@@ -214,7 +226,7 @@ def _install_supervisor_guards() -> None:
             captured = _consume(_verified_turns, turn.turn_digest)
             if captured is None:
                 raise SupervisorStateError(
-                    "Peer turn must come from one fresh live M6.3 continuation"
+                    "Peer turn must come from one fresh live M6.3 continuation or revision"
                 )
             captured_before, captured_work_id = captured
             if not hmac.compare_digest(
