@@ -9,6 +9,7 @@ from typing import Sequence
 from codexia_manual_agent.domain.errors import CodexiaError
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.work.pilot_runtime import (
+    answer_daily_use_pilot,
     daily_use_pilot_status,
     drive_daily_use_pilot,
     pilot_drive_summary,
@@ -71,6 +72,18 @@ def _build_parser() -> argparse.ArgumentParser:
     drive.add_argument("--worker-actor", default="chatgpt")
     _add_provider_arguments(drive)
 
+    answer = subparsers.add_parser(
+        "answer",
+        help=(
+            "Record one explicit HUMAN answer for exact WAITING_HUMAN work without "
+            "writing into the worker ChatGPT conversation."
+        ),
+    )
+    answer.add_argument("work_id")
+    answer.add_argument("answer")
+    answer.add_argument("--database", default=".codexia/work-supervisor.sqlite3")
+    answer.add_argument("--human-actor", default="human")
+
     status = subparsers.add_parser(
         "status",
         help="Recover the exact durable state for one pilot work item.",
@@ -129,6 +142,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "result": pilot_drive_summary(result),
             }
             code = 0 if result.stop.value in {"completed", "waiting_human"} else 2
+        elif args.command == "answer":
+            snapshot = answer_daily_use_pilot(
+                database_path=database,
+                work_id=args.work_id,
+                answer=args.answer,
+                human_actor=args.human_actor,
+            )
+            payload = {
+                "pilot": "m6.6",
+                "action": "answer",
+                "snapshot": pilot_snapshot_summary(snapshot),
+            }
+            code = 0
         elif args.command == "status":
             snapshot = daily_use_pilot_status(
                 database_path=database,
