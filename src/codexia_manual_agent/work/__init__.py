@@ -75,6 +75,7 @@ from codexia_manual_agent.work.supervisor_driver import (
     SupervisorDriveStop,
 )
 import codexia_manual_agent.work.supervisor_provenance  # noqa: F401
+import codexia_manual_agent.work.pilot_human_answer  # noqa: F401
 
 __all__ = [
     "ATTENTION_ASSESSMENT_SCHEMA_VERSION",
