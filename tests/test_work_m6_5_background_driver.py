@@ -256,11 +256,12 @@ def test_driver_stops_at_dynamic_human_attention_boundary(tmp_path) -> None:
 
 def test_driver_observes_human_before_claim_and_invalidates_prepared(tmp_path) -> None:
     supervisor, snapshot, peer, client = _registered(tmp_path)
+    proposal, admission, attention = _checkpoint(snapshot)
     prepared = supervisor.record_checkpoint(
         snapshot.work_id,
-        proposal=_checkpoint(snapshot)[0],
-        admission=_checkpoint(snapshot)[1],
-        attention=_checkpoint(snapshot)[2],
+        proposal=proposal,
+        admission=admission,
+        attention=attention,
     )
     client.append_user("Change direction before the background continuation.")
     client.append_assistant("Understood; I will wait for the revised direction.")
