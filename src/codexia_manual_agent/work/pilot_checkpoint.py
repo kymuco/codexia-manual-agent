@@ -137,9 +137,9 @@ class PilotCheckpointSource:
 
         payload = self._decode_response(response.text)
         if payload["mode"] == "complete":
-            if not self._has_durable_worker_turn(snapshot.work_id):
+            if latest_turn is None:
                 raise InvalidWorkRecordError(
-                    "Pilot cognition cannot complete delegated work before exact worker evidence"
+                    "Pilot completion requires the terminal exact worker turn as evidence"
                 )
             completion = WorkStatement.create(
                 author_kind=WorkActorKind.CODEXIA,
@@ -404,12 +404,16 @@ class PilotCheckpointSource:
         proposal: ContinuationProposal,
         external_observation: ChatPeerObservation | None,
     ) -> tuple[WorkStatement, ...]:
+        # Fresh external evidence must outrank large static context so a human answer
+        # that resumed WAITING_HUMAN cannot be silently truncated from the attention
+        # basis. Exact HUMAN attention constraints are also prioritized ahead of
+        # general context.
         candidates: list[WorkStatement] = [proposal.statement, snapshot.handoff.objective]
-        candidates.extend(snapshot.handoff.context)
-        candidates.extend(snapshot.handoff.human_constraints)
-        candidates.extend(snapshot.handoff.attention_constraints)
         if external_observation is not None:
             candidates.extend(item.statement for item in external_observation.messages)
+        candidates.extend(snapshot.handoff.attention_constraints)
+        candidates.extend(snapshot.handoff.human_constraints)
+        candidates.extend(snapshot.handoff.context)
         seen: set[str] = set()
         bounded: list[WorkStatement] = []
         for item in candidates:
@@ -469,19 +473,6 @@ class PilotCheckpointSource:
             )
         return observation
 
-    def _has_durable_worker_turn(self, work_id: str) -> bool:
-        with closing(self.supervisor._connect()) as connection:
-            row = connection.execute(
-                """
-                SELECT 1
-                FROM work_supervisor_events
-                WHERE work_id = ? AND kind = ?
-                LIMIT 1
-                """,
-                (work_id, SupervisorEventKind.PEER_TURN_RECORDED.value),
-            ).fetchone()
-        return row is not None
-
     @staticmethod
     def _system_prompt() -> str:
         return (
@@ -538,6 +529,12 @@ class PilotCheckpointSource:
             if latest_turn is not None
             else "proposal_text MUST contain the next bounded Codexia-authored worker step."
         )
+        completion_rule = (
+            "mode=complete is allowed only if latest_exact_peer_turn is non-null and that "
+            "terminal worker evidence satisfies the objective and completion expectation."
+            if latest_turn is not None
+            else "mode=complete is forbidden because the terminal exact event is not a worker turn."
+        )
         return (
             "Evaluate the exact delegated-work state below.\n\n"
             "Important invariants:\n"
@@ -549,31 +546,33 @@ class PilotCheckpointSource:
             "- ask the human only for genuine material judgment or an explicit attention rule\n"
             "- routine insufficiency should prefer worker REVISE over human interruption\n"
             "- completion means the human objective and interpreted completion expectation are "
-            "actually satisfied by the available worker evidence\n\n"
-            f"Proposal rule: {proposal_rule}\n\n"
-            "If the objective is complete, return exactly:\n"
+            "actually satisfied by terminal exact worker evidence\n\n"
+            f"Proposal rule: {proposal_rule}\n"
+            f"Completion rule: {completion_rule}\n\n"
+            "If completion is allowed and the objective is complete, return exactly:\n"
             '{"mode":"complete","completion_summary":"bounded Codexia-authored explanation of why the objective is complete"}\n\n'
-            "Otherwise return exactly this checkpoint shape (real enum values, not pipes):\n"
+            "Otherwise return exactly this checkpoint shape. Every enum field must contain "
+            "one real value from the allowed set shown in parentheses:\n"
             + json.dumps(
                 {
                     "mode": "checkpoint",
                     "proposal_text": None,
-                    "objective_fit": "aligned|misaligned|uncertain",
-                    "constraint_fit": "aligned|misaligned|uncertain",
-                    "scope_fit": "aligned|misaligned|uncertain",
-                    "depth_fit": "aligned|misaligned|uncertain",
-                    "evidence_fit": "supported|unsupported|uncertain|not_required",
+                    "objective_fit": "aligned",
+                    "constraint_fit": "aligned",
+                    "scope_fit": "aligned",
+                    "depth_fit": "aligned",
+                    "evidence_fit": "supported",
                     "material_human_choice": False,
                     "admission_reason": "reason",
                     "revision_request": None,
                     "requested_human_response": None,
-                    "reversibility": "reversible|bounded|costly|irreversible",
-                    "trajectory_impact": "routine|local|material|directional",
-                    "alternatives": "none|equivalent|material",
+                    "reversibility": "reversible",
+                    "trajectory_impact": "routine",
+                    "alternatives": "none",
                     "attention_constraint_checks": constraint_template,
-                    "cognitive_disposition": "keep_moving|ask_human",
+                    "cognitive_disposition": "keep_moving",
                     "confidence_basis_points": 9000,
-                    "urgency": "none|low|normal|high",
+                    "urgency": "none",
                     "attention_reason": "reason",
                     "requested_response": None,
                 },
@@ -581,6 +580,15 @@ class PilotCheckpointSource:
                 indent=2,
                 sort_keys=True,
             )
-            + "\n\nExact state:\n"
+            + "\nAllowed values:\n"
+            + "objective_fit/constraint_fit/scope_fit/depth_fit: aligned, misaligned, uncertain\n"
+            + "evidence_fit: supported, unsupported, uncertain, not_required\n"
+            + "reversibility: reversible, bounded, costly, irreversible\n"
+            + "trajectory_impact: routine, local, material, directional\n"
+            + "alternatives: none, equivalent, material\n"
+            + "attention constraint status: clear, triggered, uncertain\n"
+            + "cognitive_disposition: keep_moving, ask_human\n"
+            + "urgency: none, low, normal, high\n\n"
+            + "Exact state:\n"
             + json.dumps(exact_state, ensure_ascii=False, indent=2, sort_keys=True)
         )
