@@ -1,6 +1,6 @@
 # M6.5 Test Matrix
 
-The M6.5 regression slice targets durable work continuity and no-replay behavior rather than UI or local-machine execution.
+The M6.5 regression slice targets durable work continuity, bounded background progression, and no-replay behavior rather than UI or local-machine execution.
 
 Expected gates:
 
@@ -20,4 +20,10 @@ Expected gates:
 14. event payload tamper fails recovery;
 15. strict supervisor-dispatch decoding rejects authority-shaped extra fields;
 16. WORKER output cannot directly declare supervisor completion;
-17. multiple delegated works recover independently from the same durable supervisor database.
+17. multiple delegated works recover independently from the same durable supervisor database;
+18. one bounded driver call can execute multiple admitted worker turns without a human `continue` between them;
+19. the driver synchronizes live external activity before claiming a `PREPARED` dispatch, so ordinary human intervention wins before provider send;
+20. the driver stops at durable `WAITING_HUMAN` rather than converting an attention request into background progress;
+21. the driver can reconcile an already-visible `IN_FLIGHT` peer turn after restart without a second provider send;
+22. repeated `REVISE`/replanning remains bounded by an explicit driver step budget and cannot loop indefinitely;
+23. the checkpoint source remains cognition-only input: every returned proposal/admission/attention tuple is revalidated by the existing M6.2/M6.4 supervisor boundary before it can prepare a dispatch.
