@@ -15,11 +15,13 @@ from codexia_manual_agent.work import (
     PilotCheckpointSource,
     SupervisorCompletion,
     SupervisorDriveStop,
+    SupervisorStateError,
     WorkActorKind,
     WorkHandoff,
     WorkIntentInterpretation,
     WorkStatement,
 )
+from codexia_manual_agent.work.pilot_runtime import answer_daily_use_pilot
 
 
 class _Metrics:
@@ -256,7 +258,7 @@ def test_live_pilot_crosses_two_worker_turns_then_codexia_completes(tmp_path) ->
     assert cognition.requests[1].conversation.conversation_id == "cognition-1"
 
 
-def test_pilot_stops_for_human_and_uses_exact_answer_to_resume(tmp_path) -> None:
+def test_pilot_stops_for_human_and_resumes_from_codexia_answer_surface(tmp_path) -> None:
     supervisor, snapshot, peer, client = _registered(tmp_path)
     cognition = FakeCognitionProvider(
         [
@@ -270,8 +272,8 @@ def test_pilot_stops_for_human_and_uses_exact_answer_to_resume(tmp_path) -> None
             {
                 "mode": "complete",
                 "completion_summary": (
-                    "The human choice was observed as exact external evidence and the "
-                    "worker completed the resulting bounded step."
+                    "The human choice was bound to the suspended work and the worker "
+                    "completed the resulting bounded step."
                 ),
             },
         ]
@@ -288,8 +290,20 @@ def test_pilot_stops_for_human_and_uses_exact_answer_to_resume(tmp_path) -> None
     assert first.stop is SupervisorDriveStop.WAITING_HUMAN
     assert first.provider_turns == 0
     assert client.send_calls == []
+    waiting_cursor = first.snapshot.cursor.cursor_digest
+    initial_chat_messages = len(client.messages)
 
-    client.append_user("Use direction B; preserve the original scope.")
+    answered = answer_daily_use_pilot(
+        database_path=tmp_path / "supervisor.sqlite3",
+        work_id=snapshot.work_id,
+        answer="Use direction B; preserve the original scope.",
+        human_actor="operator",
+    )
+    assert answered.status.value == "ready"
+    assert answered.pending_dispatch is None
+    assert answered.cursor.cursor_digest == waiting_cursor
+    assert len(client.messages) == initial_chat_messages
+
     resumed = driver.drive_chat_until_blocked(
         snapshot.work_id,
         peer_loop=peer,
@@ -302,7 +316,19 @@ def test_pilot_stops_for_human_and_uses_exact_answer_to_resume(tmp_path) -> None
     assert len(client.send_calls) == 1
     second_prompt = cognition.requests[1].prompt
     assert "Use direction B; preserve the original scope." in second_prompt
-    assert "external_user" in second_prompt
+    assert "latest_exact_pilot_human_answer" in second_prompt
+    assert "external_user" not in second_prompt
+
+
+def test_pilot_human_answer_cannot_resume_ready_work(tmp_path) -> None:
+    _supervisor, snapshot, _peer, _client = _registered(tmp_path)
+    with pytest.raises(SupervisorStateError, match="WAITING_HUMAN"):
+        answer_daily_use_pilot(
+            database_path=tmp_path / "supervisor.sqlite3",
+            work_id=snapshot.work_id,
+            answer="This must not manufacture a new continuation boundary.",
+            human_actor="operator",
+        )
 
 
 def test_pilot_cannot_replace_exact_worker_followup(tmp_path) -> None:
