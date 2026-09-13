@@ -44,12 +44,6 @@ from codexia_manual_agent.work.supervisor import (
 )
 
 
-_ALLOWED_BACKGROUND_DECISIONS = {
-    ContinuationDecision.ADMIT,
-    ContinuationDecision.REVISE,
-}
-
-
 def _render_codexia_revision(
     *,
     handoff: WorkHandoff,
@@ -57,6 +51,8 @@ def _render_codexia_revision(
     proposal: ContinuationProposal,
     admission: ContinuationAdmission,
 ) -> str:
+    if not isinstance(admission, ContinuationAdmission):
+        raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
     if admission.decision is not ContinuationDecision.REVISE:
         raise InvalidWorkRecordError(
             "Only a REVISE admission can render a worker revision request"
@@ -89,6 +85,18 @@ def _revise_requested(
     proposal: ContinuationProposal,
     admission: ContinuationAdmission,
 ) -> ChatPeerTurn:
+    if not isinstance(cursor, ChatPeerCursor):
+        raise InvalidWorkRecordError("cursor must be a ChatPeerCursor")
+    if not isinstance(handoff, WorkHandoff):
+        raise InvalidWorkRecordError("handoff must be a WorkHandoff")
+    if not isinstance(interpretation, WorkIntentInterpretation):
+        raise InvalidWorkRecordError(
+            "interpretation must be a WorkIntentInterpretation"
+        )
+    if not isinstance(proposal, ContinuationProposal):
+        raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
+    if not isinstance(admission, ContinuationAdmission):
+        raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
     if admission.decision is not ContinuationDecision.REVISE:
         raise InvalidWorkRecordError(
             "Only a REVISE admission can enter the peer revision loop"
@@ -206,6 +214,20 @@ def _install_supervisor_revision() -> None:
         admission: ContinuationAdmission,
         attention: DynamicAttentionDecision,
     ) -> None:
+        if not isinstance(handoff, WorkHandoff):
+            raise InvalidWorkRecordError("handoff must be a WorkHandoff")
+        if not isinstance(interpretation, WorkIntentInterpretation):
+            raise InvalidWorkRecordError(
+                "interpretation must be a WorkIntentInterpretation"
+            )
+        if not isinstance(cursor, ChatPeerCursor):
+            raise InvalidWorkRecordError("cursor must be a ChatPeerCursor")
+        if not isinstance(proposal, ContinuationProposal):
+            raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
+        if not isinstance(admission, ContinuationAdmission):
+            raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
+        if not isinstance(attention, DynamicAttentionDecision):
+            raise InvalidWorkRecordError("attention must be a DynamicAttentionDecision")
         if admission.decision is ContinuationDecision.ADMIT:
             original_dispatch_validate_exact(
                 handoff=handoff,
@@ -220,14 +242,6 @@ def _install_supervisor_revision() -> None:
             raise InvalidWorkRecordError(
                 "Only ADMIT or REVISE can become a supervisor dispatch"
             )
-        if not isinstance(cursor, ChatPeerCursor):
-            raise InvalidWorkRecordError("cursor must be a ChatPeerCursor")
-        if not isinstance(proposal, ContinuationProposal):
-            raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
-        if not isinstance(admission, ContinuationAdmission):
-            raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
-        if not isinstance(attention, DynamicAttentionDecision):
-            raise InvalidWorkRecordError("attention must be a DynamicAttentionDecision")
         admission.assert_binds(handoff, interpretation, proposal)
         attention.context.assert_binds(handoff, interpretation, proposal, admission)
         attention.assert_binds(attention.context)
@@ -241,6 +255,12 @@ def _install_supervisor_revision() -> None:
             )
 
     def dispatch_post_init(self: SupervisorDispatch) -> None:
+        if not isinstance(self.proposal, ContinuationProposal):
+            raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
+        if not isinstance(self.admission, ContinuationAdmission):
+            raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
+        if not isinstance(self.attention, DynamicAttentionDecision):
+            raise InvalidWorkRecordError("attention must be a DynamicAttentionDecision")
         if self.admission.decision is ContinuationDecision.ADMIT:
             original_dispatch_post_init(self)
             return
@@ -254,12 +274,6 @@ def _install_supervisor_revision() -> None:
             _bounded_peer_id(self.conversation_id, "conversation_id"),
         )
         _validate_digest(self.cursor_digest, "cursor_digest")
-        if not isinstance(self.proposal, ContinuationProposal):
-            raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
-        if not isinstance(self.admission, ContinuationAdmission):
-            raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
-        if not isinstance(self.attention, DynamicAttentionDecision):
-            raise InvalidWorkRecordError("attention must be a DynamicAttentionDecision")
         if self.admission.decision is not ContinuationDecision.REVISE:
             raise InvalidWorkRecordError(
                 "Supervisor dispatch cannot bind this admission decision"
@@ -310,6 +324,12 @@ def _install_supervisor_revision() -> None:
         admission: ContinuationAdmission,
         attention: DynamicAttentionDecision,
     ):
+        if not isinstance(proposal, ContinuationProposal):
+            raise InvalidWorkRecordError("proposal must be a ContinuationProposal")
+        if not isinstance(admission, ContinuationAdmission):
+            raise InvalidWorkRecordError("admission must be a ContinuationAdmission")
+        if not isinstance(attention, DynamicAttentionDecision):
+            raise InvalidWorkRecordError("attention must be a DynamicAttentionDecision")
         if admission.decision is not ContinuationDecision.REVISE:
             return original_record_checkpoint(
                 self,
@@ -352,68 +372,73 @@ def _install_supervisor_revision() -> None:
             or event.kind is not SupervisorEventKind.CHECKPOINT_DECIDED
         ):
             return original_apply_event(self, snapshot, event)
-        value = _exact_keys(
-            event.payload,
-            {"proposal", "admission", "attention", "dispatch"},
-            "Supervisor CHECKPOINT_DECIDED payload",
-        )
-        admission = ContinuationAdmission.from_dict(value["admission"])
-        attention = DynamicAttentionDecision.from_dict(value["attention"])
-        if (
-            admission.decision is not ContinuationDecision.REVISE
-            or attention.disposition is not AttentionDisposition.KEEP_MOVING
-        ):
-            return original_apply_event(self, snapshot, event)
-        if snapshot.status is not SupervisorStatus.READY:
-            raise SupervisorIntegrityError(
-                "CHECKPOINT_DECIDED requires READY state"
+        try:
+            value = _exact_keys(
+                event.payload,
+                {"proposal", "admission", "attention", "dispatch"},
+                "Supervisor CHECKPOINT_DECIDED payload",
             )
-        proposal = ContinuationProposal.from_dict(value["proposal"])
-        self._validate_checkpoint(snapshot, proposal, admission, attention)
-        dispatch_value = value["dispatch"]
-        if dispatch_value is None:
-            raise SupervisorIntegrityError(
-                "REVISE + KEEP_MOVING checkpoint lost its worker revision dispatch"
+            admission = ContinuationAdmission.from_dict(value["admission"])
+            attention = DynamicAttentionDecision.from_dict(value["attention"])
+            if (
+                admission.decision is not ContinuationDecision.REVISE
+                or attention.disposition is not AttentionDisposition.KEEP_MOVING
+            ):
+                return original_apply_event(self, snapshot, event)
+            if snapshot.status is not SupervisorStatus.READY:
+                raise SupervisorIntegrityError(
+                    "CHECKPOINT_DECIDED requires READY state"
+                )
+            proposal = ContinuationProposal.from_dict(value["proposal"])
+            self._validate_checkpoint(snapshot, proposal, admission, attention)
+            dispatch_value = value["dispatch"]
+            if dispatch_value is None:
+                raise SupervisorIntegrityError(
+                    "REVISE + KEEP_MOVING checkpoint lost its worker revision dispatch"
+                )
+            dispatch = SupervisorDispatch.from_dict(dispatch_value)
+            dispatch.assert_binds(
+                snapshot.handoff,
+                snapshot.interpretation,
+                snapshot.cursor,
             )
-        dispatch = SupervisorDispatch.from_dict(dispatch_value)
-        dispatch.assert_binds(
-            snapshot.handoff,
-            snapshot.interpretation,
-            snapshot.cursor,
-        )
-        if (
-            dispatch.proposal.proposal_digest != proposal.proposal_digest
-            or dispatch.admission.admission_digest != admission.admission_digest
-            or dispatch.attention.decision_digest != attention.decision_digest
-        ):
-            raise SupervisorIntegrityError(
-                "Supervisor revision dispatch differs from checkpoint decision"
+            if (
+                dispatch.proposal.proposal_digest != proposal.proposal_digest
+                or dispatch.admission.admission_digest != admission.admission_digest
+                or dispatch.attention.decision_digest != attention.decision_digest
+            ):
+                raise SupervisorIntegrityError(
+                    "Supervisor revision dispatch differs from checkpoint decision"
+                )
+            return replace(
+                snapshot,
+                status=SupervisorStatus.PREPARED,
+                last_proposal=proposal,
+                last_admission=admission,
+                last_attention=attention,
+                pending_dispatch=dispatch,
+                in_flight_claim_id=None,
+                last_sequence=event.sequence,
+                last_event_digest=event.event_digest,
             )
-        return replace(
-            snapshot,
-            status=SupervisorStatus.PREPARED,
-            last_proposal=proposal,
-            last_admission=admission,
-            last_attention=attention,
-            pending_dispatch=dispatch,
-            in_flight_claim_id=None,
-            last_sequence=event.sequence,
-            last_event_digest=event.event_digest,
-        )
+        except InvalidWorkRecordError as exc:
+            raise SupervisorIntegrityError(
+                f"Supervisor event {event.sequence} failed exact REVISE validation"
+            ) from exc
 
     def execute_claimed_chat(
         self: BackgroundWorkSupervisor,
         lease: SupervisorDispatchLease,
         peer_loop: ChatGPTPeerLoop,
     ):
-        snapshot = self.recover(lease.work_id)
-        dispatch = snapshot.pending_dispatch
-        if dispatch is None or dispatch.admission.decision is not ContinuationDecision.REVISE:
-            return original_execute(self, lease, peer_loop)
         if not isinstance(lease, SupervisorDispatchLease):
             raise SupervisorStateError("lease must be a SupervisorDispatchLease")
         if not isinstance(peer_loop, ChatGPTPeerLoop):
             raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
+        snapshot = self.recover(lease.work_id)
+        dispatch = snapshot.pending_dispatch
+        if dispatch is None or dispatch.admission.decision is not ContinuationDecision.REVISE:
+            return original_execute(self, lease, peer_loop)
         live = self._live_claims.pop(lease.claim_id, None)
         if live != (lease.work_id, lease.dispatch_digest):
             raise SupervisorStateError(
@@ -454,6 +479,8 @@ def _install_supervisor_revision() -> None:
         *,
         peer_loop: ChatGPTPeerLoop,
     ):
+        if not isinstance(peer_loop, ChatGPTPeerLoop):
+            raise SupervisorStateError("peer_loop must be a ChatGPTPeerLoop")
         snapshot = self.recover(work_id)
         dispatch = snapshot.pending_dispatch
         if dispatch is None or dispatch.admission.decision is not ContinuationDecision.REVISE:
