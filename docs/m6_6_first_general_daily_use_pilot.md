@@ -1,0 +1,126 @@
+# M6.6 — First General Daily-Use Pilot
+
+## Goal
+
+M6.6 is a product proof, not another autonomy layer.
+
+The target property is:
+
+```text
+human absence != work suspension
+```
+
+while preserving:
+
+```text
+worker output != work completion
+worker proposal != admitted continuation
+attention boundary != authority boundary
+human answer != arbitrary execution authority
+background progress != autonomous authority
+ambiguous provider effect != retry permission
+```
+
+M6.1–M6.5 already define the handoff, admission, attention, peer transport, durable supervisor, no-replay boundary, and bounded background driver. M6.6 adds only the minimum live cognition and pilot surfaces needed to exercise those components as one daily-use loop.
+
+## Pilot checkpoint cognition
+
+`PilotCheckpointSource` receives the exact recovered supervisor snapshot, the current peer loop, and only the exact terminal `ChatPeerTurn` when the terminal durable event is a worker turn.
+
+The cognition model does not choose `ADMIT`, `REVISE`, `REJECT`, or `ASK_HUMAN` directly. It returns bounded semantic judgments such as objective/scope/depth/evidence fit, material-human-choice status, reversibility, trajectory impact, alternatives, and one exact check per HUMAN attention constraint.
+
+Those judgments are then passed through the existing authoritative constructors:
+
+```text
+semantic judgments
+→ M6.2 ContinuationAdmission.evaluate(...)
+→ M6.4 DynamicAttentionDecision.evaluate(...)
+→ M6.5 supervisor/driver
+```
+
+A model preference therefore cannot bypass M6.2 admission derivation or M6.4 hard attention overrides.
+
+When the terminal durable event is an exact worker turn, the next proposal is created only with `ChatPeerTurn.followup_proposal(...)`. The cognition response must use `proposal_text=null`; it cannot replace worker evidence with newly invented candidate text.
+
+When there is no terminal worker turn, such as initial work or work resumed from exact human evidence, cognition may provide one bounded CODEXIA-authored proposal for the next worker step.
+
+## Completion boundary
+
+The driver accepts a `SupervisorCompletion` outcome, but the completion statement must be CODEXIA-authored and is committed through the existing `BackgroundWorkSupervisor.complete(...)` boundary.
+
+For the M6.6 pilot, cognition may request completion only when the terminal durable event is the exact worker turn supplied as `latest_turn`.
+
+```text
+old worker evidence + newer human/external event != completion evidence
+```
+
+This deliberately prevents a previously successful worker answer from being reused to close work after the delegated state has changed.
+
+## Human stop and exact resume
+
+If M6.2 or M6.4 requires human judgment, the supervisor enters `WAITING_HUMAN` and the driver stops without sending another worker continuation.
+
+M6.6 adds an explicit pilot human-answer boundary that does **not** require the human to write into the worker ChatGPT conversation:
+
+```text
+WAITING_HUMAN
+→ exact HUMAN WorkStatement
+→ bind waiting sequence + waiting event digest + attention decision digest
+→ durable external-observed event
+→ READY
+→ fresh cognition / M6.2 / M6.4
+```
+
+The answer changes no ChatGPT cursor and creates no pending dispatch. It is evidence for the next cognition checkpoint only. The next worker send still requires a newly derived M6.2/M6.4 checkpoint and the normal M6.5 dispatch path.
+
+The existing M6.3 account-side human observation path also remains valid. Pilot cognition distinguishes that provider observation from an answer supplied through the Codexia pilot surface rather than pretending one source is the other.
+
+Fresh human evidence is prioritized in the bounded M6.4 attention basis so a large static handoff context cannot silently displace the answer that resumed the work.
+
+The original `WorkHandoff` is not rewritten. The answer is evidence about the suspended work, not a retroactive replacement for its identity or authority.
+
+## Pilot runtime
+
+The experimental runtime surface is intentionally small:
+
+```text
+python -m codexia_manual_agent.work.pilot_cli start ...
+python -m codexia_manual_agent.work.pilot_cli drive <work_id> ...
+python -m codexia_manual_agent.work.pilot_cli answer <work_id> "..."
+python -m codexia_manual_agent.work.pilot_cli status <work_id> ...
+```
+
+`start` binds an existing ChatGPT conversation to an exact HUMAN `WorkHandoff`, CODEXIA interpretation, and exact current branch cursor.
+
+`drive` invokes the existing bounded `BackgroundWorkDriver` with live `PilotCheckpointSource` cognition until one of the governed stop conditions is reached.
+
+`answer` is accepted only for exact `WAITING_HUMAN` work. It records one explicit HUMAN answer outside the worker chat and returns the same work to `READY`; it cannot admit or execute the next step.
+
+`status` performs durable recovery only.
+
+This CLI is a pilot surface rather than a new main-product command family. It can be promoted or redesigned after real-use evidence instead of freezing speculative UX now.
+
+## Two required real verticals
+
+The harness is not sufficient to close M6.6. The milestone requires real evidence from both:
+
+1. **ongoing software/research work** — multiple ordinary continuation/revision cycles advance without routine human `continue / check / fix / next` scheduling;
+2. **standalone non-project knowledge work** — a substantial request is iterated, challenged, deepened, synthesized, and returned without human intervention between routine worker turns.
+
+At least one real pilot must also demonstrate a genuine human-attention stop and exact resume through the pilot human-answer surface.
+
+## Candidate exit criteria
+
+The implementation candidate is ready for real pilot use when:
+
+- exact-head CI and CodeQL are green;
+- cognition output is strict-key decoded and authority-shaped extra fields fail closed;
+- exact HUMAN attention constraints cannot be omitted, duplicated, or substituted;
+- terminal exact worker evidence cannot be replaced by cognition;
+- completion requires terminal exact worker evidence and CODEXIA authorship;
+- the human-answer event is exact-state bound, HUMAN-authored, cursor-preserving, and creates no dispatch;
+- human/provider activity still invalidates stale prepared work through M6.5;
+- provider crash/replay semantics remain unchanged from M6.5;
+- the pilot CLI can start, drive, recover, stop for human judgment, answer outside the worker chat, and resume the same `work_id`.
+
+M6.6 becomes **Complete** only after the two real verticals have been run and their evidence reviewed. Unit/integration tests prove the harness; they do not prove daily-use value.
