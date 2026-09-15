@@ -51,7 +51,7 @@ M6.6 orchestration reached the live product boundary
 
 Do not patch the obsolete backend conversation body in Codexia.
 
-Instead, migrate the default live provider boundary to the current CWA production runtime and pin the pilot to the exact merged CWA source revision:
+Instead, migrate the default live provider boundary to the current CWA production runtime. The first repaired pilot pin was:
 
 ```text
 b3e27cf1f53323d946953b4d962994733482bbae
@@ -120,18 +120,85 @@ cursor_digest + message_count
 
 An adversarial regression constructs the maximum 4,096-message cursor and verifies that the cognition prompt remains bounded and contains no `message_fingerprints` array. A second regression verifies that genuinely oversized semantic evidence is rejected rather than truncated.
 
+## R3 — cognition write succeeded but canonical readback lost authentication
+
+After the bounded cognition projection repair, the same pilot reached a real browser-owned cognition write. ChatGPT created a separate cognition conversation, the assistant returned the requested JSON judgment, and the product write visibly completed. The provider then failed during post-write canonical reconciliation with:
+
+```text
+CANONICAL_READ_AUTHENTICATION_REQUIRED
+HTTP 401
+```
+
+This was not a worker-chat identity mix-up. The new conversation was the expected Codexia cognition plane: the first checkpoint has no cognition conversation id yet, so `PilotCheckpointSource` sends `conversation=None`; only a confirmed provider response may establish the reusable cognition conversation identity.
+
+The failure boundary was:
+
+```text
+browser-owned cognition write
+→ product write succeeds
+→ cognition chat exists and assistant JSON is visible
+→ browser-context canonical readback returns 401
+→ ProviderResponse is not confirmed
+→ Codexia stops before M6.2/M6.4/worker dispatch can rely on that cognition result
+```
+
+CWA correctly treated the accepted-write/readback-failure state as ambiguous and did not authorize an automatic retry. Therefore the pilot was not blindly driven again while that CWA boundary remained unresolved.
+
+## R3 consumer-driven CWA repair
+
+The CWA investigation proved two independent live drifts and repaired them upstream rather than adding a Codexia fallback:
+
+1. current ChatGPT empty-composer structure had changed, so CWA's browser-owned preflight needed a new bounded locale-neutral structural predicate;
+2. the current canonical endpoint required a page-session Bearer access token in addition to cookies, so canonical auth and the current GET were moved into the same browser page evaluation without exporting token material.
+
+The same investigation also proved that an older unpacked CWA directory can remain loaded in Chrome even when the Python checkout is newer. Reloading such an extension only reloads the old directory. For M6.6, Python CWA, Native Messaging host and loaded unpacked extension must therefore share one exact source identity.
+
+CWA PR14.1 then passed a one-write live acceptance gate with:
+
+```text
+write_attempts = 1
+automatic_write_retry = false
+bare_conversation_id = true
+assistant_exact_reply = true
+canonical_snapshot_complete = true
+canonical_read_scope = full_history
+exact_user_marker_found = true
+canonical_completion_proven = true
+```
+
+and merged as:
+
+```text
+d2ce811731898ae4b3bf04424bf02f047da0bcd9
+```
+
+M6.6 now pins that exact merged CWA revision rather than the pre-PR14.1 `b3e27cf...` source.
+
 ## Resume requirement
 
-Neither R1 nor R2 closes Vertical A. After deterministic CI validates the latest repair, the same durable pilot work should be recovered and driven again rather than registering a replacement handoff merely to obtain a clean run.
+R1–R3 do not close Vertical A. The next live action is still to recover the **same durable pilot work** before any new provider send.
 
-A successful repair therefore needs to demonstrate:
+First require a read-only supervisor status. If it remains:
+
+```text
+READY
+last_sequence = 0
+pending_dispatch = null
+last_admission = null
+last_attention = null
+```
+
+then the same `work_id` may be driven again with the exact pinned CWA runtime after environment identity verification. If the durable state is `IN_FLIGHT`, contains a pending dispatch, or otherwise records an ambiguous worker effect, do not retry; reconcile M6.5 state first.
+
+The successful resumed path still needs to demonstrate:
 
 ```text
 same durable work
-→ READY recovery
-→ bounded current product-runtime cognition write
+→ exact READY recovery
+→ bounded cognition write through pinned CWA
+→ confirmed canonical readback
 → normal M6.2/M6.4 checkpoint
 → governed worker continuation
 ```
 
-If the current CWA public runtime is missing a consumer capability needed by Codexia, treat that as consumer-driven CWA hardening rather than reintroducing private ChatGPT backend behavior into Codexia.
+If the current CWA public runtime is missing another consumer capability needed by Codexia, treat that as consumer-driven CWA hardening rather than reintroducing private ChatGPT backend behavior into Codexia.
