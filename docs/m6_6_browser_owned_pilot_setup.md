@@ -7,10 +7,10 @@ M6.6 live pilot writes use the production `chatgpt-web-adapter` product boundary
 The exact CWA source revision selected by the M6.6 candidate is:
 
 ```text
-b3e27cf1f53323d946953b4d962994733482bbae
+d2ce811731898ae4b3bf04424bf02f047da0bcd9
 ```
 
-The dependency is pinned to that Git revision. A moving CWA `main` is not part of the pilot identity.
+This is the merge commit for CWA PR14.1, which includes request-bound ordinary-text conversation identity authority plus the browser-context canonical-read session-auth repair proven by live one-write acceptance. The dependency is pinned to that Git revision. A moving CWA `main` is not part of the pilot identity.
 
 ## Install the exact pilot dependency
 
@@ -33,26 +33,29 @@ The package version may still report `0.3.0`; the authoritative pilot dependency
 
 ## Install the browser-owned bridge
 
-The production write path is browser-owned. Register the Native Messaging host:
+The production write path is browser-owned. Register the Native Messaging host **from the same pilot virtual environment that imports the pinned CWA revision**:
 
 ```powershell
 chatgpt-web-adapter browser-native install
 ```
 
-Print the unpacked extension directory:
+Print the unpacked extension directory from that same environment:
 
 ```powershell
 chatgpt-web-adapter browser-native extension-dir
 ```
 
-Load that directory once in Chrome/Chromium:
+Load exactly that directory in Chrome/Chromium:
 
 ```text
 chrome://extensions
 → Developer mode
+→ remove any older unpacked CWA copy with the same frozen extension id if necessary
 → Load unpacked
 → select the printed directory
 ```
+
+A Chrome extension reload only reloads the directory Chrome already owns. It does not prove that directory matches the Python package currently imported by Codexia. For a pilot run, the Python package, Native Messaging host and loaded unpacked extension must all come from the same exact CWA revision.
 
 Then verify the local bridge:
 
