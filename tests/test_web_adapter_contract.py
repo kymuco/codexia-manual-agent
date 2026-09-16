@@ -8,7 +8,7 @@ import unittest
 
 
 _EXPECTED_ADAPTER_VERSION = "0.3.0"
-_EXPECTED_ADAPTER_COMMIT = "a90fc56d66f67ed8557120da4ca8c49a52b333e5"
+_EXPECTED_ADAPTER_COMMIT = "75c8f359b113b1db2a03bc85b074d0cfa91cf361"
 
 
 @unittest.skipUnless(
