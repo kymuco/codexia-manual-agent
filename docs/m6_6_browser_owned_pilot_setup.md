@@ -18,10 +18,11 @@ From the M6.6 Codexia checkout and its pilot virtual environment:
 
 ```powershell
 python -m pip install -U pip
+python -m pip uninstall -y chatgpt-web-adapter
 python -m pip install -e ".[web]"
 ```
 
-The `web` extra installs the exact CWA Git revision plus its browser support dependency.
+The explicit uninstall is part of the exact-source procedure. CWA source revisions can change while the package version remains `0.3.0`; in that situation pip may clone a newer VCS revision for dependency resolution but still leave an already-installed `0.3.0` distribution in place as satisfying the dependency. Removing the existing distribution first guarantees that the subsequent editable install materializes the exact Git revision pinned by the `web` extra.
 
 Verify the installed source identity:
 
@@ -29,7 +30,7 @@ Verify the installed source identity:
 python -c "import importlib.metadata as m; print(m.version('chatgpt-web-adapter')); print(m.distribution('chatgpt-web-adapter').read_text('direct_url.json'))"
 ```
 
-The package version may still report `0.3.0`; the authoritative pilot dependency identity is the Git commit in `direct_url.json`.
+The package version may still report `0.3.0`; the authoritative pilot dependency identity is the Git commit in `direct_url.json`. Do not continue the live pilot if that commit differs from the exact revision documented above.
 
 ## Install the browser-owned bridge
 
