@@ -172,13 +172,98 @@ and merged as:
 d2ce811731898ae4b3bf04424bf02f047da0bcd9
 ```
 
-M6.6 now pins that exact merged CWA revision rather than the pre-PR14.1 `b3e27cf...` source.
+M6.6 then pinned that exact merged CWA revision rather than the pre-PR14.1 `b3e27cf...` source.
+
+## R4 — successful cognition response exposed false request-correlation failure
+
+With PR14.1 installed from one exact pilot environment, CWA doctor was healthy and the same durable work remained:
+
+```text
+READY
+last_sequence = 0
+last_proposal = null
+last_admission = null
+last_attention = null
+pending_dispatch = null
+completion = null
+```
+
+The next real cognition turn visibly succeeded and returned the requested strict JSON judgment, but CWA surfaced:
+
+```text
+PR9_2_WRITE_COMPLETED_CONVERSATION_ID_UNRESOLVED:
+SCHEMA29:identityParserNotReached=true:
+submitCorrelationDiagnosticsUnavailable=true
+```
+
+The visible assistant JSON was valid cognition output, but Codexia correctly did not consume it because CWA did not return a confirmed `ProviderResponse`. No M6.2 admission, M6.4 attention decision, or worker dispatch was durably recorded.
+
+Upstream diagnosis found that historical rich-input wrappers reused the same committed-write error prefix and could mask the outer ordinary-text failure suffix. CWA PR14.2 first preserved the exact ordinary failure, revealing the real class on a guarded 100k reproduction:
+
+```text
+PR9_2_WRITE_COMPLETED_CONVERSATION_ID_UNRESOLVED:
+ORDINARY_REQUEST_CORRELATION_UNRESOLVED:
+requestCount=1:
+unresolvedCount=0:
+foreignCount=1:
+requestOverflow=false
+```
+
+The ChatGPT UI nevertheless returned the exact requested response, proving that write and model execution had succeeded while request correlation alone was being rejected.
+
+PR14.2 then added bounded request-text shape compatibility without fuzzy matching or widened authority. The existing schema-29 authority still requires exact text equality, `action=next`, exact new-chat/continuation semantics, one logical user-message id, and exact attachment evidence. It also added a durable safe correlation fingerprint containing only booleans/counts/lengths rather than prompt text, ids, or request bodies.
+
+Final PR14.2 candidate:
+
+```text
+2ff36fb83603fa5754c44a8dfca51ffabb5af6ec
+```
+
+Deterministic CI #1007 passed. A fresh guarded 100,000-character live acceptance turn then returned:
+
+```text
+write_returned = true
+transport = browser-owned
+assistant_text = PR14_2_ACCEPT_OK
+canonical_complete = true
+canonical_message_count = 6
+canonical_read_scope = full_history
+assistant_exact_reply = true
+PASS = true
+```
+
+The same turn's durable safe fingerprint proved:
+
+```text
+matched = true
+actionNext = true
+conversationIdentityMatches = true
+userMessageCount = 1
+userMessageIdCount = 1
+userMessageIdentityClassified = true
+expectedTextLength = 100000
+observedTextLength = 100000
+exactObservedTextEqualsExpected = true
+exactTextUserMessageCount = 1
+exactRichUserMessageCount = 1
+attachmentCountsMatch = true
+commonPrefixLength = 100000
+commonSuffixLength = 100000
+```
+
+PR14.2 merged to CWA `main` as:
+
+```text
+a90fc56d66f67ed8557120da4ca8c49a52b333e5
+```
+
+CWA issue #93 closed with the merge. M6.6 now pins this exact merged revision.
 
 ## Resume requirement
 
-R1–R3 do not close Vertical A. The next live action is still to recover the **same durable pilot work** before any new provider send.
+R1–R4 do not close Vertical A. The transport boundary that previously prevented confirmed cognition is now acceptance-proven on the exact merged CWA source, so the next live action returns to the **same durable pilot work**.
 
-First require a read-only supervisor status. If it remains:
+Before any new provider send, recover status again. If it remains:
 
 ```text
 READY
@@ -188,17 +273,19 @@ last_admission = null
 last_attention = null
 ```
 
-then the same `work_id` may be driven again with the exact pinned CWA runtime after environment identity verification. If the durable state is `IN_FLIGHT`, contains a pending dispatch, or otherwise records an ambiguous worker effect, do not retry; reconcile M6.5 state first.
+then install the new exact CWA pin from the Codexia pilot environment, load the matching unpacked extension, verify `cwa doctor --json`, and drive the same `work_id` once under the governed M6.6 pilot surface.
 
-The successful resumed path still needs to demonstrate:
+The successful resumed path now needs to demonstrate:
 
 ```text
 same durable work
 → exact READY recovery
-→ bounded cognition write through pinned CWA
+→ bounded cognition write through merged CWA PR14.2
 → confirmed canonical readback
 → normal M6.2/M6.4 checkpoint
 → governed worker continuation
 ```
 
-If the current CWA public runtime is missing another consumer capability needed by Codexia, treat that as consumer-driven CWA hardening rather than reintroducing private ChatGPT backend behavior into Codexia.
+If the durable work is `IN_FLIGHT`, contains a pending dispatch, or otherwise records an ambiguous worker effect, do not retry; reconcile M6.5 state first.
+
+If the current CWA public runtime exposes another real consumer gap, treat it as consumer-driven CWA hardening rather than reintroducing private ChatGPT backend behavior into Codexia.
