@@ -28,7 +28,7 @@ Documentation = "https://github.com/kymuco/codexia-manual-agent/tree/main/docs"
 
 [project.optional-dependencies]
 web = [
-  "chatgpt-web-adapter[browser] @ git+https://github.com/kymuco/chatgpt-web-adapter.git@a90fc56d66f67ed8557120da4ca8c49a52b333e5",
+  "chatgpt-web-adapter[browser] @ git+https://github.com/kymuco/chatgpt-web-adapter.git@75c8f359b113b1db2a03bc85b074d0cfa91cf361",
 ]
 test = ["pytest>=8"]
 
