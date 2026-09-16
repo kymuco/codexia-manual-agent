@@ -7,10 +7,10 @@ M6.6 live pilot writes use the production `chatgpt-web-adapter` product boundary
 The exact CWA source revision selected by the M6.6 candidate is:
 
 ```text
-d2ce811731898ae4b3bf04424bf02f047da0bcd9
+a90fc56d66f67ed8557120da4ca8c49a52b333e5
 ```
 
-This is the merge commit for CWA PR14.1, which includes request-bound ordinary-text conversation identity authority plus the browser-context canonical-read session-auth repair proven by live one-write acceptance. The dependency is pinned to that Git revision. A moving CWA `main` is not part of the pilot identity.
+This is the merge commit for CWA PR14.2. It includes the PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair, plus PR14.2's bounded ordinary request-correlation compatibility and exact committed-error preservation proven by a guarded 100,000-character live acceptance turn. The dependency is pinned to that Git revision. A moving CWA `main` is not part of the pilot identity.
 
 ## Install the exact pilot dependency
 
