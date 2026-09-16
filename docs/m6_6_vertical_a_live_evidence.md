@@ -198,7 +198,7 @@ submitCorrelationDiagnosticsUnavailable=true
 
 The visible assistant JSON was valid cognition output, but Codexia correctly did not consume it because CWA did not return a confirmed `ProviderResponse`. No M6.2 admission, M6.4 attention decision, or worker dispatch was durably recorded.
 
-Upstream diagnosis found that historical rich-input wrappers reused the same committed-write error prefix and could mask the outer ordinary-text failure suffix. CWA PR14.2 first preserved the exact ordinary failure, revealing the real class on a guarded 100k reproduction:
+Upstream diagnosis found that historical rich-input wrappers reused the same committed-write error prefix and could mask the outer ordinary-text failure suffix. CWA PR14.2 first preserved the exact ordinary failure, revealing the real class on a guarded reproduction:
 
 ```text
 PR9_2_WRITE_COMPLETED_CONVERSATION_ID_UNRESOLVED:
@@ -211,57 +211,112 @@ requestOverflow=false
 
 The ChatGPT UI nevertheless returned the exact requested response, proving that write and model execution had succeeded while request correlation alone was being rejected.
 
-PR14.2 then added bounded request-text shape compatibility without fuzzy matching or widened authority. The existing schema-29 authority still requires exact text equality, `action=next`, exact new-chat/continuation semantics, one logical user-message id, and exact attachment evidence. It also added a durable safe correlation fingerprint containing only booleans/counts/lengths rather than prompt text, ids, or request bodies.
+PR14.2 added bounded request-text shape compatibility without fuzzy matching or widened authority. The existing schema-29 authority still requires exact text equality, `action=next`, exact new-chat/continuation semantics, one logical user-message id, and exact attachment evidence. It also added a durable safe correlation fingerprint containing only booleans/counts/lengths rather than prompt text, ids, or request bodies.
 
-Final PR14.2 candidate:
-
-```text
-2ff36fb83603fa5754c44a8dfca51ffabb5af6ec
-```
-
-Deterministic CI #1007 passed. A fresh guarded 100,000-character live acceptance turn then returned:
-
-```text
-write_returned = true
-transport = browser-owned
-assistant_text = PR14_2_ACCEPT_OK
-canonical_complete = true
-canonical_message_count = 6
-canonical_read_scope = full_history
-assistant_exact_reply = true
-PASS = true
-```
-
-The same turn's durable safe fingerprint proved:
-
-```text
-matched = true
-actionNext = true
-conversationIdentityMatches = true
-userMessageCount = 1
-userMessageIdCount = 1
-userMessageIdentityClassified = true
-expectedTextLength = 100000
-observedTextLength = 100000
-exactObservedTextEqualsExpected = true
-exactTextUserMessageCount = 1
-exactRichUserMessageCount = 1
-attachmentCountsMatch = true
-commonPrefixLength = 100000
-commonSuffixLength = 100000
-```
-
-PR14.2 merged to CWA `main` as:
+A guarded 100,000-character synthetic acceptance turn then passed exact request correlation and canonical full-history readback. PR14.2 merged to CWA `main` as:
 
 ```text
 a90fc56d66f67ed8557120da4ca8c49a52b333e5
 ```
 
-CWA issue #93 closed with the merge. M6.6 now pins this exact merged revision.
+However, that synthetic prompt did not reproduce the pretty-printed JSON indentation used by the real M6.6 cognition envelope.
+
+## R5 — real cognition envelope isolated browser indentation canonicalization
+
+After repinning Codexia to merged PR14.2 and resuming the same durable pilot work, another real cognition turn visibly succeeded but CWA again refused request correlation. The durable safe fingerprint was decisive:
+
+```text
+actionNext = true
+conversationIdentityMatches = true
+userMessageCount = 1
+userMessageIdCount = 1
+userMessageIdentityClassified = true
+expectedTextLength = 8761
+observedTextLength = 8761
+commonPrefixLength = 1835
+commonSuffixLength = 42
+stringPartCount = 1
+objectTextPartCount = 0
+unknownPartCount = 0
+exactObservedTextEqualsExpected = false
+crlfNormalizedEqualsExpected = false
+nfcNormalizedEqualsExpected = false
+trimEqualsExpected = false
+```
+
+The same read-only supervisor status remained exact:
+
+```text
+READY
+last_sequence = 0
+last_proposal = null
+last_admission = null
+last_attention = null
+pending_dispatch = null
+completion = null
+```
+
+Reconstructing the current cognition envelope placed offset 1835 exactly at the first two-space indentation immediately after the opening `{` of a pretty-printed checkpoint JSON block. Equal observed/expected lengths, one parsed user message, and the mismatch geometry isolated the drift to contenteditable preservation of line-leading indentation using non-breaking Unicode-space representation.
+
+CWA PR14.3 therefore introduced only a bounded browser-composer indentation equivalence for ordinary zero-attachment turns:
+
+```text
+expected ASCII space
+↔ observed U+00A0 NBSP or U+202F NNBSP
+only while still inside line-leading indentation
+```
+
+It does not perform global whitespace normalization, trimming, Unicode normalization, fuzzy matching, retry, route inference, or request mutation. The network request remains untouched; a local correlation copy is canonicalized only when total length is identical and every other code unit matches exactly, then the existing schema-29 authority is run again.
+
+PR14.3 exact candidate:
+
+```text
+41b00c1ee64a45e7e8dbba33fe966cd64a88d377
+```
+
+Deterministic CI #1016 passed engineering quality/architecture, JavaScript syntax, Windows and Ubuntu on Python 3.10–3.14, release artifact build, and installed-wheel smoke.
+
+A guarded cognition-style pretty-JSON live acceptance then returned:
+
+```text
+write_attempts = 1
+automatic_write_retry = false
+transport = browser-owned
+assistant_text = PR14_3_INDENT_OK
+bare_conversation_id = true
+canonical_snapshot_complete = true
+canonical_message_count = 6
+canonical_read_scope = full_history
+exact_user_marker_found = true
+PASS = true
+```
+
+Most importantly, the durable browser-indent fingerprint proved that the new path was actually exercised:
+
+```text
+priorMatched = false
+eligibleOrdinaryRequest = true
+expectedTextLength = 9378
+observedTextLength = 9378
+observedTextCandidateCount = 1
+browserIndentEquivalent = true
+normalizedIndentSpaceCount = 568
+normalizedMatch = true
+```
+
+This is the required causal proof: the prior strict inspector rejected the browser-emitted representation; PR14.3 recognized only the bounded line-leading indentation representation; and the existing request-bound schema-29 authority then accepted the exact logical request.
+
+PR14.3 merged to CWA `main` as:
+
+```text
+75c8f359b113b1db2a03bc85b074d0cfa91cf361
+```
+
+CWA issue #95 closes with that merge. M6.6 now pins this exact merged revision.
 
 ## Resume requirement
 
-R1–R4 do not close Vertical A. The transport boundary that previously prevented confirmed cognition is now acceptance-proven on the exact merged CWA source, so the next live action returns to the **same durable pilot work**.
+R1–R5 do not close Vertical A. They establish that the product transport boundary which repeatedly blocked confirmed cognition is now acceptance-proven against the same structural form as the real cognition prompt.
 
 Before any new provider send, recover status again. If it remains:
 
@@ -273,14 +328,14 @@ last_admission = null
 last_attention = null
 ```
 
-then install the new exact CWA pin from the Codexia pilot environment, load the matching unpacked extension, verify `cwa doctor --json`, and drive the same `work_id` once under the governed M6.6 pilot surface.
+then install the new exact CWA pin from the Codexia pilot environment, register the Native Messaging host from that environment, load the matching unpacked extension, verify `cwa doctor --json`, and drive the **same** `work_id` once under the governed M6.6 pilot surface.
 
 The successful resumed path now needs to demonstrate:
 
 ```text
 same durable work
 → exact READY recovery
-→ bounded cognition write through merged CWA PR14.2
+→ real cognition write through merged CWA PR14.3
 → confirmed canonical readback
 → normal M6.2/M6.4 checkpoint
 → governed worker continuation
