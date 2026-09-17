@@ -226,7 +226,18 @@ class PilotCheckpointSource(_BasePilotCheckpointSource):
             "completion_summary": "bounded Codexia-authored explanation of why the objective is complete",
         }, ensure_ascii=False, separators=(",", ":"))
         prompt = prompt.replace(old, governed)
-        prompt += "\n\nCurrent exact logical worker evidence:\n" + ("null" if worker is None else json.dumps(worker.to_dict(), ensure_ascii=False, sort_keys=True))
+        admission_contract = (
+            "\n\nAdmission field semantics and cross-field requirements:\n"
+            "- evidence_fit evaluates whether evidence required to admit the CURRENT proposal is adequate; it does NOT mean whether terminal worker evidence already exists.\n"
+            "- Do NOT mark evidence_fit=unsupported merely because current exact logical worker evidence is null. For an initial bounded proposal that does not itself require prior external/worker evidence, use evidence_fit=not_required.\n"
+            "- evidence_fit=unsupported or evidence_fit=uncertain deterministically derives REVISE, so revision_request MUST contain a bounded non-null worker correction.\n"
+            "- depth_fit=misaligned or depth_fit=uncertain deterministically derives REVISE, so revision_request MUST contain a bounded non-null worker correction.\n"
+            "- objective_fit=uncertain, constraint_fit=uncertain, scope_fit=uncertain, or a genuine material_human_choice can derive ASK_HUMAN, so requested_human_response MUST contain the bounded human judgment needed.\n"
+            "- ADMIT and REJECT outcomes MUST use revision_request=null and requested_human_response=null.\n"
+            "- Never use follow-up request fields to compensate for an enum value whose semantics do not actually apply.\n"
+        )
+        prompt += admission_contract
+        prompt += "\nCurrent exact logical worker evidence:\n" + ("null" if worker is None else json.dumps(worker.to_dict(), ensure_ascii=False, sort_keys=True))
         if len(prompt) > MAX_PILOT_COGNITION_PROMPT_CHARS:
             raise InvalidWorkRecordError("Pilot cognition semantic projection exceeds its prompt budget")
         return prompt
