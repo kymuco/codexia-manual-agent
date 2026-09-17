@@ -10,7 +10,10 @@ from codexia_manual_agent.work.contracts import (
     _validate_digest,
     _validate_uuid,
 )
-from codexia_manual_agent.work.pilot_provider import ProviderWriteNotSubmittedError
+from codexia_manual_agent.work.pilot_provider import (
+    CWA_WRITE_NOT_SUBMITTED,
+    ProviderWriteNotSubmittedError,
+)
 from codexia_manual_agent.work.supervisor import (
     BackgroundWorkSupervisor,
     SupervisorDispatchLease,
@@ -61,7 +64,8 @@ class M66RecoverableBackgroundWorkSupervisor(BackgroundWorkSupervisor):
                 "dispatch recovery requires ProviderWriteNotSubmittedError"
             )
         if (
-            error.write_may_have_been_submitted is not False
+            error.failure_kind != CWA_WRITE_NOT_SUBMITTED
+            or error.write_may_have_been_submitted is not False
             or error.reconciliation_required is not False
             or error.automatic_retry_allowed is not False
             or error.manual_retry_safe_after_repair is not True
@@ -143,11 +147,9 @@ class M66RecoverableBackgroundWorkSupervisor(BackgroundWorkSupervisor):
                 )
             _validate_digest(proof["dispatch_digest"], "dispatch_digest")
             _validate_uuid(proof["claim_id"], "claim_id")
-            if not isinstance(proof["failure_kind"], str) or not proof[
-                "failure_kind"
-            ].strip():
-                raise InvalidWorkRecordError(
-                    "dispatch-not-submitted failure_kind must be non-empty text"
+            if proof["failure_kind"] != CWA_WRITE_NOT_SUBMITTED:
+                raise SupervisorIntegrityError(
+                    "Dispatch recovery payload has non-authoritative failure kind"
                 )
             if proof["request_stage"] is not None and not isinstance(
                 proof["request_stage"], str
