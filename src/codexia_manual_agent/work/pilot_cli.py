@@ -8,6 +8,7 @@ from typing import Sequence
 
 from codexia_manual_agent.domain.errors import CodexiaError
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
+from codexia_manual_agent.work.pilot_provider import M66ChatGPTWebProvider
 from codexia_manual_agent.work.pilot_runtime import (
     answer_daily_use_pilot,
     daily_use_pilot_status,
@@ -20,7 +21,7 @@ from codexia_manual_agent.work.supervisor import SupervisorPersistenceError
 
 
 def _provider(args: argparse.Namespace) -> ChatGPTWebProvider:
-    return ChatGPTWebProvider(
+    return M66ChatGPTWebProvider(
         auth_file=args.auth_file,
         model=args.model,
         reasoning_effort=args.reasoning_effort,

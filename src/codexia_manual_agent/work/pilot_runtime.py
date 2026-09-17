@@ -12,8 +12,10 @@ from codexia_manual_agent.work.contracts import (
     WorkStatement,
 )
 from codexia_manual_agent.work.pilot_checkpoint import PilotCheckpointSource
+from codexia_manual_agent.work.pilot_dispatch_recovery import (
+    M66RecoverableBackgroundWorkSupervisor,
+)
 from codexia_manual_agent.work.supervisor import (
-    BackgroundWorkSupervisor,
     SupervisorStateError,
     SupervisorWorkSnapshot,
 )
@@ -97,7 +99,7 @@ def start_daily_use_pilot(
         worker_actor=worker_actor,
     )
     cursor = peer_loop.attach(conversation_id)
-    supervisor = BackgroundWorkSupervisor(database_path)
+    supervisor = M66RecoverableBackgroundWorkSupervisor(database_path)
     return supervisor.register(
         handoff=handoff,
         interpretation=interpretation,
@@ -117,7 +119,7 @@ def drive_daily_use_pilot(
 ) -> SupervisorDriveResult:
     """Drive one registered pilot until completion or a governed stop boundary."""
 
-    supervisor = BackgroundWorkSupervisor(database_path)
+    supervisor = M66RecoverableBackgroundWorkSupervisor(database_path)
     peer_loop = ChatGPTPeerLoop(
         provider,
         codexia_actor=codexia_actor,
@@ -146,7 +148,7 @@ def answer_daily_use_pilot(
 ) -> SupervisorWorkSnapshot:
     """Record an explicit HUMAN answer for exact WAITING_HUMAN pilot work."""
 
-    supervisor = BackgroundWorkSupervisor(database_path)
+    supervisor = M66RecoverableBackgroundWorkSupervisor(database_path)
     recorder = getattr(supervisor, "record_pilot_human_answer", None)
     if not callable(recorder):
         raise SupervisorStateError("Pilot human-answer extension is not installed")
@@ -163,7 +165,7 @@ def daily_use_pilot_status(
     database_path: str | Path,
     work_id: str,
 ) -> SupervisorWorkSnapshot:
-    return BackgroundWorkSupervisor(database_path).recover(work_id)
+    return M66RecoverableBackgroundWorkSupervisor(database_path).recover(work_id)
 
 
 def pilot_snapshot_summary(snapshot: SupervisorWorkSnapshot) -> dict[str, object]:
@@ -174,6 +176,7 @@ def pilot_snapshot_summary(snapshot: SupervisorWorkSnapshot) -> dict[str, object
         "cursor_digest": snapshot.cursor.cursor_digest,
         "last_sequence": snapshot.last_sequence,
         "last_event_digest": snapshot.last_event_digest,
+        "in_flight_claim_id": snapshot.in_flight_claim_id,
         "last_proposal": (
             None if snapshot.last_proposal is None else snapshot.last_proposal.to_dict()
         ),
