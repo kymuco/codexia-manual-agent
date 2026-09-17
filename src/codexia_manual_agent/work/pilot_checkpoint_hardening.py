@@ -68,7 +68,7 @@ class PilotCheckpointSource(_BasePilotCheckpointSource):
         payload = self._decode_response(response.text)
         if payload["mode"] == "complete":
             if worker is None:
-                raise InvalidWorkRecordError("Pilot completion requires terminal exact worker evidence")
+                raise InvalidWorkRecordError("Pilot completion requires the terminal exact worker turn as current worker evidence")
             payload = self._normalize_legacy_completion(snapshot, payload)
         proposal = self._proposal_from_evidence(snapshot, worker, payload["proposal_text"])
         admission = ContinuationAdmission.evaluate(
