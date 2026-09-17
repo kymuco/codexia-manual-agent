@@ -77,7 +77,7 @@ def start_daily_use_pilot(
     interpretation = WorkIntentInterpretation.create(
         handoff=handoff,
         interpreter_kind=WorkActorKind.CODEXIA,
-        interpreter="codexia-pilot",
+        interpreter=codexia_actor,
         basis_statements=interpretation_basis,
         completion_expectation=(
             completion_expectation
