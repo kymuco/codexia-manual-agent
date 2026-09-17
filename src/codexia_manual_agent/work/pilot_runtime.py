@@ -77,7 +77,7 @@ def start_daily_use_pilot(
     interpretation = WorkIntentInterpretation.create(
         handoff=handoff,
         interpreter_kind=WorkActorKind.CODEXIA,
-        interpreter=codexia_actor,
+        interpreter="codexia-pilot",
         basis_statements=interpretation_basis,
         completion_expectation=(
             completion_expectation
@@ -176,6 +176,7 @@ def pilot_snapshot_summary(snapshot: SupervisorWorkSnapshot) -> dict[str, object
         "cursor_digest": snapshot.cursor.cursor_digest,
         "last_sequence": snapshot.last_sequence,
         "last_event_digest": snapshot.last_event_digest,
+        "in_flight_claim_id": snapshot.in_flight_claim_id,
         "last_proposal": (
             None if snapshot.last_proposal is None else snapshot.last_proposal.to_dict()
         ),
