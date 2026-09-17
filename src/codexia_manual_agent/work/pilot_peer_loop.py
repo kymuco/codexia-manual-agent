@@ -58,7 +58,8 @@ def _record_logical_assistant_turn(
         )
     if any(message.role != "assistant" for message in assistant_tail):
         raise PeerConversationChangedError(
-            f"Codexia {operation} contains intervening non-worker activity"
+            f"Codexia {operation} did not produce one exact user/assistant branch delta; "
+            "intervening non-worker activity was observed"
         )
 
     response_message_id = response.conversation.message_id
@@ -70,13 +71,15 @@ def _record_logical_assistant_turn(
         ]
         if len(matches) != 1 or matches[0].text != response.text:
             raise PeerConversationChangedError(
-                "Observed assistant tail does not contain the exact provider response"
+                "Observed worker message differs from the provider response; "
+                "the assistant tail does not contain one exact correlated response"
             )
     else:
         matches = [message for message in assistant_tail if message.text == response.text]
         if len(matches) != 1:
             raise PeerConversationChangedError(
-                "Observed assistant tail cannot uniquely correlate the provider response"
+                "Observed worker message differs from the provider response; "
+                "the assistant tail cannot uniquely correlate the response"
             )
 
     # Keep the frozen ChatPeerTurn v1 cardinality. The first assistant artifact
