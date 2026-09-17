@@ -7,12 +7,14 @@ M6.6 live pilot writes use the production `chatgpt-web-adapter` product boundary
 The exact CWA source revision selected by the M6.6 candidate is:
 
 ```text
-429746893ea107fc2a09655be5bc071f645dad0a
+a061e3f799915a8549b5449f41ae11eddae233dd
 ```
 
-This is the merge commit for CWA PR14.4. It includes the earlier PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; PR14.3's narrowly bounded browser-composer indentation compatibility; and PR14.4's continuation Browser Authority Lease ordering repair plus exact prewrite `NOT_SUBMITTED` classification.
+This is the squash-merge commit for CWA PR14.5. It includes the earlier PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; PR14.3's narrowly bounded browser-composer indentation compatibility; PR14.4's continuation Browser Authority Lease ordering repair plus exact prewrite `NOT_SUBMITTED` classification; and PR14.5's stable browser-native deployment identity repair.
 
 PR14.4 live acceptance proved the original continuation lease mismatch was removed: an existing-conversation continuation reached the real product write boundary instead of failing during its prewrite canonical baseline read. That same acceptance then exposed a separate post-delegation `net::ERR_ABORTED` outcome where the user turn persisted but no terminal assistant answer was produced. That lifecycle finding is tracked separately in CWA issue #99 and must remain fail-closed; it does not authorize replay of the committed user turn.
+
+PR14.5 then fixed a separate deployment split-brain found by the resumed M6.6 pilot: the Python package, Native Messaging host, and Chrome unpacked extension could come from different CWA revisions while `cwa doctor` still appeared healthy. Browser-native installation now materializes one stable per-user extension deployment, binds it to the current Python environment, records deterministic deployment identity, and fails closed when package/installed-extension/host identity diverges.
 
 The dependency is pinned to this exact Git revision. A moving CWA `main` is not part of the pilot identity.
 
@@ -41,35 +43,51 @@ The package version may still report `0.3.0`; the authoritative pilot dependency
 The production write path is browser-owned. Register the Native Messaging host **from the same pilot virtual environment that imports the pinned CWA revision**:
 
 ```powershell
-chatgpt-web-adapter browser-native install
+cwa browser-native install
 ```
 
-Print the unpacked extension directory from that same environment:
+PR14.5 copies the packaged extension bytes into the stable per-user browser-native runtime directory and records a deployment manifest there. Print the stable unpacked-extension directory from that same environment:
 
 ```powershell
-chatgpt-web-adapter browser-native extension-dir
+cwa browser-native extension-dir
 ```
 
-Load exactly that directory in Chrome/Chromium:
+On Windows the healthy installed path is expected to be under:
+
+```text
+%LOCALAPPDATA%\chatgpt-web-adapter\browser-native\extension
+```
+
+Load exactly that stable directory in Chrome/Chromium:
 
 ```text
 chrome://extensions
 → Developer mode
-→ remove any older unpacked CWA copy with the same frozen extension id if necessary
+→ remove any older checkout-bound unpacked CWA copy with the same frozen extension id
 → Load unpacked
-→ select the printed directory
+→ select the stable directory printed by `cwa browser-native extension-dir`
 ```
 
-A Chrome extension reload only reloads the directory Chrome already owns. It does not prove that directory matches the Python package currently imported by Codexia. For a pilot run, the Python package, Native Messaging host and loaded unpacked extension must all come from the same exact CWA revision.
+Do not point Chrome back at a repository checkout, editable-install source tree, or `site-packages` directory. The stable runtime path is specifically intended to survive checkout relocation, virtual-environment replacement, and future CWA source changes.
 
-Then verify the local bridge:
+The frozen extension id remains:
+
+```text
+kjfnkhajljnkbhikmfijcchenlfglaie
+```
+
+Verify deterministic deployment identity from the same pilot environment:
 
 ```powershell
-chatgpt-web-adapter browser-native status
+python -c "import json; from chatgpt_web_adapter.browser_native_install import browser_native_deployment_status; print(json.dumps(browser_native_deployment_status(), indent=2))"
+
+cwa browser-native status
 cwa doctor --json
 ```
 
-A live M6.6 drive should not be attempted until the browser-owned runtime reports ready/connected.
+`browser_native_deployment_status()` must report `healthy: true`. In particular, packaged/installed extension digest, source revision, package version, deployment schema/id, and current-environment Native Messaging host binding must agree. `cwa doctor` must also be healthy. A stale/mixed deployment is a fail-closed setup error, not permission to attempt a product write.
+
+A live M6.6 drive should not be attempted until all of these checks are clean.
 
 ## Authority boundary
 
@@ -124,6 +142,28 @@ After a transport/setup failure, first recover status:
 python -m codexia_manual_agent.work.pilot_cli status <work_id> --database <db>
 ```
 
-If the work is exactly READY with no pending dispatch, resume the same `work_id` after the transport repair. Do not register a replacement handoff merely to obtain a clean run.
+If the work is exactly `READY` with no pending dispatch, resume the same `work_id` after the transport repair. Do not register a replacement handoff merely to obtain a clean run.
 
-If the work is `IN_FLIGHT` or contains a pending dispatch, do not retry blindly. Reconcile the durable M6.5 state first. For the historical Vertical A dispatch that was claimed before CWA PR14.4, preserve that `IN_FLIGHT` state until the recovery path records an explicit, exact authority-bearing re-arm event; never edit SQLite directly or fabricate a peer turn.
+If the work is `IN_FLIGHT` or contains a pending dispatch, do not retry blindly. Reconcile the durable M6.5 state first.
+
+For a historical `IN_FLIGHT` dispatch that predates machine-readable provider `NOT_SUBMITTED` evidence, M6.6 now exposes an explicit HUMAN-authorized exact re-arm path. It must bind all of:
+
+```text
+work_id
+current in_flight_claim_id
+exact pending dispatch_digest
+explicit HUMAN recovery reason
+```
+
+and may only perform:
+
+```text
+IN_FLIGHT
+→ durable HUMAN_REARM evidence
+→ same pending dispatch
+→ PREPARED
+```
+
+The recovery command performs no provider write. A later normal `drive` invocation is a separate action and must acquire a fresh claim for the same exact pending dispatch.
+
+Never edit the SQLite state directly, fabricate a peer turn, or treat a CWA deployment repair as automatic retry authority.
