@@ -2,7 +2,7 @@
 
 ## Audit target
 
-M6.6 connects live cognition and one minimal human-answer surface to the already-governed M6.1–M6.5 work loop. The audit asks whether these convenience layers accidentally create a new semantic authority, execution authority, completion authority, human-impersonation path, or replay path.
+M6.6 connects live cognition and one minimal human-answer surface to the already-governed M6.1–M6.5 work loop. The audit asks whether these convenience layers accidentally create a new semantic authority, execution authority, completion authority, human-impersonation path, replay path, or transport retry authority.
 
 ## Cognition authority audit
 
@@ -15,20 +15,46 @@ model attention preference != explicit human attention constraint
 
 The cognition response is strict-key decoded. Additional fields such as `execute`, `authorized`, `approved`, or another undeclared control field fail before an M6 record can be created.
 
-## Exact worker-evidence audit
+## Exact logical worker-evidence audit
 
-When the supervisor terminal event is `PEER_TURN_RECORDED`, `BackgroundWorkDriver` supplies only that exact decoded `ChatPeerTurn` to cognition. The pilot requires `proposal_text=null` in that state and derives the next proposal with `ChatPeerTurn.followup_proposal(...)`.
+The frozen M6.3 `ChatPeerTurn` schema still records one exact Codexia message and one assistant message. Vertical A proved that a real ChatGPT product turn can expose additional assistant-only tool/progress artifacts after that v1 turn.
 
-The cognition model therefore cannot replace a captured worker response with a more convenient candidate while retaining the original provenance.
+M6.6 therefore derives current logical worker evidence from an exact contiguous chain:
+
+```text
+PEER_TURN_RECORDED
+→ zero or more exact EXTERNAL_OBSERVED events
+   containing assistant-only messages
+→ current cursor
+```
+
+Every link must bind the exact previous/next cursor and the same handoff/interpretation identity. The most recent assistant statement in that exact tail becomes current logical worker evidence. Any pilot HUMAN answer, provider-side user message, mixed-role observation, or unrelated durable event breaks the chain and prevents stale completion evidence from being reused.
+
+The live peer-loop hardening is installed on the existing `ChatGPTPeerLoop` surface before M6.5 provenance wrapping. This preserves the original fresh-live-turn ticket mechanism instead of bypassing it with a new subclass authority path.
+
+When current logical worker evidence exists, cognition must use `proposal_text=null`; it cannot replace captured worker evidence with a more convenient candidate.
 
 ## Completion audit
 
-`SupervisorCompletion` accepts only a CODEXIA-authored `WorkStatement`. The pilot additionally accepts `mode=complete` only when the checkpoint source received a non-null `latest_turn`, which by construction means the pre-cognition terminal durable event is the exact current worker turn.
+`SupervisorCompletion` accepts only a CODEXIA-authored `WorkStatement`.
 
-That pre-cognition check is not sufficient by itself because cognition is a live provider call. Human or worker activity may arrive while Codexia is deciding whether the terminal worker result is complete. M6.6 therefore adds a second boundary immediately before the durable terminal transition:
+Vertical A proved that the historical two-field `mode=complete` shortcut bypassed explicit HUMAN attention-constraint evaluation. The hardened completion path now derives a normal proposal from current logical worker evidence, runs M6.2 admission, constructs exact M6.4 attention context/checks, and evaluates M6.4 before a completion outcome can be returned.
 
 ```text
-terminal exact worker turn
+current logical worker evidence
+→ completion semantic judgment
+→ exact M6.2 admission
+→ exact one-check-per-HUMAN-constraint M6.4 context
+→ TRIGGERED / UNCERTAIN => WAITING_HUMAN
+→ all CLEAR + KEEP_MOVING => SupervisorCompletion candidate
+```
+
+A legacy two-field completion response is accepted only when the handoff has no explicit attention constraints; otherwise it fails closed.
+
+The pre-cognition evidence check is still not sufficient by itself because cognition is a live provider call. Human or worker activity may arrive while Codexia is deciding whether the current result is complete. M6.6 therefore retains the second boundary immediately before the durable terminal transition:
+
+```text
+current logical worker evidence
 → completion cognition
 → final exact live-peer reread   # external-state linearization point
 → no visible intervening activity
@@ -36,17 +62,16 @@ terminal exact worker turn
 → durable COMPLETED
 ```
 
-If the final reread sees any new peer activity, that activity is durably recorded first and the completion judgment is discarded; the next loop requires fresh cognition over the new state. If another supervisor process advances the durable event chain after cognition, the compare-and-swap append loses and completion is retried only through fresh recovery/cognition.
+If the final reread sees any new peer activity, that activity is durably recorded first and the completion judgment is discarded; the next loop requires fresh cognition over the new state. If another supervisor process advances the durable event chain after cognition, the compare-and-swap append loses and completion can happen only after fresh recovery/cognition.
 
 This preserves:
 
 ```text
 worker says done != work complete
-old worker result + newer visible human/external activity != completion evidence
+assistant-only artifacts from the same exact provider turn != stale worker evidence
+old worker result + newer HUMAN activity != completion evidence
 concurrent durable transition != stale completion permission
 ```
-
-The final provider reread is the explicit cross-system linearization point: activity visible by that read precedes completion and invalidates it; activity that occurs after that read is logically after the completion boundary. This avoids pretending that SQLite and the remote conversation can be atomically committed together.
 
 ## Human precedence and answer audit
 
@@ -62,9 +87,11 @@ WAITING_HUMAN → READY
 
 It does not move the ChatGPT cursor, create a `ContinuationAdmission`, construct a dispatch, mint a provider lease, or grant local authority. A second or unsolicited answer in `READY` fails closed.
 
-On recovery, the pilot extension revalidates the HUMAN statement and all waiting/attention bindings before accepting the transition. The exact terminal answer is then supplied separately to cognition as `latest_exact_pilot_human_answer`; it is not mislabeled as an M6.3 provider observation.
+Vertical A proved that requiring the pilot answer to remain the terminal durable event was too brittle: a newer ordinary external observation could shadow the answer before the first fresh judgment. The hardened checkpoint source scans backward only until the next `CHECKPOINT_DECIDED`, retaining the latest unresolved exact pilot HUMAN answer across newer external observations. Fresh cognition can therefore receive both the answer and the newer provider evidence.
 
-The existing M6.3 `EXTERNAL_USER` route also remains valid for real account-side human chat activity. Pilot cognition distinguishes the two evidence sources.
+That retention ends at the first fresh governed checkpoint; it is evidence continuity, not persistent authority.
+
+The existing M6.3 `EXTERNAL_USER` route remains valid for real account-side human chat activity. Pilot cognition distinguishes the two evidence sources.
 
 Fresh human evidence is prioritized near the front of the bounded M6.4 attention basis so large static handoff context cannot silently displace the answer that resumed the work. The original handoff identity remains unchanged.
 
@@ -76,11 +103,11 @@ human answer != arbitrary execution authority
 
 ## Explicit attention-constraint audit
 
-The cognition response must contain exactly one judgment for every exact HUMAN attention-constraint statement digest. Missing, duplicate, substituted, or foreign checks fail before `DynamicAttentionContext` is created, and M6.4 independently validates exact coverage again.
+Continuation and governed completion responses must contain exactly one judgment for every exact HUMAN attention-constraint statement digest. Missing, duplicate, substituted, or foreign checks fail before `DynamicAttentionContext` is created, and M6.4 independently validates exact coverage again.
 
 A `TRIGGERED` or `UNCERTAIN` explicit rule remains a hard M6.4 override even when cognition returns `KEEP_MOVING`. The pilot does not normalize an inconsistent attention payload: for example, an override that requires human attention together with `urgency=none` fails closed rather than silently rewriting the model judgment.
 
-## Provider and replay audit
+## Provider, canonical-read, and replay audit
 
 The pilot does not call ChatGPT worker transport directly. Worker continuation/revision still passes through M6.5 durable `DISPATCH_STARTED`, the ephemeral live lease, M6.3 before/send/after reconciliation, provenance tickets, and crash reconciliation.
 
@@ -88,7 +115,36 @@ Routine insufficient worker output can derive M6.2 `REVISE` and remain backgroun
 
 The cognition provider call is a reasoning input, not a delegated-work side effect. Its response cannot itself mutate local files, Git, processes, network targets, or the worker conversation. A cognition failure therefore fails the current drive call without creating provider-dispatch retry permission.
 
+Vertical A also reproduced `HTTP 429` while CWA was paginating full canonical history. CWA PR14.6 owns that transport repair and is pinned exactly at:
+
+```text
+21279260fbc344816e112393d40ee28e4355baaf
+```
+
+Its retry budget is limited to idempotent canonical GET reads. It retries the same page/cursor, honors bounded `Retry-After`/backoff, paces successful pages, never returns partial history as complete, and fails explicitly when the bounded read budget is exhausted.
+
+Critically:
+
+```text
+canonical read retry != product write retry
+ambiguous provider effect != retry permission
+```
+
+The M6.5 no-replay contract remains authoritative.
+
 The pilot may reuse an ephemeral cognition conversation within one process. That conversation is not authoritative or durable; every cognition request includes the exact durable delegated-work state required to recompute the judgment after restart.
+
+## Historical dispatch recovery audit
+
+The explicit `rearm-dispatch` surface exists only for one exact historical `IN_FLIGHT` claim that cannot be recovered from machine-readable provider no-submit proof. It requires HUMAN authorship and binds the current claim id plus exact pending dispatch digest.
+
+It performs only:
+
+```text
+IN_FLIGHT → PREPARED
+```
+
+while preserving the same dispatch and performing zero provider writes. A later `drive` is a distinct action that must acquire a new claim. The re-arm surface is manual recovery authority, not evidence that a previous ambiguous write was safe to replay.
 
 ## Runtime surface audit
 
@@ -97,7 +153,8 @@ The pilot may reuse an ephemeral cognition conversation within one process. That
 - register a handoff against an existing conversation;
 - drive a registered work with bounded `max_steps`;
 - record one exact human answer for `WAITING_HUMAN` work;
-- recover status.
+- recover durable status;
+- explicitly re-arm one exact historical dispatch from HUMAN authority without a provider write.
 
 It introduces no resident daemon, timer, notification channel, arbitrary shell, filesystem mutation, Git mutation, merge authority, or generic local-machine control.
 
@@ -111,13 +168,14 @@ HUMAN handoff
 → existing M6.2 admission
 → existing M6.4 attention
 → existing M6.5 durable driver
-→ exact M6.3 worker evidence
-→ repeat / WAITING_HUMAN / final-live-reread + CODEXIA completion
+→ exact M6.3 + same-turn assistant-tail worker evidence
+→ repeat / WAITING_HUMAN / governed completion attention / final-live-reread + CAS
 
 WAITING_HUMAN
 → exact pilot HUMAN answer
 → READY only
-→ fresh M6.2/M6.4 judgment before any next dispatch
+→ answer retained until first fresh M6.2/M6.4 judgment
+→ fresh governed continuation before any next dispatch
 ```
 
-The remaining milestone risk is product quality, not an intentionally widened authority boundary. M6.6 should remain incomplete until both real daily-use verticals are demonstrated.
+The repaired candidate still needs clean real-pilot validation. The historical Vertical A remains evidence of the defects that drove the repairs; it is not forced to `COMPLETED`. M6.6 remains incomplete until both required real daily-use verticals are demonstrated and reviewed.
