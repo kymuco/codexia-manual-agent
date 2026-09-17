@@ -160,6 +160,31 @@ def answer_daily_use_pilot(
     return recorder(work_id, answer=statement)
 
 
+def rearm_daily_use_pilot_dispatch(
+    *,
+    database_path: str | Path,
+    work_id: str,
+    expected_dispatch_digest: str,
+    expected_claim_id: str,
+    reason: str,
+    human_actor: str = "human",
+) -> SupervisorWorkSnapshot:
+    """Re-arm one exact historical IN_FLIGHT dispatch from explicit HUMAN authority."""
+
+    authorization = WorkStatement.create(
+        author_kind=WorkActorKind.HUMAN,
+        actor=human_actor,
+        text=reason,
+    )
+    supervisor = M66RecoverableBackgroundWorkSupervisor(database_path)
+    return supervisor.record_human_dispatch_rearm(
+        work_id,
+        expected_dispatch_digest=expected_dispatch_digest,
+        expected_claim_id=expected_claim_id,
+        authorization=authorization,
+    )
+
+
 def daily_use_pilot_status(
     *,
     database_path: str | Path,
