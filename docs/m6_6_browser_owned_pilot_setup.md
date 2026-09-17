@@ -7,10 +7,14 @@ M6.6 live pilot writes use the production `chatgpt-web-adapter` product boundary
 The exact CWA source revision selected by the M6.6 candidate is:
 
 ```text
-75c8f359b113b1db2a03bc85b074d0cfa91cf361
+429746893ea107fc2a09655be5bc071f645dad0a
 ```
 
-This is the merge commit for CWA PR14.3. It includes the PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; and PR14.3's narrowly bounded browser-composer indentation compatibility for ordinary zero-attachment text. PR14.3 was acceptance-proven by a guarded cognition-style pretty-JSON live turn where the prior strict inspector rejected the browser representation, the browser-indent layer identified 568 line-leading ASCII-space ↔ NBSP/NNBSP substitutions at equal total length, and the existing schema-29 authority then confirmed the exact logical request. The dependency is pinned to this Git revision. A moving CWA `main` is not part of the pilot identity.
+This is the merge commit for CWA PR14.4. It includes the earlier PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; PR14.3's narrowly bounded browser-composer indentation compatibility; and PR14.4's continuation Browser Authority Lease ordering repair plus exact prewrite `NOT_SUBMITTED` classification.
+
+PR14.4 live acceptance proved the original continuation lease mismatch was removed: an existing-conversation continuation reached the real product write boundary instead of failing during its prewrite canonical baseline read. That same acceptance then exposed a separate post-delegation `net::ERR_ABORTED` outcome where the user turn persisted but no terminal assistant answer was produced. That lifecycle finding is tracked separately in CWA issue #99 and must remain fail-closed; it does not authorize replay of the committed user turn.
+
+The dependency is pinned to this exact Git revision. A moving CWA `main` is not part of the pilot identity.
 
 ## Install the exact pilot dependency
 
@@ -88,6 +92,8 @@ exact durable cursor
 → exact M6.3 captured turn
 ```
 
+A CWA post-delegation failure with `write_may_have_been_submitted = true` is an ambiguity/reconciliation boundary, not retry permission. Only a structured exact `BROWSER_OWNED_WRITE_NOT_SUBMITTED` proof can support the M6.6 no-submit recovery path.
+
 ## System-context behavior
 
 The modern browser-owned product runtime does not claim the legacy hidden `system=` backend field as part of its production text-turn contract.
@@ -108,7 +114,7 @@ DEEP
 
 The existing pilot `--reasoning-effort` values are mapped conservatively onto those profiles when supplied. Raw historical model slugs are rejected before a product write rather than routed through an obsolete backend payload.
 
-For the first resumed Vertical A run, omit `--model` and `--reasoning-effort` unless an explicit profile is required. This preserves the product runtime's current/default model selection and minimizes unrelated variables.
+For the resumed Vertical A run, omit `--model` and `--reasoning-effort` unless an explicit profile is required. This preserves the product runtime's current/default model selection and minimizes unrelated variables.
 
 ## Resume the same durable work
 
@@ -118,14 +124,6 @@ After a transport/setup failure, first recover status:
 python -m codexia_manual_agent.work.pilot_cli status <work_id> --database <db>
 ```
 
-If the work is still exactly:
+If the work is exactly READY with no pending dispatch, resume the same `work_id` after the transport repair. Do not register a replacement handoff merely to obtain a clean run.
 
-```text
-READY
-last_sequence = 0
-pending_dispatch = null
-```
-
-then resume the same `work_id` after the transport repair. Do not register a replacement handoff merely to obtain a clean run.
-
-If the work is `IN_FLIGHT` or contains a pending dispatch, do not retry blindly; reconcile the durable M6.5 state first.
+If the work is `IN_FLIGHT` or contains a pending dispatch, do not retry blindly. Reconcile the durable M6.5 state first. For the historical Vertical A dispatch that was claimed before CWA PR14.4, preserve that `IN_FLIGHT` state until the recovery path records an explicit, exact authority-bearing re-arm event; never edit SQLite directly or fabricate a peer turn.
