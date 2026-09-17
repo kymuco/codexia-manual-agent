@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
+import codexia_manual_agent.work.pilot_cli as pilot_cli
 from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import ProviderConversation, ProviderRequest
 from codexia_manual_agent.work.admission import (
@@ -23,6 +26,7 @@ from codexia_manual_agent.work.attention import (
 )
 from codexia_manual_agent.work.chat_peer import ChatGPTPeerLoop
 from codexia_manual_agent.work.contracts import (
+    InvalidWorkRecordError,
     WorkActorKind,
     WorkHandoff,
     WorkIntentInterpretation,
@@ -37,6 +41,7 @@ from codexia_manual_agent.work.pilot_provider import (
     M66ChatGPTWebProvider,
     ProviderWriteNotSubmittedError,
 )
+from codexia_manual_agent.work.pilot_runtime import rearm_daily_use_pilot_dispatch
 from codexia_manual_agent.work.supervisor import (
     SupervisorStateError,
     SupervisorStatus,
@@ -314,3 +319,166 @@ def test_ambiguous_provider_failure_stays_in_flight(tmp_path) -> None:
     )
     assert reconciled.status is SupervisorStatus.IN_FLIGHT
     assert runtime.send_attempts == 1
+
+
+def test_human_rearm_preserves_exact_dispatch_and_reclaims_with_new_lease(tmp_path) -> None:
+    runtime = NoSubmitRuntime()
+    database, supervisor, prepared, _peer_loop = _prepared(tmp_path, runtime)
+    dispatch = prepared.pending_dispatch
+    assert dispatch is not None
+    original_cursor = prepared.cursor
+    original_proposal = prepared.last_proposal
+    original_admission = prepared.last_admission
+    original_attention = prepared.last_attention
+
+    first_lease = supervisor.claim_dispatch(prepared.work_id)
+    in_flight = supervisor.recover(prepared.work_id)
+    assert in_flight.status is SupervisorStatus.IN_FLIGHT
+    assert in_flight.in_flight_claim_id == first_lease.claim_id
+
+    authorization = WorkStatement.create(
+        author_kind=WorkActorKind.HUMAN,
+        actor="operator",
+        text="Re-arm this exact historical dispatch after bounded transport repair.",
+    )
+    rearmed = supervisor.record_human_dispatch_rearm(
+        prepared.work_id,
+        expected_dispatch_digest=dispatch.dispatch_digest,
+        expected_claim_id=first_lease.claim_id,
+        authorization=authorization,
+    )
+
+    assert runtime.send_attempts == 0
+    assert rearmed.status is SupervisorStatus.PREPARED
+    assert rearmed.in_flight_claim_id is None
+    assert rearmed.pending_dispatch == dispatch
+    assert rearmed.cursor == original_cursor
+    assert rearmed.last_proposal == original_proposal
+    assert rearmed.last_admission == original_admission
+    assert rearmed.last_attention == original_attention
+
+    restarted = M66RecoverableBackgroundWorkSupervisor(database)
+    recovered = restarted.recover(prepared.work_id)
+    assert recovered.status is SupervisorStatus.PREPARED
+    assert recovered.pending_dispatch == dispatch
+    assert recovered.cursor == original_cursor
+
+    second_lease = restarted.claim_dispatch(prepared.work_id)
+    assert second_lease.dispatch_digest == first_lease.dispatch_digest
+    assert second_lease.claim_id != first_lease.claim_id
+    claimed_again = restarted.recover(prepared.work_id)
+    assert claimed_again.status is SupervisorStatus.IN_FLIGHT
+    assert claimed_again.in_flight_claim_id == second_lease.claim_id
+    assert runtime.send_attempts == 0
+
+
+def test_human_rearm_rejects_wrong_digest_and_stale_claim(tmp_path) -> None:
+    runtime = NoSubmitRuntime()
+    _database, supervisor, prepared, _peer_loop = _prepared(tmp_path, runtime)
+    dispatch = prepared.pending_dispatch
+    assert dispatch is not None
+    lease = supervisor.claim_dispatch(prepared.work_id)
+    authorization = WorkStatement.create(
+        author_kind=WorkActorKind.HUMAN,
+        actor="operator",
+        text="Authorize only the exact currently claimed historical dispatch.",
+    )
+
+    with pytest.raises(SupervisorStateError, match="digest"):
+        supervisor.record_human_dispatch_rearm(
+            prepared.work_id,
+            expected_dispatch_digest="0" * 64,
+            expected_claim_id=lease.claim_id,
+            authorization=authorization,
+        )
+    with pytest.raises(SupervisorStateError, match="claim id"):
+        supervisor.record_human_dispatch_rearm(
+            prepared.work_id,
+            expected_dispatch_digest=dispatch.dispatch_digest,
+            expected_claim_id=str(uuid4()),
+            authorization=authorization,
+        )
+
+    unchanged = supervisor.recover(prepared.work_id)
+    assert unchanged.status is SupervisorStatus.IN_FLIGHT
+    assert unchanged.pending_dispatch == dispatch
+    assert unchanged.in_flight_claim_id == lease.claim_id
+    assert runtime.send_attempts == 0
+
+
+def test_human_rearm_requires_human_statement_and_nonempty_reason(tmp_path) -> None:
+    runtime = NoSubmitRuntime()
+    database, supervisor, prepared, _peer_loop = _prepared(tmp_path, runtime)
+    dispatch = prepared.pending_dispatch
+    assert dispatch is not None
+    lease = supervisor.claim_dispatch(prepared.work_id)
+    codexia_statement = WorkStatement.create(
+        author_kind=WorkActorKind.CODEXIA,
+        actor="codexia",
+        text="This must not become HUMAN recovery authority.",
+    )
+
+    with pytest.raises(SupervisorStateError, match="HUMAN"):
+        supervisor.record_human_dispatch_rearm(
+            prepared.work_id,
+            expected_dispatch_digest=dispatch.dispatch_digest,
+            expected_claim_id=lease.claim_id,
+            authorization=codexia_statement,
+        )
+    with pytest.raises(InvalidWorkRecordError):
+        rearm_daily_use_pilot_dispatch(
+            database_path=database,
+            work_id=prepared.work_id,
+            expected_dispatch_digest=dispatch.dispatch_digest,
+            expected_claim_id=lease.claim_id,
+            reason="   ",
+        )
+
+    unchanged = supervisor.recover(prepared.work_id)
+    assert unchanged.status is SupervisorStatus.IN_FLIGHT
+    assert unchanged.in_flight_claim_id == lease.claim_id
+    assert runtime.send_attempts == 0
+
+
+def test_rearm_cli_performs_zero_provider_writes(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    runtime = NoSubmitRuntime()
+    database, supervisor, prepared, _peer_loop = _prepared(tmp_path, runtime)
+    dispatch = prepared.pending_dispatch
+    assert dispatch is not None
+    lease = supervisor.claim_dispatch(prepared.work_id)
+
+    def _provider_must_not_be_constructed(_args):
+        raise AssertionError("rearm-dispatch must not construct a provider")
+
+    monkeypatch.setattr(pilot_cli, "_provider", _provider_must_not_be_constructed)
+    code = pilot_cli.main(
+        [
+            "rearm-dispatch",
+            prepared.work_id,
+            "--database",
+            str(database),
+            "--dispatch-digest",
+            dispatch.dispatch_digest,
+            "--claim-id",
+            lease.claim_id,
+            "--reason",
+            "Human explicitly authorizes re-arm of this exact historical claim.",
+            "--human-actor",
+            "operator",
+        ]
+    )
+
+    assert code == 0
+    assert runtime.send_attempts == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "rearm-dispatch"
+    assert payload["snapshot"]["status"] == SupervisorStatus.PREPARED.value
+    assert payload["snapshot"]["in_flight_claim_id"] is None
+    assert (
+        payload["snapshot"]["pending_dispatch"]["dispatch_digest"]
+        == dispatch.dispatch_digest
+    )

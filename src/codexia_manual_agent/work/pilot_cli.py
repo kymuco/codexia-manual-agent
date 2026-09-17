@@ -15,6 +15,7 @@ from codexia_manual_agent.work.pilot_runtime import (
     drive_daily_use_pilot,
     pilot_drive_summary,
     pilot_snapshot_summary,
+    rearm_daily_use_pilot_dispatch,
     start_daily_use_pilot,
 )
 from codexia_manual_agent.work.supervisor import SupervisorPersistenceError
@@ -85,6 +86,20 @@ def _build_parser() -> argparse.ArgumentParser:
     answer.add_argument("--database", default=".codexia/work-supervisor.sqlite3")
     answer.add_argument("--human-actor", default="human")
 
+    rearm = subparsers.add_parser(
+        "rearm-dispatch",
+        help=(
+            "Durably re-arm one exact historical IN_FLIGHT dispatch from explicit "
+            "HUMAN authority without performing a provider write."
+        ),
+    )
+    rearm.add_argument("work_id")
+    rearm.add_argument("--database", default=".codexia/work-supervisor.sqlite3")
+    rearm.add_argument("--dispatch-digest", required=True)
+    rearm.add_argument("--claim-id", required=True)
+    rearm.add_argument("--reason", required=True)
+    rearm.add_argument("--human-actor", default="human")
+
     status = subparsers.add_parser(
         "status",
         help="Recover the exact durable state for one pilot work item.",
@@ -153,6 +168,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = {
                 "pilot": "m6.6",
                 "action": "answer",
+                "snapshot": pilot_snapshot_summary(snapshot),
+            }
+            code = 0
+        elif args.command == "rearm-dispatch":
+            snapshot = rearm_daily_use_pilot_dispatch(
+                database_path=database,
+                work_id=args.work_id,
+                expected_dispatch_digest=args.dispatch_digest,
+                expected_claim_id=args.claim_id,
+                reason=args.reason,
+                human_actor=args.human_actor,
+            )
+            payload = {
+                "pilot": "m6.6",
+                "action": "rearm-dispatch",
                 "snapshot": pilot_snapshot_summary(snapshot),
             }
             code = 0
