@@ -50,7 +50,7 @@ from codexia_manual_agent.work.contracts import (
     WorkResourceRef,
     WorkStatement,
 )
-from codexia_manual_agent.work.pilot_checkpoint import PilotCheckpointSource
+from codexia_manual_agent.work.pilot_checkpoint_hardening import PilotCheckpointSource
 from codexia_manual_agent.work.supervisor import (
     SUPERVISOR_DISPATCH_SCHEMA_VERSION,
     SUPERVISOR_EVENT_SCHEMA_VERSION,
