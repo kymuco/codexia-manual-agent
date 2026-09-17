@@ -4,17 +4,17 @@ from pathlib import Path
 from typing import Iterable
 
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
-from codexia_manual_agent.work.chat_peer import ChatGPTPeerLoop
 from codexia_manual_agent.work.contracts import (
     WorkActorKind,
     WorkHandoff,
     WorkIntentInterpretation,
     WorkStatement,
 )
-from codexia_manual_agent.work.pilot_checkpoint import PilotCheckpointSource
+from codexia_manual_agent.work.pilot_checkpoint_hardening import PilotCheckpointSource
 from codexia_manual_agent.work.pilot_dispatch_recovery import (
     M66RecoverableBackgroundWorkSupervisor,
 )
+from codexia_manual_agent.work.pilot_peer_loop import PilotChatGPTPeerLoop
 from codexia_manual_agent.work.supervisor import (
     SupervisorStateError,
     SupervisorWorkSnapshot,
@@ -92,7 +92,7 @@ def start_daily_use_pilot(
             or "Use enough depth and evidence to produce a dependable finished result."
         ),
     )
-    peer_loop = ChatGPTPeerLoop(
+    peer_loop = PilotChatGPTPeerLoop(
         provider,
         codexia_actor=codexia_actor,
         human_actor=human_actor,
@@ -120,7 +120,7 @@ def drive_daily_use_pilot(
     """Drive one registered pilot until completion or a governed stop boundary."""
 
     supervisor = M66RecoverableBackgroundWorkSupervisor(database_path)
-    peer_loop = ChatGPTPeerLoop(
+    peer_loop = PilotChatGPTPeerLoop(
         provider,
         codexia_actor=codexia_actor,
         human_actor=human_actor,
