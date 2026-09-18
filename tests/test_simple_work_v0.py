@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import (
     ProviderConversation,
     ProviderRequest,
@@ -22,28 +23,43 @@ class _Reply:
     conversation_id: str
 
 
+@dataclass(frozen=True)
+class _Visible:
+    role: str
+    text: str
+
+
 class _Provider:
     def __init__(
         self,
-        normal_replies: list[_Reply],
+        normal_replies: list[_Reply | Exception],
         *,
         temporary_replies: list[_Reply] | None = None,
+        histories: dict[str, tuple[_Visible, ...]] | None = None,
     ) -> None:
         self.normal_replies = list(normal_replies)
         self.temporary_replies = list(temporary_replies or [])
+        self.histories = dict(histories or {})
         self.requests: list[ProviderRequest] = []
+        self.history_reads: list[str] = []
         self.temporary_prompts: list[str] = []
         self.temporary_end_count = 0
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
         self.requests.append(request)
         reply = self.normal_replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
         return ProviderResponse(
             text=reply.text,
             conversation=ProviderConversation(
                 conversation_id=reply.conversation_id,
             ),
         )
+
+    def read_messages(self, conversation_id: str) -> tuple[_Visible, ...]:
+        self.history_reads.append(conversation_id)
+        return self.histories.get(conversation_id, ())
 
     def send_temporary(self, prompt: str) -> ProviderResponse:
         self.temporary_prompts.append(prompt)
@@ -252,3 +268,152 @@ def test_existing_v0_database_can_add_v1_tables_without_rewriting_history(tmp_pa
     recovered = SimpleWorkStore(path).load(session.work_id)
 
     assert recovered == session
+
+
+def test_persistent_timeout_reconciles_from_canonical_history_without_retry(tmp_path) -> None:
+    first_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Начни первый этап."
+    )
+    second_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Да, продолжай со вторым этапом."
+    )
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Начни первый этап.", "codexia-1"),
+            _Reply("Первый этап готов.", "worker-1"),
+            _Reply("Да, продолжай со вторым этапом.", "codexia-1"),
+            ProviderError("chatgpt product-runtime request failed: CHATGPT_TURN_TIMEOUT"),
+            _Reply("ГОТОВО: Проект завершён.", "codexia-1"),
+        ],
+        histories={
+            "worker-1": (
+                _Visible("user", first_prompt),
+                _Visible("assistant", "Первый этап готов."),
+                _Visible("user", second_prompt),
+                _Visible("assistant", "Второй этап готов."),
+            )
+        },
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start("Сделай два этапа.", max_cycles=4)
+
+    assert result.stop == "completed"
+    assert result.session.worker_turns == 2
+    assert result.session.last_worker_text == "Второй этап готов."
+    assert provider.history_reads == ["worker-1"]
+    worker_second_writes = [
+        request
+        for request in provider.requests
+        if request.conversation is not None
+        and request.conversation.conversation_id == "worker-1"
+        and "вторым этапом" in request.prompt
+    ]
+    assert len(worker_second_writes) == 1
+
+    history = store.history(result.session.work_id)
+    assert [event.actor for event in history][-3:] == [
+        "codexia_to_worker",
+        "worker",
+        "codexia",
+    ]
+
+
+def test_unresolved_timeout_blocks_resume_until_explicit_reconcile(tmp_path) -> None:
+    first_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Начни первый этап."
+    )
+    second_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Да, продолжай со вторым этапом."
+    )
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Начни первый этап.", "codexia-1"),
+            _Reply("Первый этап готов.", "worker-1"),
+            _Reply("Да, продолжай со вторым этапом.", "codexia-1"),
+            ProviderError("chatgpt product-runtime request failed: CHATGPT_TURN_TIMEOUT"),
+            _Reply("ГОТОВО: После reconcile всё завершено.", "codexia-1"),
+        ],
+        histories={
+            "worker-1": (
+                _Visible("user", first_prompt),
+                _Visible("assistant", "Первый этап готов."),
+                _Visible("user", second_prompt),
+            )
+        },
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    blocked = runtime.start("Сделай два этапа.", max_cycles=4)
+
+    assert blocked.stop == "reconcile_required"
+    assert blocked.session.status is SimpleWorkStatus.RECONCILE_REQUIRED
+    requests_before_resume = len(provider.requests)
+
+    resumed = runtime.resume(blocked.session.work_id, max_cycles=4)
+
+    assert resumed.stop == "reconcile_required"
+    assert len(provider.requests) == requests_before_resume
+
+    provider.histories["worker-1"] = (
+        _Visible("user", first_prompt),
+        _Visible("assistant", "Первый этап готов."),
+        _Visible("user", second_prompt),
+        _Visible("assistant", "Второй этап готов."),
+    )
+
+    recovered = runtime.reconcile(blocked.session.work_id, max_cycles=4)
+
+    assert recovered.stop == "completed"
+    assert recovered.session.worker_turns == 2
+    assert recovered.session.last_worker_text == "Второй этап готов."
+    worker_second_writes = [
+        request
+        for request in provider.requests
+        if request.conversation is not None
+        and request.conversation.conversation_id == "worker-1"
+        and "вторым этапом" in request.prompt
+    ]
+    assert len(worker_second_writes) == 1
+
+
+def test_resume_detects_pre_reconcile_build_ambiguous_dispatch_tail(tmp_path) -> None:
+    provider = _Provider([])
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+    session = SimpleWorkSession.create("Продолжи проект.").updated(
+        worker_mode=WorkerMode.PERSISTENT,
+        worker_conversation_id="worker-1",
+        last_worker_text="Первый этап готов.",
+        next_worker_message="Да, продолжай.",
+    )
+    store.save(session)
+    store.append_event(
+        work_id=session.work_id,
+        actor="worker",
+        text="Первый этап готов.",
+        conversation_id="worker-1",
+        worker_mode=WorkerMode.PERSISTENT,
+    )
+    store.append_event(
+        work_id=session.work_id,
+        actor="codexia_to_worker",
+        text=(
+            "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+            "Да, продолжай."
+        ),
+        conversation_id="worker-1",
+        worker_mode=WorkerMode.PERSISTENT,
+    )
+
+    guarded = runtime.resume(session.work_id)
+
+    assert guarded.stop == "reconcile_required"
+    assert guarded.session.status is SimpleWorkStatus.RECONCILE_REQUIRED
+    assert provider.requests == []
