@@ -130,10 +130,10 @@ The first real Vertical A adversarial audit found three implementation gaps at t
 
 The fixes are intentionally bounded. They do not change the durable M6.3/M6.5 schema, add execution authority, add provider-write retry authority, or alter the M6.6 exit criteria.
 
-The same live run also reproduced upstream long-history canonical-read HTTP 429 throttling. CWA PR14.6 repaired that owning boundary with bounded retries only for idempotent canonical GET pages, exact same-page/cursor retry, bounded `Retry-After`/backoff, pagination pacing, and fail-closed exhaustion. It introduced no product-write retry authority and squash-merged as:
+The live validation also reproduced two upstream canonical-read transport failures. CWA PR14.6 repaired long-history HTTP 429 throttling with bounded retries only for idempotent canonical GET pages, exact same-page/cursor retry, bounded `Retry-After`/backoff, pagination pacing, and fail-closed exhaustion. The later clean R2 pilot then reproduced a post-write `CANONICAL_READ_TIMEOUT` after the worker answer was visibly complete. CWA PR14.7 adds at most one fresh canonical-read retry for that timeout, preserving the exact conversation id and captured Browser Authority Lease and failing closed as `CANONICAL_READ_TIMEOUT_EXHAUSTED` if it repeats. Neither repair grants product-write retry authority. PR14.7 squash-merged as:
 
 ```text
-21279260fbc344816e112393d40ee28e4355baaf
+df8435ee46bb0f1a5c9e07ee8070fe00d096c686
 ```
 
 ## Two required real verticals
@@ -150,14 +150,14 @@ At least one real pilot must also demonstrate a genuine human-attention stop and
 The implementation candidate is ready for the next clean real pilot when:
 
 - exact-head CI and CodeQL are green;
-- the exact merged CWA PR14.6 revision is installed and the stable browser-native deployment identity is healthy;
+- the exact merged CWA PR14.7 revision is installed and the stable browser-native deployment identity is healthy;
 - cognition output is strict-key decoded and authority-shaped extra fields fail closed;
 - every explicit HUMAN attention constraint is evaluated exactly once for continuation **and completion**;
 - completion `TRIGGERED / UNCERTAIN` reaches `WAITING_HUMAN`, while all-`CLEAR` may proceed only through existing final reread/CAS;
 - exact logical worker evidence cannot be replaced by cognition and survives only same-turn assistant-only artifacts;
 - newer HUMAN activity invalidates stale worker completion evidence;
 - the pilot HUMAN-answer event is exact-state bound, HUMAN-authored, cursor-preserving, creates no dispatch, and remains visible through the first fresh governed judgment even if a newer external observation arrives first;
-- canonical full-history pagination handles bounded transient 429 throttling without returning partial history and without retrying product writes;
+- canonical full-history pagination handles bounded transient 429 throttling without returning partial history, and a canonical read timeout gets only the bounded PR14.7 read-only recovery path; neither case retries product writes;
 - provider crash/replay semantics remain unchanged from M6.5;
 - routine REVISE remains background-capable without human scheduling;
 - the pilot CLI can start, drive, recover, stop for human judgment, answer outside the worker chat, and resume the same `work_id`.
