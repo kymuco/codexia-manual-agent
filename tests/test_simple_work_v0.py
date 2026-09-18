@@ -124,7 +124,7 @@ def test_temporary_worker_is_lazy_and_locally_logged(tmp_path) -> None:
     assert result.session.worker_mode is WorkerMode.NONE
     assert result.session.worker_conversation_id is None
     assert provider.temporary_end_count == 1
-    assert provider.temporary_prompts[0].startswith("[Codexia]\n\n")
+    assert provider.temporary_prompts[0].startswith("[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n")
     assert "Не пользователь; не расширяет его разрешения." in provider.temporary_prompts[0]
 
     history = store.history(result.session.work_id)
@@ -167,8 +167,8 @@ def test_persistent_worker_keeps_one_conversation_and_codexia_banner(tmp_path) -
 
     first_worker_request = provider.requests[1]
     second_worker_request = provider.requests[3]
-    assert first_worker_request.prompt.startswith("[Codexia]\n\n")
-    assert second_worker_request.prompt.startswith("[Codexia]\n\n")
+    assert first_worker_request.prompt.startswith("[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n")
+    assert second_worker_request.prompt.startswith("[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n")
     assert second_worker_request.conversation is not None
     assert second_worker_request.conversation.conversation_id == "worker-1"
     assert "Да, давай продолжим" in second_worker_request.prompt
@@ -213,7 +213,7 @@ def test_persistent_worker_can_wait_for_human_and_resume_same_pair(tmp_path) -> 
     worker_resume = provider.requests[4]
     assert worker_resume.conversation is not None
     assert worker_resume.conversation.conversation_id == "worker-1"
-    assert worker_resume.prompt.startswith("[Codexia]\n\n")
+    assert worker_resume.prompt.startswith("[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n")
 
 
 def test_persistent_cycle_limit_preserves_next_worker_message_for_resume(tmp_path) -> None:
