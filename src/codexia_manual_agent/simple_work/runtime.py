@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import re
 from typing import Protocol
+from urllib.parse import unquote
 
 from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import (
@@ -11,6 +14,7 @@ from codexia_manual_agent.domain.models import (
 )
 from codexia_manual_agent.simple_work.session import (
     SimpleCodexiaSession,
+    SimpleWorkArtifact,
     SimpleWorkSession,
     SimpleWorkStatus,
     SimpleWorkStore,
@@ -22,6 +26,7 @@ _DONE = "ГОТОВО:"
 _TEMP_WORKER = "ВРЕМЕННЫЙ WORKER:"
 _PERSISTENT_WORKER = "ПОСТОЯННЫЙ WORKER:"
 _CHATGPT_TURN_TIMEOUT = "CHATGPT_TURN_TIMEOUT"
+_SANDBOX_ARTIFACT_RE = re.compile(r"sandbox:/mnt/data/([^\s)]+)")
 
 
 class _VisibleMessage(Protocol):
@@ -37,6 +42,16 @@ class _VisibleStatus(Protocol):
     finish_reason: str | None
 
 
+class _ArtifactHandoff(Protocol):
+    conversation_id: str
+    source_filename: str
+    destination: Path
+    size_bytes: int
+    sha256: str
+    overwritten: bool
+    integrity_verified: bool
+
+
 class _Provider(Protocol):
     def send(self, request: ProviderRequest) -> ProviderResponse: ...
 
@@ -49,6 +64,15 @@ class _Provider(Protocol):
     def read_messages(
         self, conversation_id: str
     ) -> tuple[_VisibleMessage, ...]: ...
+
+    def handoff_generated_artifact(
+        self,
+        conversation_id: str,
+        *,
+        filename: str,
+        destination: str | Path,
+        overwrite: bool = False,
+    ) -> _ArtifactHandoff: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +286,27 @@ class SimpleWorkRuntime:
     def status(self, work_id: str) -> SimpleWorkSession:
         return self.store.load(work_id)
 
+    def intake_artifacts(self, work_id: str) -> tuple[SimpleWorkArtifact, ...]:
+        """Materialize explicit sandbox artifacts from the latest persistent worker result."""
+
+        session = self.store.load(work_id)
+        if session.worker_mode is not WorkerMode.PERSISTENT:
+            raise RuntimeError("artifact intake requires a persistent worker")
+        if session.worker_conversation_id is None:
+            raise RuntimeError("persistent worker has no conversation identity")
+        if not session.last_worker_text:
+            raise RuntimeError("persistent worker has no local result to inspect")
+        turn = session.worker_turns
+        if turn <= 0:
+            raise RuntimeError("persistent worker has no completed turn")
+        artifacts, _failures = self._materialize_worker_artifacts(
+            session,
+            worker_text=session.last_worker_text,
+            worker_conversation_id=session.worker_conversation_id,
+            worker_turn=turn,
+        )
+        return artifacts
+
     def _drive(
         self,
         session: SimpleWorkSession,
@@ -418,6 +463,7 @@ class SimpleWorkRuntime:
         worker_text: str,
         worker_conversation_id: str | None,
     ) -> tuple[SimpleWorkSession, SimpleCodexiaSession]:
+        next_worker_turn = session.worker_turns + 1
         self.store.append_event(
             work_id=session.work_id,
             actor="worker",
@@ -425,12 +471,26 @@ class SimpleWorkRuntime:
             conversation_id=worker_conversation_id,
             worker_mode=mode,
         )
+
+        artifacts: tuple[SimpleWorkArtifact, ...] = ()
+        artifact_failures: tuple[str, ...] = ()
+        if (
+            mode is WorkerMode.PERSISTENT
+            and worker_conversation_id is not None
+        ):
+            artifacts, artifact_failures = self._materialize_worker_artifacts(
+                session,
+                worker_text=worker_text,
+                worker_conversation_id=worker_conversation_id,
+                worker_turn=next_worker_turn,
+            )
+
         session = session.updated(
             status=SimpleWorkStatus.READY,
             worker_conversation_id=worker_conversation_id,
             last_worker_text=worker_text,
             next_worker_message=None,
-            worker_turns=session.worker_turns + 1,
+            worker_turns=next_worker_turn,
         )
         self.store.save(session)
 
@@ -438,7 +498,12 @@ class SimpleWorkRuntime:
             raise RuntimeError("Codexia session lost its conversation")
         codexia_response = self.provider.send(
             ProviderRequest(
-                prompt=_worker_result_prompt(mode, worker_text),
+                prompt=_worker_result_prompt(
+                    mode,
+                    worker_text,
+                    artifacts=artifacts,
+                    artifact_failures=artifact_failures,
+                ),
                 conversation=ProviderConversation(
                     conversation_id=codexia.conversation_id
                 ),
@@ -714,6 +779,90 @@ class SimpleWorkRuntime:
         self.store.save_codexia(codexia)
         return session, codexia
 
+    def _materialize_worker_artifacts(
+        self,
+        session: SimpleWorkSession,
+        *,
+        worker_text: str,
+        worker_conversation_id: str,
+        worker_turn: int,
+    ) -> tuple[tuple[SimpleWorkArtifact, ...], tuple[str, ...]]:
+        filenames = _sandbox_artifact_filenames(worker_text)
+        if not filenames:
+            return (), ()
+
+        existing = {
+            (artifact.worker_turn, artifact.source_filename): artifact
+            for artifact in self.store.artifacts(session.work_id)
+        }
+        turn_dir = (
+            self.store.path.parent
+            / "artifacts"
+            / session.work_id
+            / f"worker-{worker_turn:04d}"
+        )
+        turn_dir.mkdir(parents=True, exist_ok=True)
+
+        materialized: list[SimpleWorkArtifact] = []
+        failures: list[str] = []
+        for filename in filenames:
+            prior = existing.get((worker_turn, filename))
+            if prior is not None and Path(prior.local_path).is_file():
+                materialized.append(prior)
+                continue
+
+            destination = (turn_dir / filename).absolute()
+            try:
+                handoff = self.provider.handoff_generated_artifact(
+                    worker_conversation_id,
+                    filename=filename,
+                    destination=destination,
+                    overwrite=False,
+                )
+            except (ProviderError, OSError, ValueError) as exc:
+                message = f"{filename}: {exc}"
+                failures.append(message)
+                self.store.append_event(
+                    work_id=session.work_id,
+                    actor="artifact_intake_failed",
+                    text=message,
+                    conversation_id=worker_conversation_id,
+                    worker_mode=WorkerMode.PERSISTENT,
+                )
+                continue
+
+            if handoff.conversation_id != worker_conversation_id:
+                raise RuntimeError("artifact handoff conversation identity changed")
+            if handoff.source_filename != filename:
+                raise RuntimeError("artifact handoff filename identity changed")
+            if handoff.integrity_verified is not True:
+                raise RuntimeError("artifact handoff did not verify integrity")
+
+            artifact = self.store.save_artifact(
+                work_id=session.work_id,
+                worker_turn=worker_turn,
+                source_filename=filename,
+                local_path=str(handoff.destination),
+                size_bytes=handoff.size_bytes,
+                sha256=handoff.sha256,
+                source_conversation_id=worker_conversation_id,
+            )
+            materialized.append(artifact)
+            self.store.append_event(
+                work_id=session.work_id,
+                actor="artifact_materialized",
+                text=(
+                    f"filename={artifact.source_filename}\n"
+                    f"local_path={artifact.local_path}\n"
+                    f"size_bytes={artifact.size_bytes}\n"
+                    f"sha256={artifact.sha256}"
+                ),
+                conversation_id=worker_conversation_id,
+                worker_mode=WorkerMode.PERSISTENT,
+            )
+
+        return tuple(materialized), tuple(failures)
+
     def _pause_temporary_at_cycle_limit(
         self,
         session: SimpleWorkSession,
@@ -892,9 +1041,52 @@ def _worker_prompt(text: str) -> str:
     )
 
 
-def _worker_result_prompt(mode: WorkerMode, text: str) -> str:
+def _worker_result_prompt(
+    mode: WorkerMode,
+    text: str,
+    *,
+    artifacts: tuple[SimpleWorkArtifact, ...] = (),
+    artifact_failures: tuple[str, ...] = (),
+) -> str:
     label = "временный" if mode is WorkerMode.TEMPORARY else "постоянный"
-    return f"{label.capitalize()} рабочий чат ответил:\n\n{text}"
+    prompt = f"{label.capitalize()} рабочий чат ответил:\n\n{text}"
+    if artifacts:
+        lines = [
+            "",
+            "Артефакты из этого ответа уже материализованы локально:",
+        ]
+        for artifact in artifacts:
+            lines.append(
+                f"- {artifact.source_filename} -> {artifact.local_path} "
+                f"(sha256={artifact.sha256})"
+            )
+        prompt += "\n" + "\n".join(lines)
+    if artifact_failures:
+        lines = [
+            "",
+            "Некоторые явно указанные артефакты не удалось материализовать:",
+        ]
+        lines.extend(f"- {failure}" for failure in artifact_failures)
+        prompt += "\n" + "\n".join(lines)
+    return prompt
+
+
+def _sandbox_artifact_filenames(text: str) -> tuple[str, ...]:
+    filenames: list[str] = []
+    seen: set[str] = set()
+    for match in _SANDBOX_ARTIFACT_RE.finditer(text):
+        candidate = unquote(match.group(1)).strip()
+        if (
+            not candidate
+            or candidate in {".", ".."}
+            or "/" in candidate
+            or "\\" in candidate
+        ):
+            continue
+        if candidate not in seen:
+            seen.add(candidate)
+            filenames.append(candidate)
+    return tuple(filenames)
 
 
 def _new_task_prompt(user_request: str) -> str:
