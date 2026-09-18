@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from enum import StrEnum
+from pathlib import Path
+from uuid import uuid4
+
+
+class SimpleWorkStatus(StrEnum):
+    READY = "ready"
+    WAITING_HUMAN = "waiting_human"
+    COMPLETED = "completed"
+
+
+@dataclass(frozen=True, slots=True)
+class SimpleWorkSession:
+    work_id: str
+    user_request: str
+    status: SimpleWorkStatus
+    codexia_conversation_id: str | None
+    worker_conversation_id: str | None
+    last_codexia_text: str | None
+    last_worker_text: str | None
+    next_worker_message: str | None
+    pending_human_question: str | None
+    final_text: str | None
+    worker_turns: int
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def create(cls, user_request: str) -> "SimpleWorkSession":
+        request = user_request.strip()
+        if not request:
+            raise ValueError("user_request must be non-empty")
+        now = _now()
+        return cls(
+            work_id=str(uuid4()),
+            user_request=request,
+            status=SimpleWorkStatus.READY,
+            codexia_conversation_id=None,
+            worker_conversation_id=None,
+            last_codexia_text=None,
+            last_worker_text=None,
+            next_worker_message=None,
+            pending_human_question=None,
+            final_text=None,
+            worker_turns=0,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def updated(self, **changes: object) -> "SimpleWorkSession":
+        return replace(self, updated_at=_now(), **changes)
+
+
+class SimpleWorkStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path).expanduser()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simple_work_v0 (
+                    work_id TEXT PRIMARY KEY,
+                    user_request TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    codexia_conversation_id TEXT,
+                    worker_conversation_id TEXT,
+                    last_codexia_text TEXT,
+                    last_worker_text TEXT,
+                    next_worker_message TEXT,
+                    pending_human_question TEXT,
+                    final_text TEXT,
+                    worker_turns INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+
+    def save(self, session: SimpleWorkSession) -> SimpleWorkSession:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO simple_work_v0 (
+                    work_id, user_request, status,
+                    codexia_conversation_id, worker_conversation_id,
+                    last_codexia_text, last_worker_text, next_worker_message,
+                    pending_human_question, final_text, worker_turns,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(work_id) DO UPDATE SET
+                    user_request=excluded.user_request,
+                    status=excluded.status,
+                    codexia_conversation_id=excluded.codexia_conversation_id,
+                    worker_conversation_id=excluded.worker_conversation_id,
+                    last_codexia_text=excluded.last_codexia_text,
+                    last_worker_text=excluded.last_worker_text,
+                    next_worker_message=excluded.next_worker_message,
+                    pending_human_question=excluded.pending_human_question,
+                    final_text=excluded.final_text,
+                    worker_turns=excluded.worker_turns,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    session.work_id,
+                    session.user_request,
+                    session.status.value,
+                    session.codexia_conversation_id,
+                    session.worker_conversation_id,
+                    session.last_codexia_text,
+                    session.last_worker_text,
+                    session.next_worker_message,
+                    session.pending_human_question,
+                    session.final_text,
+                    session.worker_turns,
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+        return session
+
+    def load(self, work_id: str) -> SimpleWorkSession:
+        candidate = work_id.strip()
+        if not candidate:
+            raise ValueError("work_id must be non-empty")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM simple_work_v0 WHERE work_id = ?",
+                (candidate,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown simple work_id: {candidate}")
+        return SimpleWorkSession(
+            work_id=row["work_id"],
+            user_request=row["user_request"],
+            status=SimpleWorkStatus(row["status"]),
+            codexia_conversation_id=row["codexia_conversation_id"],
+            worker_conversation_id=row["worker_conversation_id"],
+            last_codexia_text=row["last_codexia_text"],
+            last_worker_text=row["last_worker_text"],
+            next_worker_message=row["next_worker_message"],
+            pending_human_question=row["pending_human_question"],
+            final_text=row["final_text"],
+            worker_turns=int(row["worker_turns"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
