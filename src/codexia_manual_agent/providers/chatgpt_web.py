@@ -159,6 +159,64 @@ class ChatGPTWebProvider:
             raise ProviderError("chatgpt product runtime did not return a response")
         return self._normalize_response(raw)
 
+    def send_temporary(self, prompt: str) -> ProviderResponse:
+        """Send one turn through CWA's live process-local Temporary Chat session."""
+
+        text = prompt.strip()
+        if not text:
+            raise ValueError("temporary prompt must be non-empty")
+        if self._client is not None:
+            raise ProviderUnavailableError(
+                "temporary Simple Work requires the browser-owned product runtime"
+            )
+        if self._runtime is None:
+            raise ProviderUnavailableError("chatgpt product runtime is unavailable")
+
+        try:
+            kwargs: dict[str, Any] = {
+                "conversation": None,
+                "conversation_mode": "temporary",
+                "timeout": self.timeout,
+            }
+            model_profile = self._model_profile()
+            if model_profile is not None:
+                kwargs["model_profile"] = model_profile
+            execution = self._runtime.send_text_observed(text, **kwargs)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                f"chatgpt temporary product-runtime request failed: {exc}"
+            ) from exc
+
+        transport = getattr(execution, "transport", None)
+        if transport != _PRODUCT_TRANSPORT:
+            raise ProviderError(
+                "chatgpt temporary runtime returned unexpected transport identity"
+            )
+        raw = getattr(execution, "response", None)
+        if raw is None:
+            raise ProviderError("chatgpt temporary runtime did not return a response")
+        return self._normalize_response(raw)
+
+    def end_temporary_chat(self) -> bool:
+        """Explicitly end the current CWA Temporary Chat lifecycle if one exists."""
+
+        if self._client is not None:
+            raise ProviderUnavailableError(
+                "temporary Simple Work requires the browser-owned product runtime"
+            )
+        if self._runtime is None:
+            raise ProviderUnavailableError("chatgpt product runtime is unavailable")
+        try:
+            return bool(self._runtime.end_temporary_chat())
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                f"failed to end chatgpt temporary lifecycle: {exc}"
+            ) from exc
+
     def _send_legacy(self, request: ProviderRequest) -> ProviderResponse:
         """Compatibility-only injected client seam; never the default live path."""
 
