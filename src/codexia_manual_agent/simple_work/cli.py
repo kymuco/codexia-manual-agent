@@ -29,10 +29,15 @@ def _parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start")
     start.add_argument("request")
-    start.add_argument(
+    codexia_target = start.add_mutually_exclusive_group()
+    codexia_target.add_argument(
         "--codexia",
-        default="general",
         help="saved Codexia chat alias; defaults to general",
+    )
+    codexia_target.add_argument(
+        "--temporary-codexia",
+        action="store_true",
+        help="use one process-local ChatGPT Temporary Chat as Codexia",
     )
     _common_run_args(start)
 
@@ -108,6 +113,7 @@ def _session_payload(session: SimpleWorkSession) -> dict[str, object]:
     return {
         "work_id": session.work_id,
         "codexia_alias": session.codexia_alias,
+        "codexia_mode": session.codexia_mode.value,
         "status": session.status.value,
         "user_request": session.user_request,
         "worker_mode": session.worker_mode.value,
@@ -216,7 +222,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.command == "start":
                 result = runtime.start(
                     args.request,
-                    codexia_alias=args.codexia,
+                    codexia_alias=args.codexia or "general",
+                    temporary_codexia=bool(args.temporary_codexia),
                     max_cycles=args.max_cycles,
                 )
             elif args.command == "resume":
