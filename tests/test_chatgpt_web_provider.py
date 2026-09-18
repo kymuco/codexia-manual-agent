@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from codexia_manual_agent.domain.errors import ProviderError
@@ -76,6 +77,33 @@ class FakeRuntime:
         self.temporary_end_count += 1
         return True
 
+    def handoff_generated_artifact(
+        self,
+        conversation_id,
+        *,
+        filename,
+        destination,
+        overwrite=False,
+    ):
+        self.calls.append(
+            (
+                "handoff_generated_artifact",
+                conversation_id,
+                filename,
+                Path(destination),
+                overwrite,
+            )
+        )
+        return SimpleNamespace(
+            conversation_id=conversation_id,
+            source_filename=filename,
+            destination=Path(destination),
+            size_bytes=123,
+            sha256="b" * 64,
+            overwritten=False,
+            integrity_verified=True,
+        )
+
 
 class FakeLegacyClient:
     def __init__(self) -> None:
@@ -132,6 +160,27 @@ class ChatGPTWebProviderTests(unittest.TestCase):
 
         self.assertTrue(provider.end_temporary_chat())
         self.assertEqual(runtime.temporary_end_count, 1)
+
+    def test_generated_artifact_handoff_uses_product_runtime(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        artifact = provider.handoff_generated_artifact(
+            "existing",
+            filename="report.zip",
+            destination="./local/report.zip",
+        )
+
+        self.assertEqual(artifact.conversation_id, "existing")
+        self.assertEqual(artifact.source_filename, "report.zip")
+        self.assertEqual(artifact.size_bytes, 123)
+        self.assertEqual(artifact.sha256, "b" * 64)
+        self.assertTrue(artifact.integrity_verified)
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "handoff_generated_artifact")
+        self.assertEqual(call[1], "existing")
+        self.assertEqual(call[2], "report.zip")
+        self.assertFalse(call[4])
 
     def test_product_runtime_existing_conversation_preserves_identity(self) -> None:
         runtime = FakeRuntime()
