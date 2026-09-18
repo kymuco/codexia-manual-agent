@@ -115,13 +115,13 @@ Routine insufficient worker output can derive M6.2 `REVISE` and remain backgroun
 
 The cognition provider call is a reasoning input, not a delegated-work side effect. Its response cannot itself mutate local files, Git, processes, network targets, or the worker conversation. A cognition failure therefore fails the current drive call without creating provider-dispatch retry permission.
 
-Vertical A also reproduced `HTTP 429` while CWA was paginating full canonical history. CWA PR14.6 owns that transport repair and is pinned exactly at:
+Vertical A also reproduced two canonical-read transport failures. First, `HTTP 429` occurred while CWA was paginating full canonical history; PR14.6 owns that bounded idempotent GET retry. The later clean R2 run then reproduced a post-write `CANONICAL_READ_TIMEOUT` after the worker answer was visibly complete. PR14.7 owns that second repair and the exact merged CWA transport revision is:
 
 ```text
-21279260fbc344816e112393d40ee28e4355baaf
+df8435ee46bb0f1a5c9e07ee8070fe00d096c686
 ```
 
-Its retry budget is limited to idempotent canonical GET reads. It retries the same page/cursor, honors bounded `Retry-After`/backoff, paces successful pages, never returns partial history as complete, and fails explicitly when the bounded read budget is exhausted.
+The 429 retry budget remains limited to idempotent canonical GET reads, preserving the same page/cursor and never returning partial history as complete. The timeout recovery performs at most one fresh canonical-read operation only for `CANONICAL_READ_TIMEOUT`, preserving the exact conversation id and captured Browser Authority Lease; a repeated timeout fails closed as `CANONICAL_READ_TIMEOUT_EXHAUSTED`. Non-timeout canonical failures and product writes are never retried by PR14.7.
 
 Critically:
 
