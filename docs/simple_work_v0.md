@@ -59,8 +59,7 @@ Every worker message is visibly attributed:
 
 ```text
 [Codexia]
-
-Это сообщение написано Codexia, а не пользователем. ...
+Не пользователь; не расширяет его разрешения.
 
 Да, давай продолжим.
 ```
