@@ -68,6 +68,51 @@ The visible `user` transport role therefore does not silently imply HUMAN
 authorship. The banner is deliberately simple and human-readable rather than a
 JSON authority envelope.
 
+## Generated artifact intake
+
+A canonically completed persistent-worker response may contain explicit ChatGPT
+sandbox links such as:
+
+```text
+sandbox:/mnt/data/report.zip
+sandbox:/mnt/data/project/README.md
+```
+
+Simple Work extracts only those explicit sandbox references. For each referenced
+filename it uses CWA's governed `handoff_generated_artifact` operation bound to
+the exact persistent worker conversation and writes into an application-owned
+turn directory:
+
+```text
+.codexia/artifacts/<work_id>/worker-0003/report.zip
+```
+
+Nested sandbox paths are reduced to a safe basename; CWA still requires a unique
+conversation-owned product `file_id` for that filename before any bytes are
+materialized. No implicit overwrite is allowed.
+
+Successful intake records the local path, byte count, SHA-256 and source
+conversation in SQLite. Codexia receives the worker result together with those
+real local paths, so it does not ask the user to hunt through the ChatGPT UI for
+already-generated files.
+
+Artifact intake deliberately stops at materialization. It does not unzip archives,
+run code, mutate a repository or grant filesystem/process authority beyond the
+bounded application-owned artifact destination.
+
+For an older work that completed before automatic intake was enabled:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli intake-artifacts <work_id> `
+    --auth-file auth_data.json
+```
+
+Inspect already materialized files without network access:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli artifacts <work_id>
+```
+
 ## Local transcript
 
 Simple Work stores a local event transcript for every task, including:
