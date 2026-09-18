@@ -986,6 +986,70 @@ def test_temporary_codexia_can_supervise_persistent_worker_in_same_run(tmp_path)
     assert provider.temporary_end_count == 1
 
 
+def test_temporary_codexia_stays_live_across_two_persistent_worker_cycles(
+    tmp_path,
+) -> None:
+    provider = _Provider(
+        [
+            _Reply("Первый worker-этап готов.", "worker-saved-1"),
+            _Reply("Второй worker-этап готов.", "worker-saved-1"),
+        ],
+        temporary_replies=[
+            _Reply(
+                "ПОСТОЯННЫЙ WORKER: Сделай первый этап.",
+                "temporary-codexia-1",
+            ),
+            _Reply(
+                "ПОСТОЯННЫЙ WORKER: Теперь сделай второй этап.",
+                "temporary-codexia-1",
+            ),
+            _Reply(
+                "ГОТОВО: Оба этапа завершены.",
+                "temporary-codexia-1",
+            ),
+        ],
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start(
+        "Сделай два последовательных этапа через одного persistent worker.",
+        temporary_codexia=True,
+        max_cycles=4,
+    )
+
+    assert result.stop == "completed"
+    assert result.session.codexia_mode is CodexiaMode.TEMPORARY
+    assert result.codexia.conversation_id == "temporary-codexia-1"
+    assert result.session.worker_mode is WorkerMode.PERSISTENT
+    assert result.session.worker_conversation_id == "worker-saved-1"
+    assert result.session.worker_turns == 2
+    assert result.session.final_text == "Оба этапа завершены."
+
+    assert len(provider.temporary_prompts) == 3
+    assert len(provider.requests) == 2
+    assert provider.requests[0].conversation is None
+    assert provider.requests[1].conversation is not None
+    assert (
+        provider.requests[1].conversation.conversation_id
+        == "worker-saved-1"
+    )
+    assert provider.temporary_end_count == 1
+
+    history = store.history(result.session.work_id)
+    assert [event.actor for event in history] == [
+        "human",
+        "codexia",
+        "codexia_to_worker",
+        "worker",
+        "codexia",
+        "codexia_to_worker",
+        "worker",
+        "codexia",
+        "codexia_temporary_closed",
+    ]
+
+
 def test_temporary_codexia_human_boundary_closes_and_cannot_resume(tmp_path) -> None:
     provider = _Provider(
         [],
