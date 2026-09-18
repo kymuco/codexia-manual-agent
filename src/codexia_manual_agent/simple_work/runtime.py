@@ -25,8 +25,16 @@ _CHATGPT_TURN_TIMEOUT = "CHATGPT_TURN_TIMEOUT"
 
 
 class _VisibleMessage(Protocol):
+    message_id: str
     role: str
     text: str
+    finish_reason: str | None
+
+
+class _VisibleStatus(Protocol):
+    status: str
+    message_id: str | None
+    finish_reason: str | None
 
 
 class _Provider(Protocol):
@@ -35,6 +43,8 @@ class _Provider(Protocol):
     def send_temporary(self, prompt: str) -> ProviderResponse: ...
 
     def end_temporary_chat(self) -> bool: ...
+
+    def read_status(self, conversation_id: str) -> _VisibleStatus: ...
 
     def read_messages(
         self, conversation_id: str
