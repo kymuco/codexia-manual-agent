@@ -28,6 +28,17 @@ _REASONING_PROFILE_MAP = {
 
 
 @dataclass(frozen=True, slots=True)
+class ChatGPTArtifactHandoff:
+    conversation_id: str
+    source_filename: str
+    destination: Path
+    size_bytes: int
+    sha256: str
+    overwritten: bool
+    integrity_verified: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ChatGPTConversationStatus:
     status: str
     message_id: str | None = None
@@ -223,6 +234,61 @@ class ChatGPTWebProvider:
             raise ProviderError(
                 f"failed to end chatgpt temporary lifecycle: {exc}"
             ) from exc
+
+    def handoff_generated_artifact(
+        self,
+        conversation_id: str,
+        *,
+        filename: str,
+        destination: str | Path,
+        overwrite: bool = False,
+    ) -> ChatGPTArtifactHandoff:
+        """Materialize one conversation-owned generated artifact locally."""
+
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id is required")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("filename is required")
+        if self._runtime is None:
+            raise ProviderUnavailableError(
+                "generated artifact handoff requires the product runtime"
+            )
+        try:
+            raw = self._runtime.handoff_generated_artifact(
+                conversation_id.strip(),
+                filename=filename.strip(),
+                destination=destination,
+                overwrite=bool(overwrite),
+            )
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                f"chatgpt generated-artifact handoff failed: {exc}"
+            ) from exc
+
+        raw_destination = getattr(raw, "destination", None)
+        raw_size = getattr(raw, "size_bytes", None)
+        raw_sha256 = getattr(raw, "sha256", None)
+        if not isinstance(raw_destination, (str, Path)):
+            raise ProviderError("generated-artifact handoff omitted destination")
+        if isinstance(raw_size, bool) or not isinstance(raw_size, int) or raw_size < 0:
+            raise ProviderError("generated-artifact handoff returned invalid size")
+        if (
+            not isinstance(raw_sha256, str)
+            or len(raw_sha256) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in raw_sha256)
+        ):
+            raise ProviderError("generated-artifact handoff returned invalid sha256")
+        return ChatGPTArtifactHandoff(
+            conversation_id=_required_attr(raw, "conversation_id"),
+            source_filename=_required_attr(raw, "source_filename"),
+            destination=Path(raw_destination).absolute(),
+            size_bytes=raw_size,
+            sha256=raw_sha256.lower(),
+            overwritten=bool(getattr(raw, "overwritten", False)),
+            integrity_verified=bool(getattr(raw, "integrity_verified", False)),
+        )
 
     def _send_legacy(self, request: ProviderRequest) -> ProviderResponse:
         """Compatibility-only injected client seam; never the default live path."""
