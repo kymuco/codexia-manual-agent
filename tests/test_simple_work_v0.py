@@ -417,3 +417,37 @@ def test_resume_detects_pre_reconcile_build_ambiguous_dispatch_tail(tmp_path) ->
     assert guarded.stop == "reconcile_required"
     assert guarded.session.status is SimpleWorkStatus.RECONCILE_REQUIRED
     assert provider.requests == []
+
+
+def test_reconcile_falls_back_to_globally_unique_exact_dispatch_when_anchor_differs(tmp_path) -> None:
+    second_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Спроектируй R0 transfer battery."
+    )
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Начни исследование.", "codexia-1"),
+            _Reply("Локальный writing-block текст.", "worker-1"),
+            _Reply("Спроектируй R0 transfer battery.", "codexia-1"),
+            ProviderError("chatgpt product-runtime request failed: CHATGPT_TURN_TIMEOUT"),
+            _Reply("ГОТОВО: R0 восстановлен.", "codexia-1"),
+        ],
+        histories={
+            "worker-1": (
+                _Visible("user", "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\nНачни исследование."),
+                _Visible("assistant", "Канонически нормализованный writing-block текст."),
+                _Visible("user", second_prompt),
+                _Visible("assistant", "Готовая спецификация R0."),
+            )
+        },
+    )
+    runtime = SimpleWorkRuntime(
+        provider=provider,
+        store=SimpleWorkStore(tmp_path / "simple.sqlite3"),
+    )
+
+    result = runtime.start("Проведи исследование.", max_cycles=4)
+
+    assert result.stop == "completed"
+    assert result.session.worker_turns == 2
+    assert result.session.last_worker_text == "Готовая спецификация R0."
