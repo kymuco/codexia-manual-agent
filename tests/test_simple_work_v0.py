@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 
 from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import (
@@ -747,3 +748,163 @@ def test_manual_artifact_intake_is_idempotent_for_materialized_turn(tmp_path) ->
 
     assert first == second
     assert len(provider.artifact_handoffs) == 1
+
+
+def test_saved_codexia_chat_can_be_selected_per_new_work(tmp_path) -> None:
+    provider = _Provider(
+        [_Reply("ГОТОВО: Ответ из Voice Engine контекста.", "codexia-voice")]
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    general = store.codexia()
+    voice = store.add_codexia("voice-engine", "codexia-voice")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start(
+        "Продолжи мысль в этом контексте.",
+        codexia_alias="voice-engine",
+    )
+
+    assert result.stop == "completed"
+    assert result.codexia.alias == "voice-engine"
+    assert result.codexia.session_id == voice.session_id
+    assert result.session.codexia_alias == "voice-engine"
+    assert provider.requests[0].conversation is not None
+    assert provider.requests[0].conversation.conversation_id == "codexia-voice"
+    assert store.codexia("general").session_id == general.session_id
+
+
+def test_multiple_saved_codexia_chats_keep_independent_conversation_identity(tmp_path) -> None:
+    provider = _Provider(
+        [
+            _Reply("ГОТОВО: Voice one.", "voice-chat"),
+            _Reply("ГОТОВО: Guitar one.", "guitar-chat"),
+            _Reply("ГОТОВО: Voice two.", "voice-chat"),
+        ]
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    store.add_codexia("voice-engine", "voice-chat")
+    store.add_codexia("guitar", "guitar-chat")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    voice_one = runtime.start("Voice task 1.", codexia_alias="voice-engine")
+    guitar = runtime.start("Guitar task.", codexia_alias="guitar")
+    voice_two = runtime.start("Voice task 2.", codexia_alias="voice-engine")
+
+    assert voice_one.codexia.session_id == voice_two.codexia.session_id
+    assert guitar.codexia.session_id != voice_one.codexia.session_id
+    assert [
+        request.conversation.conversation_id
+        for request in provider.requests
+        if request.conversation is not None
+    ] == ["voice-chat", "guitar-chat", "voice-chat"]
+
+
+def test_answer_uses_codexia_chat_bound_to_original_work(tmp_path) -> None:
+    provider = _Provider(
+        [
+            _Reply("К ПОЛЬЗОВАТЕЛЮ: Выбери A или B.", "voice-chat"),
+            _Reply("ГОТОВО: Выбран A.", "voice-chat"),
+        ]
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    store.add_codexia("voice-engine", "voice-chat")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    waiting = runtime.start("Нужен выбор.", codexia_alias="voice-engine")
+    answered = runtime.answer(waiting.session.work_id, "A")
+
+    assert waiting.session.codexia_alias == "voice-engine"
+    assert answered.codexia.alias == "voice-engine"
+    assert answered.stop == "completed"
+    assert provider.requests[1].conversation is not None
+    assert provider.requests[1].conversation.conversation_id == "voice-chat"
+
+
+def test_codexia_registry_lists_general_first_and_rejects_duplicate_conversation(tmp_path) -> None:
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    general = store.codexia()
+    guitar = store.add_codexia("guitar", "guitar-chat")
+    voice = store.add_codexia("voice-engine", "voice-chat")
+
+    chats = store.codexia_chats()
+
+    assert [chat.alias for chat in chats] == [
+        "general",
+        "guitar",
+        "voice-engine",
+    ]
+    assert chats[0].session_id == general.session_id
+    assert chats[1].session_id == guitar.session_id
+    assert chats[2].session_id == voice.session_id
+
+    try:
+        store.add_codexia("other", "voice-chat")
+    except ValueError as exc:
+        assert "already registered" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("duplicate conversation registration must fail")
+
+
+def test_existing_singleton_and_work_rows_migrate_to_general_codexia(tmp_path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE simple_codexia_v1 (
+                slot INTEGER PRIMARY KEY CHECK(slot = 1),
+                session_id TEXT NOT NULL,
+                conversation_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO simple_codexia_v1 (
+                slot, session_id, conversation_id, created_at, updated_at
+            ) VALUES (1, 'legacy-session', 'legacy-chat', 't0', 't1')
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE simple_work_v1 (
+                work_id TEXT PRIMARY KEY,
+                user_request TEXT NOT NULL,
+                status TEXT NOT NULL,
+                worker_mode TEXT NOT NULL,
+                worker_conversation_id TEXT,
+                last_codexia_text TEXT,
+                last_worker_text TEXT,
+                next_worker_message TEXT,
+                pending_human_question TEXT,
+                final_text TEXT,
+                worker_turns INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO simple_work_v1 (
+                work_id, user_request, status, worker_mode,
+                worker_conversation_id, last_codexia_text, last_worker_text,
+                next_worker_message, pending_human_question, final_text,
+                worker_turns, created_at, updated_at
+            ) VALUES (
+                'legacy-work', 'old task', 'completed', 'none',
+                NULL, NULL, NULL, NULL, NULL, 'done', 0, 't0', 't1'
+            )
+            """
+        )
+
+    store = SimpleWorkStore(database)
+
+    general = store.codexia("general")
+    old_work = store.load("legacy-work")
+
+    assert general.alias == "general"
+    assert general.session_id == "legacy-session"
+    assert general.conversation_id == "legacy-chat"
+    assert old_work.codexia_alias == "general"
