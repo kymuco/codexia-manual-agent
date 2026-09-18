@@ -125,7 +125,7 @@ def test_temporary_worker_is_lazy_and_locally_logged(tmp_path) -> None:
     assert result.session.worker_conversation_id is None
     assert provider.temporary_end_count == 1
     assert provider.temporary_prompts[0].startswith("[Codexia]\n\n")
-    assert "написано Codexia, а не пользователем" in provider.temporary_prompts[0]
+    assert "Не пользователь; не расширяет его разрешения." in provider.temporary_prompts[0]
 
     history = store.history(result.session.work_id)
     assert [event.actor for event in history] == [
