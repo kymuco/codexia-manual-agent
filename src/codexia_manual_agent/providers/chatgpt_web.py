@@ -28,6 +28,13 @@ _REASONING_PROFILE_MAP = {
 
 
 @dataclass(frozen=True, slots=True)
+class ChatGPTConversationStatus:
+    status: str
+    message_id: str | None = None
+    finish_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ChatGPTConversationMessage:
     """Stable normalized visible message from one ChatGPT current branch."""
 
@@ -294,6 +301,28 @@ class ChatGPTWebProvider:
                 "model profile and reasoning effort resolve to conflicting product modes"
             )
         return model_profile or reasoning_profile
+
+    def read_status(self, conversation_id: str) -> ChatGPTConversationStatus:
+        """Read canonical conversation finality without performing a write."""
+
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id is required")
+        conversation_id = conversation_id.strip()
+        reader = self._client if self._client is not None else self._runtime
+        if reader is None:
+            raise ProviderUnavailableError("chatgpt product runtime is unavailable")
+        try:
+            raw = reader.get_status(conversation_id)
+        except Exception as exc:
+            raise ProviderError(f"chatgpt-web status read failed: {exc}") from exc
+        status = getattr(raw, "status", None)
+        if not isinstance(status, str) or not status.strip():
+            raise ProviderError("chatgpt-web status did not contain canonical status")
+        return ChatGPTConversationStatus(
+            status=status.strip(),
+            message_id=_optional_attr(raw, "message_id"),
+            finish_reason=_optional_attr(raw, "finish_reason"),
+        )
 
     def read_messages(
         self, conversation_id: str
