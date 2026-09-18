@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import (
@@ -32,6 +33,17 @@ class _Visible:
 
 
 @dataclass(frozen=True)
+class _Artifact:
+    conversation_id: str
+    source_filename: str
+    destination: Path
+    size_bytes: int
+    sha256: str
+    overwritten: bool = False
+    integrity_verified: bool = True
+
+
+@dataclass(frozen=True)
 class _Status:
     status: str = "completed"
     message_id: str | None = None
@@ -55,6 +67,7 @@ class _Provider:
         self.history_reads: list[str] = []
         self.temporary_prompts: list[str] = []
         self.temporary_end_count = 0
+        self.artifact_handoffs: list[tuple[str, str, Path, bool]] = []
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
         self.requests.append(request)
@@ -74,6 +87,28 @@ class _Provider:
     def read_messages(self, conversation_id: str) -> tuple[_Visible, ...]:
         self.history_reads.append(conversation_id)
         return self.histories.get(conversation_id, ())
+
+    def handoff_generated_artifact(
+        self,
+        conversation_id: str,
+        *,
+        filename: str,
+        destination: str | Path,
+        overwrite: bool = False,
+    ) -> _Artifact:
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"artifact:{filename}".encode("utf-8"))
+        self.artifact_handoffs.append(
+            (conversation_id, filename, path, overwrite)
+        )
+        return _Artifact(
+            conversation_id=conversation_id,
+            source_filename=filename,
+            destination=path,
+            size_bytes=path.stat().st_size,
+            sha256="a" * 64,
+        )
 
     def send_temporary(self, prompt: str) -> ProviderResponse:
         self.temporary_prompts.append(prompt)
@@ -628,3 +663,87 @@ def test_reconcile_repairs_historical_provisional_worker_ingest(tmp_path) -> Non
     assert provider.requests[0].conversation.conversation_id == "codexia-1"
     assert "промежуточным" in provider.requests[0].prompt
     assert "Полный канонический worker ответ." in provider.requests[0].prompt
+
+
+def test_persistent_worker_artifacts_are_materialized_before_codexia_review(tmp_path) -> None:
+    worker_text = (
+        "Готово. "
+        "[R0 package](sandbox:/mnt/data/ear_r0_source.zip) "
+        "[Frozen spec](sandbox:/mnt/data/ear_r0/R0_SPEC_FROZEN.md)"
+    )
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Собери R0 пакет.", "codexia-1"),
+            _Reply(worker_text, "worker-1"),
+            _Reply("ГОТОВО: R0 готов локально.", "codexia-1"),
+        ]
+    )
+    store = SimpleWorkStore(tmp_path / ".codexia" / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start("Собери R0.", max_cycles=2)
+
+    assert result.stop == "completed"
+    assert [item[1] for item in provider.artifact_handoffs] == [
+        "ear_r0_source.zip",
+        "R0_SPEC_FROZEN.md",
+    ]
+    artifacts = store.artifacts(result.session.work_id)
+    assert [artifact.source_filename for artifact in artifacts] == [
+        "ear_r0_source.zip",
+        "R0_SPEC_FROZEN.md",
+    ]
+    assert all(Path(artifact.local_path).is_file() for artifact in artifacts)
+    assert all(artifact.sha256 == "a" * 64 for artifact in artifacts)
+
+    codexia_review = provider.requests[2].prompt
+    assert "Артефакты из этого ответа уже материализованы локально" in codexia_review
+    assert "ear_r0_source.zip" in codexia_review
+    assert "R0_SPEC_FROZEN.md" in codexia_review
+    assert str(Path(artifacts[0].local_path)) in codexia_review
+
+
+def test_manual_artifact_intake_uses_existing_last_persistent_worker_result(tmp_path) -> None:
+    provider = _Provider([])
+    store = SimpleWorkStore(tmp_path / ".codexia" / "simple.sqlite3")
+    session = SimpleWorkSession.create("Долгая работа.").updated(
+        worker_mode=WorkerMode.PERSISTENT,
+        worker_conversation_id="worker-1",
+        last_worker_text=(
+            "Архив: [download](sandbox:/mnt/data/ear_r0_source.zip)"
+        ),
+        worker_turns=3,
+        status=SimpleWorkStatus.WAITING_HUMAN,
+        pending_human_question="Запусти familiarization.",
+    )
+    store.save(session)
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    artifacts = runtime.intake_artifacts(session.work_id)
+
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    assert artifact.worker_turn == 3
+    assert artifact.source_filename == "ear_r0_source.zip"
+    assert artifact.source_conversation_id == "worker-1"
+    assert Path(artifact.local_path).is_file()
+    assert provider.requests == []
+
+
+def test_manual_artifact_intake_is_idempotent_for_materialized_turn(tmp_path) -> None:
+    provider = _Provider([])
+    store = SimpleWorkStore(tmp_path / ".codexia" / "simple.sqlite3")
+    session = SimpleWorkSession.create("Долгая работа.").updated(
+        worker_mode=WorkerMode.PERSISTENT,
+        worker_conversation_id="worker-1",
+        last_worker_text="[file](sandbox:/mnt/data/result.zip)",
+        worker_turns=1,
+    )
+    store.save(session)
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    first = runtime.intake_artifacts(session.work_id)
+    second = runtime.intake_artifacts(session.work_id)
+
+    assert first == second
+    assert len(provider.artifact_handoffs) == 1
