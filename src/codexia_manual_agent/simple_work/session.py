@@ -21,6 +21,11 @@ class WorkerMode(StrEnum):
     PERSISTENT = "persistent"
 
 
+class CodexiaMode(StrEnum):
+    SAVED = "saved"
+    TEMPORARY = "temporary"
+
+
 @dataclass(frozen=True, slots=True)
 class SimpleCodexiaSession:
     session_id: str
@@ -54,6 +59,7 @@ class SimpleWorkSession:
     work_id: str
     user_request: str
     codexia_alias: str
+    codexia_mode: CodexiaMode
     status: SimpleWorkStatus
     worker_mode: WorkerMode
     worker_conversation_id: str | None
@@ -72,6 +78,7 @@ class SimpleWorkSession:
         user_request: str,
         *,
         codexia_alias: str = "general",
+        codexia_mode: CodexiaMode = CodexiaMode.SAVED,
     ) -> "SimpleWorkSession":
         request = user_request.strip()
         if not request:
@@ -81,6 +88,7 @@ class SimpleWorkSession:
             work_id=str(uuid4()),
             user_request=request,
             codexia_alias=_normalize_codexia_alias(codexia_alias),
+            codexia_mode=CodexiaMode(codexia_mode),
             status=SimpleWorkStatus.READY,
             worker_mode=WorkerMode.NONE,
             worker_conversation_id=None,
@@ -169,6 +177,7 @@ class SimpleWorkStore:
                     work_id TEXT PRIMARY KEY,
                     user_request TEXT NOT NULL,
                     codexia_alias TEXT NOT NULL DEFAULT 'general',
+                    codexia_mode TEXT NOT NULL DEFAULT 'saved',
                     status TEXT NOT NULL,
                     worker_mode TEXT NOT NULL,
                     worker_conversation_id TEXT,
@@ -222,6 +231,13 @@ class SimpleWorkStore:
                     """
                     ALTER TABLE simple_work_v1
                     ADD COLUMN codexia_alias TEXT NOT NULL DEFAULT 'general'
+                    """
+                )
+            if "codexia_mode" not in work_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE simple_work_v1
+                    ADD COLUMN codexia_mode TEXT NOT NULL DEFAULT 'saved'
                     """
                 )
 
@@ -424,14 +440,15 @@ class SimpleWorkStore:
             connection.execute(
                 """
                 INSERT INTO simple_work_v1 (
-                    work_id, user_request, codexia_alias, status, worker_mode,
+                    work_id, user_request, codexia_alias, codexia_mode, status, worker_mode,
                     worker_conversation_id, last_codexia_text, last_worker_text,
                     next_worker_message, pending_human_question, final_text,
                     worker_turns, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(work_id) DO UPDATE SET
                     user_request=excluded.user_request,
                     codexia_alias=excluded.codexia_alias,
+                    codexia_mode=excluded.codexia_mode,
                     status=excluded.status,
                     worker_mode=excluded.worker_mode,
                     worker_conversation_id=excluded.worker_conversation_id,
@@ -448,6 +465,7 @@ class SimpleWorkStore:
                     session.work_id,
                     session.user_request,
                     session.codexia_alias,
+                    session.codexia_mode.value,
                     session.status.value,
                     session.worker_mode.value,
                     session.worker_conversation_id,
@@ -478,6 +496,7 @@ class SimpleWorkStore:
             work_id=row["work_id"],
             user_request=row["user_request"],
             codexia_alias=row["codexia_alias"],
+            codexia_mode=CodexiaMode(row["codexia_mode"]),
             status=SimpleWorkStatus(row["status"]),
             worker_mode=WorkerMode(row["worker_mode"]),
             worker_conversation_id=row["worker_conversation_id"],
