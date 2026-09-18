@@ -486,8 +486,14 @@ class SimpleWorkRuntime:
             return None
 
         try:
+            status = self.provider.read_status(conversation_id)
             messages = self.provider.read_messages(conversation_id)
         except ProviderError:
+            return None
+
+        # Visible text can exist while ChatGPT is still generating. Reconciliation
+        # may consume only canonical finality, never an in-progress assistant body.
+        if status.status != "completed":
             return None
 
         anchor_indices = [
@@ -524,13 +530,34 @@ class SimpleWorkRuntime:
         if any(message.role == "user" for message in suffix):
             return None
         assistants = [
-            message.text
+            message
             for message in suffix
             if message.role == "assistant" and message.text.strip()
         ]
         if not assistants:
             return None
-        return assistants[-1]
+
+        if status.message_id is not None:
+            finalized = [
+                message
+                for message in assistants
+                if message.message_id == status.message_id
+            ]
+            if len(finalized) != 1:
+                return None
+            return finalized[0].text
+
+        # Compatibility fallback: canonical completion can occasionally omit the
+        # status message id, but an explicit assistant finish reason still proves
+        # that the visible assistant body is final.
+        finalized = [
+            message
+            for message in assistants
+            if message.finish_reason is not None
+        ]
+        if len(finalized) != 1:
+            return None
+        return finalized[0].text
 
     def _pause_temporary_at_cycle_limit(
         self,
@@ -696,6 +723,10 @@ def _validate_cycles(value: int) -> None:
 
 def _is_chatgpt_turn_timeout(exc: ProviderError) -> bool:
     return _CHATGPT_TURN_TIMEOUT in str(exc)
+
+
+def _is_conversation_not_completed(exc: ProviderError) -> bool:
+    return "CANONICAL_CONVERSATION_NOT_COMPLETED" in str(exc)
 
 
 def _worker_prompt(text: str) -> str:
