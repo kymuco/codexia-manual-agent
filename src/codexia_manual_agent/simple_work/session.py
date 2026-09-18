@@ -27,15 +27,22 @@ class SimpleCodexiaSession:
     conversation_id: str | None
     created_at: str
     updated_at: str
+    alias: str = "general"
 
     @classmethod
-    def create(cls) -> "SimpleCodexiaSession":
+    def create(
+        cls,
+        *,
+        alias: str = "general",
+        conversation_id: str | None = None,
+    ) -> "SimpleCodexiaSession":
         now = _now()
         return cls(
             session_id=str(uuid4()),
-            conversation_id=None,
+            conversation_id=conversation_id,
             created_at=now,
             updated_at=now,
+            alias=_normalize_codexia_alias(alias),
         )
 
     def updated(self, **changes: object) -> "SimpleCodexiaSession":
@@ -46,6 +53,7 @@ class SimpleCodexiaSession:
 class SimpleWorkSession:
     work_id: str
     user_request: str
+    codexia_alias: str
     status: SimpleWorkStatus
     worker_mode: WorkerMode
     worker_conversation_id: str | None
@@ -59,7 +67,12 @@ class SimpleWorkSession:
     updated_at: str
 
     @classmethod
-    def create(cls, user_request: str) -> "SimpleWorkSession":
+    def create(
+        cls,
+        user_request: str,
+        *,
+        codexia_alias: str = "general",
+    ) -> "SimpleWorkSession":
         request = user_request.strip()
         if not request:
             raise ValueError("user_request must be non-empty")
@@ -67,6 +80,7 @@ class SimpleWorkSession:
         return cls(
             work_id=str(uuid4()),
             user_request=request,
+            codexia_alias=_normalize_codexia_alias(codexia_alias),
             status=SimpleWorkStatus.READY,
             worker_mode=WorkerMode.NONE,
             worker_conversation_id=None,
@@ -140,9 +154,21 @@ class SimpleWorkStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS simple_codexia_chats_v1 (
+                    alias TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL UNIQUE,
+                    conversation_id TEXT UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS simple_work_v1 (
                     work_id TEXT PRIMARY KEY,
                     user_request TEXT NOT NULL,
+                    codexia_alias TEXT NOT NULL DEFAULT 'general',
                     status TEXT NOT NULL,
                     worker_mode TEXT NOT NULL,
                     worker_conversation_id TEXT,
@@ -187,18 +213,74 @@ class SimpleWorkStore:
                 """
             )
 
-    def codexia(self) -> SimpleCodexiaSession:
-        with self._connect() as connection:
-            row = connection.execute(
+            work_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(simple_work_v1)")
+            }
+            if "codexia_alias" not in work_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE simple_work_v1
+                    ADD COLUMN codexia_alias TEXT NOT NULL DEFAULT 'general'
+                    """
+                )
+
+            legacy = connection.execute(
                 "SELECT * FROM simple_codexia_v1 WHERE slot = 1"
             ).fetchone()
+            registered = connection.execute(
+                "SELECT 1 FROM simple_codexia_chats_v1 WHERE alias = 'general'"
+            ).fetchone()
+            if legacy is not None and registered is None:
+                connection.execute(
+                    """
+                    INSERT INTO simple_codexia_chats_v1 (
+                        alias, session_id, conversation_id, created_at, updated_at
+                    ) VALUES ('general', ?, ?, ?, ?)
+                    """,
+                    (
+                        legacy["session_id"],
+                        legacy["conversation_id"],
+                        legacy["created_at"],
+                        legacy["updated_at"],
+                    ),
+                )
+
+    def codexia(self, alias: str = "general") -> SimpleCodexiaSession:
+        key = _normalize_codexia_alias(alias)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM simple_codexia_chats_v1 WHERE alias = ?",
+                (key,),
+            ).fetchone()
             if row is None:
-                session = SimpleCodexiaSession.create()
+                if key != "general":
+                    raise KeyError(f"unknown Codexia chat alias: {key}")
+                session = SimpleCodexiaSession.create(alias="general")
+                connection.execute(
+                    """
+                    INSERT INTO simple_codexia_chats_v1 (
+                        alias, session_id, conversation_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session.alias,
+                        session.session_id,
+                        session.conversation_id,
+                        session.created_at,
+                        session.updated_at,
+                    ),
+                )
                 connection.execute(
                     """
                     INSERT INTO simple_codexia_v1 (
                         slot, session_id, conversation_id, created_at, updated_at
                     ) VALUES (1, ?, ?, ?, ?)
+                    ON CONFLICT(slot) DO UPDATE SET
+                        session_id=excluded.session_id,
+                        conversation_id=excluded.conversation_id,
+                        created_at=excluded.created_at,
+                        updated_at=excluded.updated_at
                     """,
                     (
                         session.session_id,
@@ -213,28 +295,128 @@ class SimpleWorkStore:
             conversation_id=row["conversation_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            alias=row["alias"],
         )
 
-    def save_codexia(self, session: SimpleCodexiaSession) -> SimpleCodexiaSession:
+    def codexia_chats(self) -> tuple[SimpleCodexiaSession, ...]:
+        self.codexia("general")
         with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM simple_codexia_chats_v1
+                ORDER BY CASE WHEN alias = 'general' THEN 0 ELSE 1 END, alias ASC
+                """
+            ).fetchall()
+        return tuple(
+            SimpleCodexiaSession(
+                session_id=row["session_id"],
+                conversation_id=row["conversation_id"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                alias=row["alias"],
+            )
+            for row in rows
+        )
+
+    def add_codexia(
+        self,
+        alias: str,
+        conversation_id: str,
+    ) -> SimpleCodexiaSession:
+        key = _normalize_codexia_alias(alias)
+        conversation = _normalize_conversation_id(conversation_id)
+        with self._connect() as connection:
+            alias_row = connection.execute(
+                "SELECT * FROM simple_codexia_chats_v1 WHERE alias = ?",
+                (key,),
+            ).fetchone()
+            if alias_row is not None:
+                if alias_row["conversation_id"] == conversation:
+                    return SimpleCodexiaSession(
+                        session_id=alias_row["session_id"],
+                        conversation_id=alias_row["conversation_id"],
+                        created_at=alias_row["created_at"],
+                        updated_at=alias_row["updated_at"],
+                        alias=alias_row["alias"],
+                    )
+                raise ValueError(f"Codexia chat alias already exists: {key}")
+
+            conversation_row = connection.execute(
+                """
+                SELECT alias FROM simple_codexia_chats_v1
+                WHERE conversation_id = ?
+                """,
+                (conversation,),
+            ).fetchone()
+            if conversation_row is not None:
+                raise ValueError(
+                    "conversation is already registered as Codexia chat "
+                    f"{conversation_row['alias']}"
+                )
+
+            session = SimpleCodexiaSession.create(
+                alias=key,
+                conversation_id=conversation,
+            )
             connection.execute(
                 """
-                INSERT INTO simple_codexia_v1 (
-                    slot, session_id, conversation_id, created_at, updated_at
-                ) VALUES (1, ?, ?, ?, ?)
-                ON CONFLICT(slot) DO UPDATE SET
-                    session_id=excluded.session_id,
-                    conversation_id=excluded.conversation_id,
-                    created_at=excluded.created_at,
-                    updated_at=excluded.updated_at
+                INSERT INTO simple_codexia_chats_v1 (
+                    alias, session_id, conversation_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
+                    session.alias,
                     session.session_id,
                     session.conversation_id,
                     session.created_at,
                     session.updated_at,
                 ),
             )
+        if key == "general":
+            self.save_codexia(session)
+        return session
+
+    def save_codexia(self, session: SimpleCodexiaSession) -> SimpleCodexiaSession:
+        key = _normalize_codexia_alias(session.alias)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO simple_codexia_chats_v1 (
+                    alias, session_id, conversation_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(alias) DO UPDATE SET
+                    session_id=excluded.session_id,
+                    conversation_id=excluded.conversation_id,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    key,
+                    session.session_id,
+                    session.conversation_id,
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+            if key == "general":
+                connection.execute(
+                    """
+                    INSERT INTO simple_codexia_v1 (
+                        slot, session_id, conversation_id, created_at, updated_at
+                    ) VALUES (1, ?, ?, ?, ?)
+                    ON CONFLICT(slot) DO UPDATE SET
+                        session_id=excluded.session_id,
+                        conversation_id=excluded.conversation_id,
+                        created_at=excluded.created_at,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        session.session_id,
+                        session.conversation_id,
+                        session.created_at,
+                        session.updated_at,
+                    ),
+                )
         return session
 
     def save(self, session: SimpleWorkSession) -> SimpleWorkSession:
@@ -242,13 +424,14 @@ class SimpleWorkStore:
             connection.execute(
                 """
                 INSERT INTO simple_work_v1 (
-                    work_id, user_request, status, worker_mode,
+                    work_id, user_request, codexia_alias, status, worker_mode,
                     worker_conversation_id, last_codexia_text, last_worker_text,
                     next_worker_message, pending_human_question, final_text,
                     worker_turns, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(work_id) DO UPDATE SET
                     user_request=excluded.user_request,
+                    codexia_alias=excluded.codexia_alias,
                     status=excluded.status,
                     worker_mode=excluded.worker_mode,
                     worker_conversation_id=excluded.worker_conversation_id,
@@ -264,6 +447,7 @@ class SimpleWorkStore:
                 (
                     session.work_id,
                     session.user_request,
+                    session.codexia_alias,
                     session.status.value,
                     session.worker_mode.value,
                     session.worker_conversation_id,
@@ -293,6 +477,7 @@ class SimpleWorkStore:
         return SimpleWorkSession(
             work_id=row["work_id"],
             user_request=row["user_request"],
+            codexia_alias=row["codexia_alias"],
             status=SimpleWorkStatus(row["status"]),
             worker_mode=WorkerMode(row["worker_mode"]),
             worker_conversation_id=row["worker_conversation_id"],
@@ -445,6 +630,36 @@ class SimpleWorkStore:
             )
             for row in rows
         )
+
+
+def _normalize_codexia_alias(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Codexia chat alias must be a string")
+    alias = value.strip().lower()
+    if not alias or len(alias) > 64:
+        raise ValueError("Codexia chat alias must be 1..64 characters")
+    if not alias[0].isalnum() or any(
+        not (char.isalnum() or char in "-_.") for char in alias
+    ):
+        raise ValueError(
+            "Codexia chat alias must start with a letter/number and use only "
+            "letters, numbers, '-', '_' or '.'"
+        )
+    return alias
+
+
+def _normalize_conversation_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("conversation_id must be a string")
+    conversation_id = value.strip()
+    if (
+        not conversation_id
+        or "/" in conversation_id
+        or "?" in conversation_id
+        or "#" in conversation_id
+    ):
+        raise ValueError("conversation_id must be a raw saved ChatGPT conversation id")
+    return conversation_id
 
 
 def _now() -> str:
