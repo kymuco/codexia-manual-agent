@@ -85,6 +85,19 @@ class SimpleWorkSession:
 
 
 @dataclass(frozen=True, slots=True)
+class SimpleWorkArtifact:
+    artifact_id: int
+    work_id: str
+    worker_turn: int
+    source_filename: str
+    local_path: str
+    size_bytes: int
+    sha256: str
+    source_conversation_id: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class SimpleWorkEvent:
     event_id: int
     work_id: str
@@ -154,6 +167,22 @@ class SimpleWorkStore:
                     conversation_id TEXT,
                     worker_mode TEXT,
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simple_work_artifacts_v1 (
+                    artifact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    work_id TEXT NOT NULL,
+                    worker_turn INTEGER NOT NULL,
+                    source_filename TEXT NOT NULL,
+                    local_path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    source_conversation_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(work_id, worker_turn, source_filename)
                 )
                 """
             )
@@ -305,6 +334,89 @@ class SimpleWorkStore:
                     _now(),
                 ),
             )
+
+    def save_artifact(
+        self,
+        *,
+        work_id: str,
+        worker_turn: int,
+        source_filename: str,
+        local_path: str,
+        size_bytes: int,
+        sha256: str,
+        source_conversation_id: str,
+    ) -> SimpleWorkArtifact:
+        if worker_turn <= 0:
+            raise ValueError("worker_turn must be positive")
+        if size_bytes < 0:
+            raise ValueError("size_bytes must be non-negative")
+        created_at = _now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO simple_work_artifacts_v1 (
+                    work_id, worker_turn, source_filename, local_path,
+                    size_bytes, sha256, source_conversation_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(work_id, worker_turn, source_filename) DO NOTHING
+                """,
+                (
+                    work_id,
+                    worker_turn,
+                    source_filename,
+                    local_path,
+                    size_bytes,
+                    sha256,
+                    source_conversation_id,
+                    created_at,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM simple_work_artifacts_v1
+                WHERE work_id = ? AND worker_turn = ? AND source_filename = ?
+                """,
+                (work_id, worker_turn, source_filename),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("artifact row was not persisted")
+        return SimpleWorkArtifact(
+            artifact_id=int(row["artifact_id"]),
+            work_id=row["work_id"],
+            worker_turn=int(row["worker_turn"]),
+            source_filename=row["source_filename"],
+            local_path=row["local_path"],
+            size_bytes=int(row["size_bytes"]),
+            sha256=row["sha256"],
+            source_conversation_id=row["source_conversation_id"],
+            created_at=row["created_at"],
+        )
+
+    def artifacts(self, work_id: str) -> tuple[SimpleWorkArtifact, ...]:
+        self.load(work_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM simple_work_artifacts_v1
+                WHERE work_id = ?
+                ORDER BY worker_turn ASC, artifact_id ASC
+                """,
+                (work_id,),
+            ).fetchall()
+        return tuple(
+            SimpleWorkArtifact(
+                artifact_id=int(row["artifact_id"]),
+                work_id=row["work_id"],
+                worker_turn=int(row["worker_turn"]),
+                source_filename=row["source_filename"],
+                local_path=row["local_path"],
+                size_bytes=int(row["size_bytes"]),
+                sha256=row["sha256"],
+                source_conversation_id=row["source_conversation_id"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        )
 
     def history(self, work_id: str) -> tuple[SimpleWorkEvent, ...]:
         self.load(work_id)
