@@ -32,8 +32,9 @@ The candidate must prove the live cognition bridge without weakening existing M6
 | Pilot CLI smoke | `start / drive / answer / status / rearm-dispatch` parse through the experimental CLI surface |
 | Driver bound | repeated continuation/revision remains bounded by `max_steps` |
 | M6.5 replay contract | no automatic retry after ambiguous provider effect |
-| Exact CWA identity | optional web dependency and contract gate bind merged PR14.6 commit exactly |
+| Exact CWA identity | optional web dependency and contract gate bind merged PR14.7 commit exactly |
 | Canonical 429 handling | bounded retry applies only to idempotent canonical GET pagination; partial history and product-write retry remain forbidden |
+| Canonical timeout recovery | only `CANONICAL_READ_TIMEOUT` receives one fresh canonical-read retry with the same conversation/lease identity; repeated timeout fails closed and product writes remain non-retried |
 
 ## Existing regression gates
 
@@ -45,7 +46,7 @@ The full repository CI remains required because M6.6 composes M6.2–M6.5 rather
 - CLI smoke;
 - CodeQL for Python and Actions.
 
-The upstream CWA PR14.6 candidate CI #1040 completed successfully before squash merge. Codexia must still rerun its own full matrix after repinning the exact merged CWA revision.
+The upstream CWA PR14.7 candidate CI #1043 completed successfully before squash merge. Codexia must still rerun its own full matrix after repinning the exact merged CWA revision.
 
 ## Real pilot gates
 
@@ -61,7 +62,7 @@ Evidence should show:
 - worker-side `REVISE` remains background when no human judgment is required;
 - a tool-using product turn does not create a completion/provenance livelock;
 - no stale dispatch or stale completion overwrites intervening human activity;
-- bounded canonical-read throttling does not create product-write retry authority;
+- bounded canonical-read throttling and timeout recovery do not create product-write retry authority;
 - final stop is completion, genuine human attention, bounded step budget, or fail-closed ambiguity — not a fabricated success.
 
 ### Vertical B — standalone non-project knowledge work
