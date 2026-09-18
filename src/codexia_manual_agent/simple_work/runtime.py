@@ -133,43 +133,55 @@ class SimpleWorkRuntime:
             text=session.user_request,
         )
 
-        if session.codexia_mode is CodexiaMode.TEMPORARY:
-            response = self.provider.send_temporary(
-                _temporary_codexia_bootstrap(session.user_request)
-            )
-        elif codexia.conversation_id is None:
-            response = self.provider.send(
-                ProviderRequest(prompt=_codexia_bootstrap(session.user_request))
-            )
-        else:
-            response = self.provider.send(
-                ProviderRequest(
-                    prompt=_new_task_prompt(session.user_request),
-                    conversation=ProviderConversation(
-                        conversation_id=codexia.conversation_id
-                    ),
+        temporary_live = False
+        try:
+            if session.codexia_mode is CodexiaMode.TEMPORARY:
+                response = self.provider.send_temporary(
+                    _temporary_codexia_bootstrap(session.user_request)
                 )
-            )
-        session, codexia = self._accept_codexia_response(
-            session,
-            codexia,
-            response,
-        )
-        self.store.save(session)
-        self._save_codexia_if_saved(session, codexia)
+                temporary_live = True
+            elif codexia.conversation_id is None:
+                response = self.provider.send(
+                    ProviderRequest(prompt=_codexia_bootstrap(session.user_request))
+                )
+            else:
+                response = self.provider.send(
+                    ProviderRequest(
+                        prompt=_new_task_prompt(session.user_request),
+                        conversation=ProviderConversation(
+                            conversation_id=codexia.conversation_id
+                        ),
+                    )
+                )
 
-        if session.status is not SimpleWorkStatus.READY:
-            result = SimpleWorkRunResult(
-                session=session,
-                codexia=codexia,
-                stop=session.status.value,
+            session, codexia = self._accept_codexia_response(
+                session,
+                codexia,
+                response,
             )
-        else:
-            result = self._drive(session, codexia, max_cycles=max_cycles)
+            self.store.save(session)
+            self._save_codexia_if_saved(session, codexia)
 
-        if session.codexia_mode is CodexiaMode.TEMPORARY:
-            return self._close_temporary_codexia_result(result)
-        return result
+            if session.status is not SimpleWorkStatus.READY:
+                result = SimpleWorkRunResult(
+                    session=session,
+                    codexia=codexia,
+                    stop=session.status.value,
+                )
+            else:
+                result = self._drive(session, codexia, max_cycles=max_cycles)
+
+            if session.codexia_mode is CodexiaMode.TEMPORARY:
+                result = self._close_temporary_codexia_result(result)
+                temporary_live = False
+            return result
+        except Exception:
+            if temporary_live:
+                try:
+                    self.provider.end_temporary_chat()
+                except Exception:
+                    pass
+            raise
 
     def resume(self, work_id: str, *, max_cycles: int = 8) -> SimpleWorkRunResult:
         _validate_cycles(max_cycles)
