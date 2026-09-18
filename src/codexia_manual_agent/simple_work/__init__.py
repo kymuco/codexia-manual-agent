@@ -3,6 +3,7 @@ from codexia_manual_agent.simple_work.runtime import (
     SimpleWorkRuntime,
 )
 from codexia_manual_agent.simple_work.session import (
+    CodexiaMode,
     SimpleCodexiaSession,
     SimpleWorkArtifact,
     SimpleWorkEvent,
@@ -13,6 +14,7 @@ from codexia_manual_agent.simple_work.session import (
 )
 
 __all__ = [
+    "CodexiaMode",
     "SimpleCodexiaSession",
     "SimpleWorkArtifact",
     "SimpleWorkEvent",
