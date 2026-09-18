@@ -27,6 +27,15 @@ class _Reply:
 class _Visible:
     role: str
     text: str
+    message_id: str = "visible-message"
+    finish_reason: str | None = "stop"
+
+
+@dataclass(frozen=True)
+class _Status:
+    status: str = "completed"
+    message_id: str | None = None
+    finish_reason: str | None = "stop"
 
 
 class _Provider:
@@ -36,10 +45,12 @@ class _Provider:
         *,
         temporary_replies: list[_Reply] | None = None,
         histories: dict[str, tuple[_Visible, ...]] | None = None,
+        statuses: dict[str, _Status] | None = None,
     ) -> None:
         self.normal_replies = list(normal_replies)
         self.temporary_replies = list(temporary_replies or [])
         self.histories = dict(histories or {})
+        self.statuses = dict(statuses or {})
         self.requests: list[ProviderRequest] = []
         self.history_reads: list[str] = []
         self.temporary_prompts: list[str] = []
@@ -56,6 +67,9 @@ class _Provider:
                 conversation_id=reply.conversation_id,
             ),
         )
+
+    def read_status(self, conversation_id: str) -> _Status:
+        return self.statuses.get(conversation_id, _Status())
 
     def read_messages(self, conversation_id: str) -> tuple[_Visible, ...]:
         self.history_reads.append(conversation_id)
@@ -451,3 +465,78 @@ def test_reconcile_falls_back_to_globally_unique_exact_dispatch_when_anchor_diff
     assert result.stop == "completed"
     assert result.session.worker_turns == 2
     assert result.session.last_worker_text == "Готовая спецификация R0."
+
+
+def test_reconcile_does_not_consume_visible_text_before_canonical_completion(tmp_path) -> None:
+    first_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Начни первый этап."
+    )
+    second_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Сделай второй этап."
+    )
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Начни первый этап.", "codexia-1"),
+            _Reply("Первый этап готов.", "worker-1"),
+            _Reply("Сделай второй этап.", "codexia-1"),
+            ProviderError("chatgpt product-runtime request failed: CHATGPT_TURN_TIMEOUT"),
+        ],
+        histories={
+            "worker-1": (
+                _Visible("user", first_prompt, "u1", None),
+                _Visible("assistant", "Первый этап готов.", "a1", "stop"),
+                _Visible("user", second_prompt, "u2", None),
+                _Visible("assistant", "Промежуточный текст...", "a2", None),
+            )
+        },
+        statuses={
+            "worker-1": _Status(
+                status="in_progress",
+                message_id="a2",
+                finish_reason=None,
+            )
+        },
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    blocked = runtime.start("Сделай два этапа.", max_cycles=4)
+
+    assert blocked.stop == "reconcile_required"
+    assert blocked.session.worker_turns == 1
+    assert blocked.session.last_worker_text == "Первый этап готов."
+    history = store.history(blocked.session.work_id)
+    assert [event.text for event in history if event.actor == "worker"] == [
+        "Первый этап готов."
+    ]
+
+
+def test_busy_worker_preflight_is_not_recorded_as_submitted_dispatch(tmp_path) -> None:
+    provider = _Provider(
+        [
+            _Reply("ПОСТОЯННЫЙ WORKER: Первый этап.", "codexia-1"),
+            _Reply("Первый этап готов.", "worker-1"),
+            _Reply("Продолжай.", "codexia-1"),
+            ProviderError(
+                "chatgpt product-runtime request failed: "
+                "browser-owned write preflight failed: "
+                "CANONICAL_CONVERSATION_NOT_COMPLETED"
+            ),
+        ]
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    busy = runtime.start("Сделай проект.", max_cycles=4)
+
+    assert busy.stop == "worker_busy"
+    assert busy.session.status is SimpleWorkStatus.READY
+    assert busy.session.next_worker_message == "Продолжай."
+    history = store.history(busy.session.work_id)
+    dispatches = [
+        event for event in history if event.actor == "codexia_to_worker"
+    ]
+    assert len(dispatches) == 1
+    assert "Первый этап." in dispatches[0].text
