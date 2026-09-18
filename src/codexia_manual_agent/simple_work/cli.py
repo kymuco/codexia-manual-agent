@@ -9,14 +9,19 @@ from typing import Sequence
 from codexia_manual_agent.domain.errors import CodexiaError
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.simple_work.runtime import SimpleWorkRuntime
-from codexia_manual_agent.simple_work.session import SimpleWorkSession, SimpleWorkStore
+from codexia_manual_agent.simple_work.session import (
+    SimpleCodexiaSession,
+    SimpleWorkEvent,
+    SimpleWorkSession,
+    SimpleWorkStore,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m codexia_manual_agent.simple_work.cli",
         description=(
-            "Simple Work v0: one persistent Codexia chat plus one persistent worker chat."
+            "Simple Work v0.1: one long-lived Codexia chat with lazy optional workers."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -37,6 +42,13 @@ def _parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("work_id")
     status.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
+
+    history = sub.add_parser("history")
+    history.add_argument("work_id")
+    history.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
+
+    codexia = sub.add_parser("codexia-status")
+    codexia.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
 
     return parser
 
@@ -64,7 +76,7 @@ def _session_payload(session: SimpleWorkSession) -> dict[str, object]:
         "work_id": session.work_id,
         "status": session.status.value,
         "user_request": session.user_request,
-        "codexia_conversation_id": session.codexia_conversation_id,
+        "worker_mode": session.worker_mode.value,
         "worker_conversation_id": session.worker_conversation_id,
         "worker_turns": session.worker_turns,
         "next_worker_message": session.next_worker_message,
@@ -73,12 +85,54 @@ def _session_payload(session: SimpleWorkSession) -> dict[str, object]:
     }
 
 
+def _codexia_payload(session: SimpleCodexiaSession) -> dict[str, object]:
+    return {
+        "session_id": session.session_id,
+        "conversation_id": session.conversation_id,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+    }
+
+
+def _event_payload(event: SimpleWorkEvent) -> dict[str, object]:
+    return {
+        "event_id": event.event_id,
+        "actor": event.actor,
+        "text": event.text,
+        "conversation_id": event.conversation_id,
+        "worker_mode": (
+            None if event.worker_mode is None else event.worker_mode.value
+        ),
+        "created_at": event.created_at,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "status":
-            session = SimpleWorkStore(args.database).load(args.work_id)
-            payload = {"action": "status", "session": _session_payload(session)}
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "status",
+                "codexia": _codexia_payload(store.codexia()),
+                "session": _session_payload(store.load(args.work_id)),
+            }
+        elif args.command == "history":
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "history",
+                "work_id": args.work_id,
+                "events": [
+                    _event_payload(event)
+                    for event in store.history(args.work_id)
+                ],
+            }
+        elif args.command == "codexia-status":
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "codexia-status",
+                "codexia": _codexia_payload(store.codexia()),
+            }
         else:
             runtime = _runtime(args)
             if args.command == "start":
@@ -96,6 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = {
                 "action": args.command,
                 "stop": result.stop,
+                "codexia": _codexia_payload(result.codexia),
                 "session": _session_payload(result.session),
             }
     except (CodexiaError, KeyError, RuntimeError, ValueError, OSError) as exc:
