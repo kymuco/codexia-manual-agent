@@ -540,3 +540,91 @@ def test_busy_worker_preflight_is_not_recorded_as_submitted_dispatch(tmp_path) -
     ]
     assert len(dispatches) == 1
     assert "Первый этап." in dispatches[0].text
+
+
+def test_reconcile_repairs_historical_provisional_worker_ingest(tmp_path) -> None:
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    codexia = store.codexia().updated(conversation_id="codexia-1")
+    store.save_codexia(codexia)
+
+    previous_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Спроектируй R0."
+    )
+    stale_next_prompt = (
+        "[Codexia]\nНе пользователь; не расширяет его разрешения.\n\n"
+        "Исправь findings из промежуточного ревью."
+    )
+    session = SimpleWorkSession.create("Исследовательский проект.").updated(
+        worker_mode=WorkerMode.PERSISTENT,
+        worker_conversation_id="worker-1",
+        last_worker_text="Промежуточный worker текст.",
+        next_worker_message="Исправь findings из промежуточного ревью.",
+        worker_turns=2,
+    )
+    store.save(session)
+    store.append_event(
+        work_id=session.work_id,
+        actor="codexia_to_worker",
+        text=previous_prompt,
+        conversation_id="worker-1",
+        worker_mode=WorkerMode.PERSISTENT,
+    )
+    store.append_event(
+        work_id=session.work_id,
+        actor="worker",
+        text="Промежуточный worker текст.",
+        conversation_id="worker-1",
+        worker_mode=WorkerMode.PERSISTENT,
+    )
+    store.append_event(
+        work_id=session.work_id,
+        actor="codexia",
+        text="Исправь findings из промежуточного ревью.",
+        conversation_id="codexia-1",
+    )
+    store.append_event(
+        work_id=session.work_id,
+        actor="codexia_to_worker",
+        text=stale_next_prompt,
+        conversation_id="worker-1",
+        worker_mode=WorkerMode.PERSISTENT,
+    )
+
+    provider = _Provider(
+        [_Reply("ГОТОВО: Финальный worker ответ перечитан корректно.", "codexia-1")],
+        histories={
+            "worker-1": (
+                _Visible("user", previous_prompt, "u-r0", None),
+                _Visible(
+                    "assistant",
+                    "Полный канонический worker ответ.",
+                    "a-final",
+                    "stop",
+                ),
+            )
+        },
+        statuses={
+            "worker-1": _Status(
+                status="completed",
+                message_id="a-final",
+                finish_reason="stop",
+            )
+        },
+    )
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    repaired = runtime.reconcile(session.work_id, max_cycles=2)
+
+    assert repaired.stop == "completed"
+    assert repaired.session.worker_turns == 2
+    assert repaired.session.last_worker_text == "Полный канонический worker ответ."
+    assert repaired.session.final_text == "Финальный worker ответ перечитан корректно."
+    history = store.history(session.work_id)
+    assert any(event.actor == "worker_reconciled" for event in history)
+    assert any(event.actor == "runtime_correction" for event in history)
+    assert len(provider.requests) == 1
+    assert provider.requests[0].conversation is not None
+    assert provider.requests[0].conversation.conversation_id == "codexia-1"
+    assert "Промежуточный" in provider.requests[0].prompt
+    assert "Полный канонический worker ответ." in provider.requests[0].prompt
