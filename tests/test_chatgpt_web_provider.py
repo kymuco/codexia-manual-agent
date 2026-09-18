@@ -16,6 +16,7 @@ class FakeMetrics:
 class FakeRuntime:
     def __init__(self) -> None:
         self.calls = []
+        self.temporary_end_count = 0
         self.response = SimpleNamespace(
             text='{"type":"final","text":"ok"}',
             conversation=SimpleNamespace(
@@ -63,6 +64,10 @@ class FakeRuntime:
         self.calls.append(("history", conversation_id, kwargs))
         return self.messages
 
+    def end_temporary_chat(self):
+        self.temporary_end_count += 1
+        return True
+
 
 class FakeLegacyClient:
     def __init__(self) -> None:
@@ -98,6 +103,27 @@ class ChatGPTWebProviderTests(unittest.TestCase):
         self.assertEqual(response.model, "gpt-test")
         self.assertEqual(response.reasoning_effort, "extended")
         self.assertEqual(response.metrics["total"], 1.25)
+
+    def test_product_runtime_temporary_send_uses_session_scoped_mode(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime, reasoning_effort="high")
+
+        response = provider.send_temporary("temporary task")
+
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "send_text_observed")
+        self.assertEqual(call[1], "temporary task")
+        self.assertIsNone(call[2]["conversation"])
+        self.assertEqual(call[2]["conversation_mode"], "temporary")
+        self.assertEqual(call[2]["model_profile"], "DEEP")
+        self.assertEqual(response.conversation.conversation_id, "c1")
+
+    def test_product_runtime_temporary_session_can_be_explicitly_ended(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        self.assertTrue(provider.end_temporary_chat())
+        self.assertEqual(runtime.temporary_end_count, 1)
 
     def test_product_runtime_existing_conversation_preserves_identity(self) -> None:
         runtime = FakeRuntime()
