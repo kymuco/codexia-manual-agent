@@ -10,6 +10,7 @@ from uuid import uuid4
 
 class SimpleWorkStatus(StrEnum):
     READY = "ready"
+    RECONCILE_REQUIRED = "reconcile_required"
     WAITING_HUMAN = "waiting_human"
     COMPLETED = "completed"
 
