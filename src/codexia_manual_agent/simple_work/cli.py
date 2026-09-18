@@ -10,6 +10,7 @@ from codexia_manual_agent.domain.errors import CodexiaError
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.simple_work.runtime import SimpleWorkRuntime
 from codexia_manual_agent.simple_work.session import (
+    CodexiaMode,
     SimpleCodexiaSession,
     SimpleWorkArtifact,
     SimpleWorkEvent,
@@ -167,11 +168,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "status":
             store = SimpleWorkStore(args.database)
             session = store.load(args.work_id)
+            codexia_payload = (
+                None
+                if session.codexia_mode is CodexiaMode.TEMPORARY
+                else _codexia_payload(store.codexia(session.codexia_alias))
+            )
             payload = {
                 "action": "status",
-                "codexia": _codexia_payload(
-                    store.codexia(session.codexia_alias)
-                ),
+                "codexia": codexia_payload,
                 "session": _session_payload(session),
             }
         elif args.command == "history":
