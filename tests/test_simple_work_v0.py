@@ -626,5 +626,5 @@ def test_reconcile_repairs_historical_provisional_worker_ingest(tmp_path) -> Non
     assert len(provider.requests) == 1
     assert provider.requests[0].conversation is not None
     assert provider.requests[0].conversation.conversation_id == "codexia-1"
-    assert "Промежуточный" in provider.requests[0].prompt
+    assert "промежуточным" in provider.requests[0].prompt
     assert "Полный канонический worker ответ." in provider.requests[0].prompt
