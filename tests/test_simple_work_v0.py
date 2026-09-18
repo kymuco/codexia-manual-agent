@@ -11,6 +11,7 @@ from codexia_manual_agent.domain.models import (
     ProviderResponse,
 )
 from codexia_manual_agent.simple_work import (
+    CodexiaMode,
     SimpleWorkRuntime,
     SimpleWorkSession,
     SimpleWorkStatus,
@@ -908,3 +909,141 @@ def test_existing_singleton_and_work_rows_migrate_to_general_codexia(tmp_path) -
     assert general.session_id == "legacy-session"
     assert general.conversation_id == "legacy-chat"
     assert old_work.codexia_alias == "general"
+    assert old_work.codexia_mode is CodexiaMode.SAVED
+
+
+def test_temporary_codexia_direct_task_completes_and_is_not_registered(tmp_path) -> None:
+    provider = _Provider(
+        [],
+        temporary_replies=[
+            _Reply("ГОТОВО: Одноразовый ответ.", "temporary-codexia-1")
+        ],
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start(
+        "Одноразовая задача.",
+        temporary_codexia=True,
+    )
+
+    assert result.stop == "completed"
+    assert result.session.status is SimpleWorkStatus.COMPLETED
+    assert result.session.codexia_mode is CodexiaMode.TEMPORARY
+    assert result.session.codexia_alias == "temporary"
+    assert result.codexia.alias == "temporary"
+    assert result.codexia.conversation_id == "temporary-codexia-1"
+    assert result.session.final_text == "Одноразовый ответ."
+    assert provider.temporary_end_count == 1
+    assert provider.requests == []
+
+    chats = store.codexia_chats()
+    assert [chat.alias for chat in chats] == ["general"]
+    history = store.history(result.session.work_id)
+    assert [event.actor for event in history] == [
+        "human",
+        "codexia",
+        "codexia_temporary_closed",
+    ]
+
+
+def test_temporary_codexia_can_supervise_persistent_worker_in_same_run(tmp_path) -> None:
+    provider = _Provider(
+        [_Reply("Worker завершил исследование.", "worker-saved-1")],
+        temporary_replies=[
+            _Reply(
+                "ПОСТОЯННЫЙ WORKER: Проведи отдельное исследование.",
+                "temporary-codexia-1",
+            ),
+            _Reply(
+                "ГОТОВО: Итог после persistent worker.",
+                "temporary-codexia-1",
+            ),
+        ],
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start(
+        "Сделай одноразовую работу с отдельным исследованием.",
+        temporary_codexia=True,
+        max_cycles=3,
+    )
+
+    assert result.stop == "completed"
+    assert result.session.codexia_mode is CodexiaMode.TEMPORARY
+    assert result.session.worker_mode is WorkerMode.PERSISTENT
+    assert result.session.worker_conversation_id == "worker-saved-1"
+    assert result.session.worker_turns == 1
+    assert result.session.final_text == "Итог после persistent worker."
+    assert len(provider.temporary_prompts) == 2
+    assert len(provider.requests) == 1
+    assert provider.requests[0].conversation is None
+    assert provider.temporary_end_count == 1
+
+
+def test_temporary_codexia_human_boundary_closes_and_cannot_resume(tmp_path) -> None:
+    provider = _Provider(
+        [],
+        temporary_replies=[
+            _Reply(
+                "К ПОЛЬЗОВАТЕЛЮ: Какой вариант выбрать?",
+                "temporary-codexia-1",
+            )
+        ],
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start(
+        "Если без выбора нельзя — спроси.",
+        temporary_codexia=True,
+    )
+
+    assert result.stop == "temporary_closed"
+    assert result.session.status is SimpleWorkStatus.TEMPORARY_CLOSED
+    assert result.session.pending_human_question == "Какой вариант выбрать?"
+    assert provider.temporary_end_count == 1
+
+    try:
+        runtime.answer(result.session.work_id, "A")
+    except RuntimeError as exc:
+        assert "cannot cross a process boundary" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("closed Temporary Codexia must not be resumable")
+
+
+def test_temporary_codexia_rejects_temporary_worker_and_closes_lifecycle(tmp_path) -> None:
+    provider = _Provider(
+        [],
+        temporary_replies=[
+            _Reply(
+                "ВРЕМЕННЫЙ WORKER: Сделай отдельную работу.",
+                "temporary-codexia-1",
+            )
+        ],
+    )
+    runtime = SimpleWorkRuntime(
+        provider=provider,
+        store=SimpleWorkStore(tmp_path / "simple.sqlite3"),
+    )
+
+    try:
+        runtime.start("Попробуй временного worker.", temporary_codexia=True)
+    except RuntimeError as exc:
+        assert "cannot create a temporary worker" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Temporary Codexia must not own two Temporary lifecycles")
+
+    assert provider.temporary_end_count == 1
+
+
+def test_saved_registry_reserves_temporary_alias(tmp_path) -> None:
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+
+    try:
+        store.add_codexia("temporary", "saved-chat")
+    except ValueError as exc:
+        assert "reserved" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("temporary alias must be reserved")
