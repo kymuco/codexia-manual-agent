@@ -98,10 +98,21 @@ class SimpleWorkRuntime:
         self.provider = provider
         self.store = store
 
-    def start(self, user_request: str, *, max_cycles: int = 8) -> SimpleWorkRunResult:
+    def start(
+        self,
+        user_request: str,
+        *,
+        codexia_alias: str = "general",
+        max_cycles: int = 8,
+    ) -> SimpleWorkRunResult:
         _validate_cycles(max_cycles)
-        session = self.store.save(SimpleWorkSession.create(user_request))
-        codexia = self.store.codexia()
+        codexia = self.store.codexia(codexia_alias)
+        session = self.store.save(
+            SimpleWorkSession.create(
+                user_request,
+                codexia_alias=codexia.alias,
+            )
+        )
         self.store.append_event(
             work_id=session.work_id,
             actor="human",
@@ -137,7 +148,7 @@ class SimpleWorkRuntime:
     def resume(self, work_id: str, *, max_cycles: int = 8) -> SimpleWorkRunResult:
         _validate_cycles(max_cycles)
         session = self.store.load(work_id)
-        codexia = self.store.codexia()
+        codexia = self.store.codexia(session.codexia_alias)
         if session.status is SimpleWorkStatus.COMPLETED:
             return SimpleWorkRunResult(session=session, codexia=codexia, stop="completed")
         if session.status is SimpleWorkStatus.WAITING_HUMAN:
@@ -181,7 +192,7 @@ class SimpleWorkRuntime:
 
         _validate_cycles(max_cycles)
         session = self.store.load(work_id)
-        codexia = self.store.codexia()
+        codexia = self.store.codexia(session.codexia_alias)
 
         if session.status is SimpleWorkStatus.COMPLETED:
             return SimpleWorkRunResult(session=session, codexia=codexia, stop="completed")
@@ -245,7 +256,7 @@ class SimpleWorkRuntime:
         if not value:
             raise ValueError("answer must be non-empty")
         session = self.store.load(work_id)
-        codexia = self.store.codexia()
+        codexia = self.store.codexia(session.codexia_alias)
         if session.status is not SimpleWorkStatus.WAITING_HUMAN:
             raise RuntimeError("simple work is not waiting for the human")
         if codexia.conversation_id is None:
