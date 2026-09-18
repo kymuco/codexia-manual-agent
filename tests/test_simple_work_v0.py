@@ -9,6 +9,7 @@ from codexia_manual_agent.domain.models import (
 )
 from codexia_manual_agent.simple_work import (
     SimpleWorkRuntime,
+    SimpleWorkSession,
     SimpleWorkStatus,
     SimpleWorkStore,
     WorkerMode,
@@ -246,12 +247,7 @@ def test_persistent_cycle_limit_preserves_next_worker_message_for_resume(tmp_pat
 def test_existing_v0_database_can_add_v1_tables_without_rewriting_history(tmp_path) -> None:
     path = tmp_path / "simple.sqlite3"
     store = SimpleWorkStore(path)
-    session = store.save(
-        __import__(
-            "codexia_manual_agent.simple_work",
-            fromlist=["SimpleWorkSession"],
-        ).SimpleWorkSession.create("Новое поручение.")
-    )
+    session = store.save(SimpleWorkSession.create("Новое поручение."))
 
     recovered = SimpleWorkStore(path).load(session.work_id)
 
