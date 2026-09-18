@@ -460,19 +460,27 @@ class SimpleWorkRuntime:
             for index, message in enumerate(messages)
             if message.role == "assistant" and message.text == previous_worker.text
         ]
-        if not anchor_indices:
-            return None
-        anchor = anchor_indices[-1]
-
-        matching_dispatches = [
-            index
-            for index, message in enumerate(messages)
-            if (
-                index > anchor
-                and message.role == "user"
-                and message.text == dispatch.text
-            )
-        ]
+        if anchor_indices:
+            anchor = anchor_indices[-1]
+            matching_dispatches = [
+                index
+                for index, message in enumerate(messages)
+                if (
+                    index > anchor
+                    and message.role == "user"
+                    and message.text == dispatch.text
+                )
+            ]
+        else:
+            # A rich/writing-block assistant response can be normalized differently
+            # between the live response and later canonical history. In that case
+            # exact dispatch text is still sufficient only when it is globally
+            # unique on the current branch.
+            matching_dispatches = [
+                index
+                for index, message in enumerate(messages)
+                if message.role == "user" and message.text == dispatch.text
+            ]
         if len(matching_dispatches) != 1:
             return None
         dispatch_index = matching_dispatches[0]
