@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from typing import Protocol
 from urllib.parse import unquote
@@ -735,6 +735,13 @@ class SimpleWorkRuntime:
             conversation_id=conversation_id,
             worker_mode=WorkerMode.PERSISTENT,
         )
+        repaired_turn = max(1, session.worker_turns)
+        artifacts, artifact_failures = self._materialize_worker_artifacts(
+            session,
+            worker_text=final.text,
+            worker_conversation_id=conversation_id,
+            worker_turn=repaired_turn,
+        )
         session = session.updated(
             status=SimpleWorkStatus.READY,
             last_worker_text=final.text,
@@ -752,6 +759,7 @@ class SimpleWorkRuntime:
             "Не опирайся на прежний промежуточный текст или выводы из него.\n\n"
             "Канонически завершённый ответ рабочего чата:\n\n"
             f"{final.text}\n\n"
+            f"{_artifact_context(artifacts, artifact_failures)}"
             "Продолжи текущую работу уже из этого финального результата. Если "
             "работа завершена — ответь ГОТОВО:. Если нужен следующий шаг worker — "
             "дай обычное сообщение ему."
@@ -1050,25 +1058,38 @@ def _worker_result_prompt(
 ) -> str:
     label = "временный" if mode is WorkerMode.TEMPORARY else "постоянный"
     prompt = f"{label.capitalize()} рабочий чат ответил:\n\n{text}"
+    prompt += _artifact_context(artifacts, artifact_failures)
+    return prompt
+
+
+def _artifact_context(
+    artifacts: tuple[SimpleWorkArtifact, ...],
+    artifact_failures: tuple[str, ...],
+) -> str:
+    lines: list[str] = []
     if artifacts:
-        lines = [
-            "",
-            "Артефакты из этого ответа уже материализованы локально:",
-        ]
+        lines.extend(
+            [
+                "",
+                "Артефакты из этого ответа уже материализованы локально:",
+            ]
+        )
         for artifact in artifacts:
             lines.append(
                 f"- {artifact.source_filename} -> {artifact.local_path} "
                 f"(sha256={artifact.sha256})"
             )
-        prompt += "\n" + "\n".join(lines)
     if artifact_failures:
-        lines = [
-            "",
-            "Некоторые явно указанные артефакты не удалось материализовать:",
-        ]
+        lines.extend(
+            [
+                "",
+                "Некоторые явно указанные артефакты не удалось материализовать:",
+            ]
+        )
         lines.extend(f"- {failure}" for failure in artifact_failures)
-        prompt += "\n" + "\n".join(lines)
-    return prompt
+    if not lines:
+        return ""
+    return "\n" + "\n".join(lines) + "\n\n"
 
 
 def _sandbox_artifact_filenames(text: str) -> tuple[str, ...]:
@@ -1076,16 +1097,17 @@ def _sandbox_artifact_filenames(text: str) -> tuple[str, ...]:
     seen: set[str] = set()
     for match in _SANDBOX_ARTIFACT_RE.finditer(text):
         candidate = unquote(match.group(1)).strip()
-        if (
-            not candidate
-            or candidate in {".", ".."}
-            or "/" in candidate
-            or "\\" in candidate
-        ):
+        if not candidate or "\\" in candidate:
             continue
-        if candidate not in seen:
-            seen.add(candidate)
-            filenames.append(candidate)
+        path = PurePosixPath(candidate)
+        if any(part in {"", ".", ".."} for part in path.parts):
+            continue
+        filename = path.name
+        if not filename or filename in {".", ".."}:
+            continue
+        if filename not in seen:
+            seen.add(filename)
+            filenames.append(filename)
     return tuple(filenames)
 
 
