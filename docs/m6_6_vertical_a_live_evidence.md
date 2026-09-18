@@ -344,3 +344,62 @@ same durable work
 If the durable work is `IN_FLIGHT`, contains a pending dispatch, or otherwise records an ambiguous worker effect, do not retry; reconcile M6.5 state first.
 
 If the current CWA public runtime exposes another real consumer gap, treat it as consumer-driven CWA hardening rather than reintroducing private ChatGPT backend behavior into Codexia.
+
+
+## R6–R9 — later Vertical A transport and semantic findings
+
+The R1–R5 journal above records the early transport bring-up. Later governed Vertical A work continued to expose additional consumer-driven boundaries rather than being rewritten into a clean historical trace.
+
+R6/R7 established two separate transport/deployment findings:
+
+- continuation prewrite Browser Authority Lease ordering had to be repaired without converting an ambiguous post-delegation effect into retry authority;
+- the Python package, Native Messaging host, and unpacked Chrome extension could drift across revisions, requiring the stable browser-native deployment identity introduced by CWA PR14.5.
+
+The first full adversarial Vertical A then reproduced three Codexia semantic gaps: completion could bypass explicit HUMAN attention evaluation; a pilot HUMAN answer could be shadowed before the first fresh governed judgment; and a tool-using ChatGPT turn could lose terminal logical-worker provenance behind assistant-only artifacts and enter a completion livelock. Those gaps are retained as historical evidence and are covered by deterministic M6.6 regressions rather than being hidden by restarting the run.
+
+That same run also reproduced long-history canonical pagination throttling:
+
+```text
+HTTP 429
+```
+
+CWA PR14.6 bounded retry to idempotent canonical GET pagination only, preserved the exact page/cursor, honored bounded `Retry-After`/backoff, paced successful pages, never returned partial history as complete, and introduced no product-write retry path. It squash-merged as:
+
+```text
+21279260fbc344816e112393d40ee28e4355baaf
+```
+
+A later clean Vertical A R2 exposed a cognition-contract ambiguity before its first worker dispatch: an initial bounded step with no prior worker evidence was rendered as `evidence_fit=unsupported` while `revision_request=null`, which deterministically derived M6.2 `REVISE` and then failed the bounded-revision invariant. The contract was clarified so absence of prior worker evidence does not itself mean unsupported evidence; malformed `unsupported + revision_request=null` remains fail-closed.
+
+R2 was then continued without rewriting its immutable handoff, so it remained intentionally pinned to historical Codexia candidate:
+
+```text
+b3ad5464f09ed3dbce7316827b7e2fa1ea551c08
+```
+
+It autonomously completed a first worker cycle and admitted a second bounded read-only adversarial revision without HUMAN scheduling. The second worker answer became visibly complete in ChatGPT, but the post-write canonical readback failed with:
+
+```text
+CANONICAL_READ_TIMEOUT
+```
+
+Durable supervisor recovery remained fail-closed:
+
+```text
+status = IN_FLIGHT
+completion = null
+last_sequence = 6
+pending second-cycle dispatch retained
+```
+
+No re-arm or replay was authorized. Because the immutable R2 objective was pinned to the older Codexia SHA, this run is evidence of runtime behavior and transport failure only; it is not final validation of the current PR #20 candidate.
+
+CWA PR14.7 therefore adds one bounded fresh canonical-read retry only for `CANONICAL_READ_TIMEOUT`. The retry preserves the exact conversation id and captured Browser Authority Lease, creates a fresh native read request/budget, applies to both short and full paginated reads, and fails closed as `CANONICAL_READ_TIMEOUT_EXHAUSTED` if the second read also times out. Non-timeout canonical failures and every product write remain non-retried.
+
+PR14.7 candidate CI #1043 completed successfully and it squash-merged to CWA `main` as:
+
+```text
+df8435ee46bb0f1a5c9e07ee8070fe00d096c686
+```
+
+The next qualifying Vertical A must therefore be a new clean work item whose immutable objective is pinned to the post-PR14.7 Codexia candidate head. Historical databases remain evidence and must not be forced to completion merely to obtain a green trace.
