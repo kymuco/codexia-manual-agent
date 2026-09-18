@@ -23,7 +23,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m codexia_manual_agent.simple_work.cli",
         description=(
-            "Simple Work v0.2: selectable saved Codexia chats with lazy optional workers."
+            "Simple Work v0.3: saved or Temporary Codexia with lazy optional workers."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
