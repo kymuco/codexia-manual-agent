@@ -178,11 +178,21 @@ class SimpleWorkRuntime:
 
         worker_text = self._canonical_reconciled_worker_text(session)
         if worker_text is None:
-            return SimpleWorkRunResult(
-                session=session,
-                codexia=codexia,
-                stop="reconcile_required",
-            )
+            repaired = self._repair_provisional_reconcile(session, codexia)
+            if repaired is None:
+                return SimpleWorkRunResult(
+                    session=session,
+                    codexia=codexia,
+                    stop="reconcile_required",
+                )
+            session, codexia = repaired
+            if session.status is not SimpleWorkStatus.READY:
+                return SimpleWorkRunResult(
+                    session=session,
+                    codexia=codexia,
+                    stop=session.status.value,
+                )
+            return self._drive(session, codexia, max_cycles=max_cycles)
 
         session, codexia = self._record_worker_and_continue(
             session,
@@ -476,7 +486,7 @@ class SimpleWorkRuntime:
         previous_worker = None
         for event in reversed(local_history[:-1]):
             if (
-                event.actor == "worker"
+                event.actor in {"worker", "worker_reconciled"}
                 and event.worker_mode is WorkerMode.PERSISTENT
                 and event.conversation_id == conversation_id
             ):
@@ -558,6 +568,151 @@ class SimpleWorkRuntime:
         if len(finalized) != 1:
             return None
         return finalized[0].text
+
+    def _repair_provisional_reconcile(
+        self,
+        session: SimpleWorkSession,
+        codexia: SimpleCodexiaSession,
+    ) -> tuple[SimpleWorkSession, SimpleCodexiaSession] | None:
+        """Repair the short-lived v0.1 bug that ingested an in-progress worker body.
+
+        The repair is intentionally narrow. It requires:
+        - the local tail to be a persistent Codexia dispatch;
+        - that tail dispatch to be absent from the canonical current branch;
+        - the immediately preceding local worker result to have originated from an
+          earlier exact persistent dispatch;
+        - the worker conversation now to be canonically completed;
+        - canonical final text for that earlier dispatch to differ from the local
+          worker text that was consumed provisionally.
+        """
+
+        tail = self._pending_persistent_dispatch(session)
+        if tail is None:
+            return None
+        conversation_id = tail.conversation_id or session.worker_conversation_id
+        if not conversation_id:
+            return None
+
+        try:
+            status = self.provider.read_status(conversation_id)
+            messages = self.provider.read_messages(conversation_id)
+        except ProviderError:
+            return None
+        if status.status != "completed":
+            return None
+
+        # If the tail exists canonically, it may have been submitted. That is not
+        # the historical provisional-read bug and remains ordinary reconciliation.
+        if any(
+            message.role == "user" and message.text == tail.text
+            for message in messages
+        ):
+            return None
+
+        history = self.store.history(session.work_id)
+        if len(history) < 3 or history[-1].event_id != tail.event_id:
+            return None
+
+        partial_worker_index = None
+        for index in range(len(history) - 2, -1, -1):
+            event = history[index]
+            if (
+                event.actor == "worker"
+                and event.worker_mode is WorkerMode.PERSISTENT
+                and event.conversation_id == conversation_id
+            ):
+                partial_worker_index = index
+                break
+        if partial_worker_index is None:
+            return None
+        partial_worker = history[partial_worker_index]
+
+        previous_dispatch = None
+        for index in range(partial_worker_index - 1, -1, -1):
+            event = history[index]
+            if (
+                event.actor == "codexia_to_worker"
+                and event.worker_mode is WorkerMode.PERSISTENT
+                and event.conversation_id == conversation_id
+            ):
+                previous_dispatch = event
+                break
+        if previous_dispatch is None:
+            return None
+
+        matching_dispatches = [
+            index
+            for index, message in enumerate(messages)
+            if message.role == "user" and message.text == previous_dispatch.text
+        ]
+        if len(matching_dispatches) != 1:
+            return None
+        dispatch_index = matching_dispatches[0]
+
+        final = None
+        for message in messages[dispatch_index + 1 :]:
+            if message.role == "user":
+                break
+            if message.role != "assistant" or not message.text.strip():
+                continue
+            if status.message_id is not None:
+                if message.message_id == status.message_id:
+                    final = message
+            elif message.finish_reason is not None:
+                final = message
+        if final is None or final.text == partial_worker.text:
+            return None
+
+        self.store.append_event(
+            work_id=session.work_id,
+            actor="worker_reconciled",
+            text=final.text,
+            conversation_id=conversation_id,
+            worker_mode=WorkerMode.PERSISTENT,
+        )
+        session = session.updated(
+            status=SimpleWorkStatus.READY,
+            last_worker_text=final.text,
+            next_worker_message=None,
+        )
+        self.store.save(session)
+
+        if codexia.conversation_id is None:
+            raise RuntimeError("Codexia session lost its conversation")
+        correction = (
+            "Исправление transport reconciliation. Предыдущий переданный тебе "
+            "ответ рабочего чата оказался промежуточным: worker ещё продолжал "
+            "генерацию. Следующее поручение, которое ты сформировала на его основе, "
+            "не присутствует в canonical worker branch и не считается выполненным. "
+            "Не опирайся на прежний промежуточный текст или выводы из него.\n\n"
+            "Канонически завершённый ответ рабочего чата:\n\n"
+            f"{final.text}\n\n"
+            "Продолжи текущую работу уже из этого финального результата. Если "
+            "работа завершена — ответь ГОТОВО:. Если нужен следующий шаг worker — "
+            "дай обычное сообщение ему."
+        )
+        self.store.append_event(
+            work_id=session.work_id,
+            actor="runtime_correction",
+            text=correction,
+            conversation_id=codexia.conversation_id,
+        )
+        response = self.provider.send(
+            ProviderRequest(
+                prompt=correction,
+                conversation=ProviderConversation(
+                    conversation_id=codexia.conversation_id
+                ),
+            )
+        )
+        session, codexia = self._accept_codexia_response(
+            session,
+            codexia,
+            response,
+        )
+        self.store.save(session)
+        self.store.save_codexia(codexia)
+        return session, codexia
 
     def _pause_temporary_at_cycle_limit(
         self,
