@@ -302,3 +302,11 @@ closure. If Chrome restarts the MV3 extension worker after a successful Temporar
 turn, live continuation authority is already gone; explicit close now retires any
 remaining CWA-owned Temporary tab without recreating authority. A stale token may
 not close a different live Temporary lifecycle.
+
+Simple Work also separates semantic completion from resource-cleanup proof. If a
+future explicit close is still unproven after Codexia already returned
+`ГОТОВО:`, the completed `final_text` is preserved and the run returns
+`completed_cleanup_unproven` while logging
+`codexia_temporary_close_unproven`. Non-completed Temporary work remains
+terminal and returns `temporary_close_unproven`. No continuation authority is
+restored in either case.
