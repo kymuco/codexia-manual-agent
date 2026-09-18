@@ -414,11 +414,36 @@ class SimpleWorkRuntime:
         if result.session.codexia_mode is not CodexiaMode.TEMPORARY:
             return result
 
-        closed = self.provider.end_temporary_chat()
-        if closed is not True:
-            raise RuntimeError("temporary Codexia lifecycle did not close cleanly")
-
         session = result.session
+        cleanup_error: str | None = None
+        try:
+            closed = self.provider.end_temporary_chat()
+        except Exception as exc:
+            closed = False
+            cleanup_error = str(exc) or exc.__class__.__name__
+
+        if closed is not True:
+            cleanup_error = cleanup_error or "temporary lifecycle close returned false"
+            self.store.append_event(
+                work_id=session.work_id,
+                actor="codexia_temporary_close_unproven",
+                text=cleanup_error,
+                conversation_id=result.codexia.conversation_id,
+            )
+            if session.status is not SimpleWorkStatus.COMPLETED:
+                session = session.updated(status=SimpleWorkStatus.TEMPORARY_CLOSED)
+                self.store.save(session)
+                return SimpleWorkRunResult(
+                    session=session,
+                    codexia=result.codexia,
+                    stop="temporary_close_unproven",
+                )
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=result.codexia,
+                stop="completed_cleanup_unproven",
+            )
+
         self.store.append_event(
             work_id=session.work_id,
             actor="codexia_temporary_closed",
