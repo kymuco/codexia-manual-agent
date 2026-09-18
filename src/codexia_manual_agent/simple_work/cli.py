@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from codexia_manual_agent.domain.errors import CodexiaError
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.simple_work.runtime import SimpleWorkRuntime
 from codexia_manual_agent.simple_work.session import SimpleWorkSession, SimpleWorkStore
@@ -97,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "stop": result.stop,
                 "session": _session_payload(result.session),
             }
-    except (KeyError, RuntimeError, ValueError, OSError) as exc:
+    except (CodexiaError, KeyError, RuntimeError, ValueError, OSError) as exc:
         print(f"simple-work: {exc}", file=sys.stderr)
         return 1
 
