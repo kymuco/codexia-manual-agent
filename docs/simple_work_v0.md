@@ -1,9 +1,10 @@
-# Simple Work v0.2
+# Simple Work v0.3
 
 ## Purpose
 
-Simple Work v0.2 keeps the smallest useful Codexia product loop while allowing
-the user to choose among several locally registered saved Codexia chats.
+Simple Work v0.3 keeps the smallest useful Codexia product loop, allows explicit
+selection among locally registered saved Codexia chats, and adds a true
+process-local Temporary Codexia mode for disposable work.
 
 The user should be able to give one short request and then leave Codexia alone
 until the work is finished or Codexia genuinely needs the user.
@@ -31,6 +32,51 @@ work records provide durable routing identity.
 The registry is intentionally local-first in v0.2. It does not scrape or discover
 the ChatGPT sidebar. Existing saved Codexia conversations are registered by their
 raw conversation id.
+
+## Temporary Codexia
+
+A new work may use ChatGPT Temporary Chat for Codexia itself:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli start `
+    "Одноразово исследуй этот вопрос и дай итог." `
+    --temporary-codexia `
+    --auth-file auth_data.json
+```
+
+This mode is intentionally ephemeral:
+
+- it is never added to `codexia-list`;
+- its ChatGPT conversation identity is not accepted as later continuation
+  authority;
+- all human/Codexia/worker events are still written to the local transcript;
+- the CWA Temporary lifecycle is explicitly closed before the command returns;
+- after completion, human boundary, cycle limit or another stop, the work cannot
+  be continued by `answer`, `resume` or `reconcile` in a later process.
+
+A human boundary therefore returns the question locally but changes the work to
+`temporary_closed`. The user can inspect the transcript and start a new saved or
+Temporary Codexia work, but Simple Work does not pretend that the old Temporary
+Chat can be recovered.
+
+CWA currently owns one live Temporary lifecycle at a time. Therefore a Temporary
+Codexia cannot create a Temporary Worker. It may still create a persistent saved
+worker when a separate long-lived branch is genuinely useful:
+
+```text
+Temporary Codexia
+    |
+    +-- solve directly
+    |
+    +-- Persistent Worker -> saved worker conversation
+```
+
+Normal saved-worker turns can run between Temporary Codexia turns; the same live
+Temporary Codexia lifecycle is then continued on the next Codexia turn.
+
+Direct artifacts produced only inside Temporary Codexia are not yet automatically
+materialized. Existing artifact intake remains scoped to persistent-worker
+responses.
 
 ## Codexia-first routing
 
@@ -235,7 +281,7 @@ per-task Codexia chats.
 
 ## Still intentionally deferred
 
-Simple Work v0.2 does not yet add:
+Simple Work v0.3 does not yet add:
 
 - repository/process/Git mutation or local execution authority;
 - automatic roadmap/project execution policy;
@@ -243,6 +289,7 @@ Simple Work v0.2 does not yet add:
 - automatic retry after ambiguous product writes;
 - cleanup/replacement of the older M6 implementation.
 
-Saved Codexia selection is designed to run on CWA's retained per-conversation
-background-tab transport. Temporary Codexia sessions, sidebar discovery and
-local execution authority remain separate later milestones.
+Saved Codexia selection runs on CWA's retained per-conversation background-tab
+transport. Sidebar discovery, durable recovery of Temporary Codexia sessions,
+direct Temporary-Codexia artifact intake, and local execution authority remain
+separate later milestones.
