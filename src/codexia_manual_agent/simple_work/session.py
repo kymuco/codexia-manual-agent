@@ -341,6 +341,8 @@ class SimpleWorkStore:
         conversation_id: str,
     ) -> SimpleCodexiaSession:
         key = _normalize_codexia_alias(alias)
+        if key == "temporary":
+            raise ValueError("'temporary' is reserved for process-local Codexia")
         conversation = _normalize_conversation_id(conversation_id)
         with self._connect() as connection:
             alias_row = connection.execute(
