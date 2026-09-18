@@ -1,27 +1,36 @@
-# Simple Work v0.1
+# Simple Work v0.2
 
 ## Purpose
 
-Simple Work v0.1 tests the smallest useful Codexia product loop before returning
-to project automation.
+Simple Work v0.2 keeps the smallest useful Codexia product loop while allowing
+the user to choose among several locally registered saved Codexia chats.
 
 The user should be able to give one short request and then leave Codexia alone
 until the work is finished or Codexia genuinely needs the user.
 
-## One long-lived Codexia chat
+## Selectable saved Codexia chats
 
-Codexia is no longer created per task. The local database owns one long-lived
-Codexia session and reuses the same ChatGPT conversation across ordinary tasks.
+Codexia is not created per task. The local database owns a small registry of
+long-lived saved Codexia conversations. The existing v0.1 singleton is migrated
+without changing identity and becomes the `general` chat.
 
 ```text
-Task A -> same Codexia chat
-Task B -> same Codexia chat
-Task C -> same Codexia chat
+general      -> saved conversation A
+voice-engine -> saved conversation B
+guitar       -> saved conversation C
 ```
 
-Each task is still recorded locally with its own `work_id`, result and transcript.
-The ChatGPT conversation provides natural semantic continuity; the local store
-provides durable task history.
+A new work explicitly selects one of these chats. That alias is persisted on the
+`work_id`, so later `answer`, `resume` and `reconcile` always return to the
+same Codexia conversation even if other chats are used in between.
+
+Each task is still recorded locally with its own result and transcript. ChatGPT
+conversations provide natural semantic continuity while the local registry and
+work records provide durable routing identity.
+
+The registry is intentionally local-first in v0.2. It does not scrape or discover
+the ChatGPT sidebar. Existing saved Codexia conversations are registered by their
+raw conversation id.
 
 ## Codexia-first routing
 
@@ -141,14 +150,40 @@ python -m codexia_manual_agent.simple_work.cli start `
     --auth-file auth_data.json
 ```
 
-The first v0.1 task creates the long-lived Codexia conversation. Later `start`
-commands reuse it automatically.
+The first task without an explicit selector uses `general`. Existing v0.1
+databases preserve the previous long-lived conversation under that alias.
 
-Inspect the shared Codexia session:
+Register another already-saved Codexia conversation:
 
 ```powershell
-python -m codexia_manual_agent.simple_work.cli codexia-status
+python -m codexia_manual_agent.simple_work.cli codexia-add `
+    voice-engine <conversation_id>
 ```
+
+List locally known saved Codexia chats:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli codexia-list
+```
+
+Start a new work in a chosen chat:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli start `
+    "Продолжи Voice Engine." `
+    --codexia voice-engine `
+    --auth-file auth_data.json
+```
+
+Inspect one registered Codexia chat:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli codexia-status `
+    --codexia voice-engine
+```
+
+There is deliberately no global hidden `codexia use` state in this version:
+selection is explicit on each new work.
 
 If a persistent worker reaches the bounded cycle count, resume the same work:
 
@@ -200,14 +235,14 @@ per-task Codexia chats.
 
 ## Still intentionally deferred
 
-Simple Work v0.1 does not yet add:
+Simple Work v0.2 does not yet add:
 
 - repository/process/Git mutation or local execution authority;
 - automatic roadmap/project execution policy;
 - multiple simultaneous work schedulers;
-- a conversation-bound browser tab pool;
 - automatic retry after ambiguous product writes;
 - cleanup/replacement of the older M6 implementation.
 
-The next validation target remains ordinary low-risk tasks. Only after this shape
-feels natural should a small project with an existing roadmap be used.
+Saved Codexia selection is designed to run on CWA's retained per-conversation
+background-tab transport. Temporary Codexia sessions, sidebar discovery and
+local execution authority remain separate later milestones.
