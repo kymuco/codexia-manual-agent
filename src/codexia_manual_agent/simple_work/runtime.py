@@ -176,11 +176,20 @@ class SimpleWorkRuntime:
                 temporary_live = False
             return result
         except Exception:
-            if temporary_live:
-                try:
-                    self.provider.end_temporary_chat()
-                except Exception:
-                    pass
+            if session.codexia_mode is CodexiaMode.TEMPORARY:
+                if temporary_live:
+                    try:
+                        self.provider.end_temporary_chat()
+                    except Exception:
+                        pass
+                session = session.updated(status=SimpleWorkStatus.TEMPORARY_CLOSED)
+                self.store.save(session)
+                self.store.append_event(
+                    work_id=session.work_id,
+                    actor="codexia_temporary_closed",
+                    text="stop=exception",
+                    conversation_id=codexia.conversation_id,
+                )
             raise
 
     def resume(self, work_id: str, *, max_cycles: int = 8) -> SimpleWorkRunResult:
