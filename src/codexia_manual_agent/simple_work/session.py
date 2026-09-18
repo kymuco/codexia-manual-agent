@@ -12,6 +12,7 @@ class SimpleWorkStatus(StrEnum):
     READY = "ready"
     RECONCILE_REQUIRED = "reconcile_required"
     WAITING_HUMAN = "waiting_human"
+    TEMPORARY_CLOSED = "temporary_closed"
     COMPLETED = "completed"
 
 
