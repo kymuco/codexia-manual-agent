@@ -111,6 +111,22 @@ If a persistent worker reaches the bounded cycle count, resume the same work:
 python -m codexia_manual_agent.simple_work.cli resume <work_id>
 ```
 
+If a persistent worker write ends with an ambiguous `CHATGPT_TURN_TIMEOUT`,
+Simple Work never resubmits that worker message automatically. It first performs
+canonical readback of the already-known worker conversation. If the exact
+`[Codexia]` message and its following assistant response are proven, that response
+is ingested locally and the loop continues. Otherwise the work stops in
+`reconcile_required`.
+
+A later read-only reconciliation can be requested explicitly:
+
+```powershell
+python -m codexia_manual_agent.simple_work.cli reconcile <work_id>
+```
+
+`resume` also detects a historical local transcript ending in an unmatched
+`codexia_to_worker` event and refuses to resend it; use `reconcile` instead.
+
 If Codexia genuinely needs the human:
 
 ```powershell
