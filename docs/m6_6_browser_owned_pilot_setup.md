@@ -7,16 +7,18 @@ M6.6 live pilot writes use the production `chatgpt-web-adapter` product boundary
 The exact CWA source revision selected by the M6.6 candidate is:
 
 ```text
-21279260fbc344816e112393d40ee28e4355baaf
+df8435ee46bb0f1a5c9e07ee8070fe00d096c686
 ```
 
-This is the squash-merge commit for CWA PR14.6. It includes the earlier PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; PR14.3's narrowly bounded browser-composer indentation compatibility; PR14.4's continuation Browser Authority Lease ordering repair plus exact prewrite `NOT_SUBMITTED` classification; PR14.5's stable browser-native deployment identity repair; and PR14.6's bounded throttle-safe retry for idempotent canonical GET pagination only.
+This is the squash-merge commit for CWA PR14.7. It includes the earlier PR14.1 request-bound ordinary-text conversation identity authority and browser-context canonical-read session-auth repair; PR14.2's exact committed-error preservation, request-text-shape compatibility, and safe correlation fingerprint; PR14.3's narrowly bounded browser-composer indentation compatibility; PR14.4's continuation Browser Authority Lease ordering repair plus exact prewrite `NOT_SUBMITTED` classification; PR14.5's stable browser-native deployment identity repair; PR14.6's bounded throttle-safe retry for idempotent canonical GET pagination; and PR14.7's one bounded fresh canonical-read retry after `CANONICAL_READ_TIMEOUT`.
 
 PR14.4 live acceptance proved the original continuation lease mismatch was removed: an existing-conversation continuation reached the real product write boundary instead of failing during its prewrite canonical baseline read. That same acceptance then exposed a separate post-delegation `net::ERR_ABORTED` outcome where the user turn persisted but no terminal assistant answer was produced. That lifecycle finding is tracked separately in CWA issue #99 and must remain fail-closed; it does not authorize replay of the committed user turn.
 
 PR14.5 fixed the deployment split-brain found by the resumed M6.6 pilot: the Python package, Native Messaging host, and Chrome unpacked extension could come from different CWA revisions while `cwa doctor` still appeared healthy. Browser-native installation now materializes one stable per-user extension deployment, binds it to the current Python environment, records deterministic deployment identity, and fails closed when package/installed-extension/host identity diverges.
 
 PR14.6 fixes the later long-history canonical-read `HTTP 429` failure reproduced by the same Vertical A run. It retries only idempotent canonical GET reads with a bounded budget, honors bounded `Retry-After` when present, otherwise uses bounded backoff, retries the same page/cursor, paces successful pagination pages, never returns partial history as complete, and introduces no product-write retry path or authority.
+
+PR14.7 fixes the subsequent post-write `CANONICAL_READ_TIMEOUT` reproduced on the clean R2 pilot. It retries only that read-only timeout once as a fresh canonical-read operation, preserves the exact conversation id and captured Browser Authority Lease, uses a fresh native request id/read budget, and fails closed as `CANONICAL_READ_TIMEOUT_EXHAUSTED` if the bounded retry also times out. Non-timeout canonical failures and all product writes remain non-retried.
 
 The dependency is pinned to this exact Git revision. A moving CWA `main` is not part of the pilot identity.
 
@@ -113,7 +115,7 @@ exact durable cursor
 
 A CWA post-delegation failure with `write_may_have_been_submitted = true` is an ambiguity/reconciliation boundary, not retry permission. Only a structured exact `BROWSER_OWNED_WRITE_NOT_SUBMITTED` proof can support the M6.6 no-submit recovery path.
 
-PR14.6 does not alter that rule: its retry loop is confined to canonical **reads** after or before a write boundary, never to the product write itself.
+PR14.6 and PR14.7 do not alter that rule: both retry mechanisms are confined to canonical **reads** after or before a write boundary, never to the product write itself.
 
 ## System-context behavior
 
@@ -167,6 +169,6 @@ IN_FLIGHT
 
 The recovery command performs no provider write. A later normal `drive` invocation is a separate action and must acquire a fresh claim for the same exact pending dispatch.
 
-The original Vertical A work item that exposed the completion/tool-tail/429 defects is retained as evidence and should not be forced to `COMPLETED` merely to obtain a green historical trace. After the repaired Codexia and merged PR14.6 pin are installed, validation should use a clean new Vertical A work item while preserving the historical database unchanged.
+The historical Vertical A work items that exposed the completion/tool-tail/429 defects and the later canonical-read timeout are retained as evidence and should not be forced to `COMPLETED` merely to obtain a green historical trace. After the repaired Codexia and merged PR14.7 pin are installed, validation should use a clean new Vertical A work item while preserving those historical databases unchanged.
 
 Never edit the SQLite state directly, fabricate a peer turn, or treat a CWA transport repair as automatic retry authority.
