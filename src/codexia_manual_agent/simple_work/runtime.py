@@ -270,16 +270,16 @@ class SimpleWorkRuntime:
                 raise RuntimeError("worker instruction exists without a worker mode")
 
             worker_prompt = _worker_prompt(session.next_worker_message)
-            self.store.append_event(
-                work_id=session.work_id,
-                actor="codexia_to_worker",
-                text=worker_prompt,
-                conversation_id=session.worker_conversation_id,
-                worker_mode=mode,
-            )
 
             if mode is WorkerMode.TEMPORARY:
                 worker_response = self.provider.send_temporary(worker_prompt)
+                self.store.append_event(
+                    work_id=session.work_id,
+                    actor="codexia_to_worker",
+                    text=worker_prompt,
+                    conversation_id=None,
+                    worker_mode=mode,
+                )
                 worker_text = worker_response.text
                 worker_conversation_id = None
             else:
@@ -297,15 +297,33 @@ class SimpleWorkRuntime:
                         )
                     )
                 except ProviderError as exc:
+                    if _is_conversation_not_completed(exc):
+                        # CWA rejected the write at preflight: nothing was submitted.
+                        # Keep the next worker message intact so a later resume is safe.
+                        return SimpleWorkRunResult(
+                            session=session,
+                            codexia=codexia,
+                            stop="worker_busy",
+                        )
                     if not _is_chatgpt_turn_timeout(exc):
                         raise
+
+                    # A turn timeout can happen after submit. Persist the exact
+                    # attempted dispatch and never grant retry authority.
+                    self.store.append_event(
+                        work_id=session.work_id,
+                        actor="codexia_to_worker",
+                        text=worker_prompt,
+                        conversation_id=session.worker_conversation_id,
+                        worker_mode=mode,
+                    )
                     session = session.updated(
                         status=SimpleWorkStatus.RECONCILE_REQUIRED
                     )
                     self.store.save(session)
 
-                    # Reconciliation is read-only. First-turn timeouts cannot be
-                    # recovered here because no durable worker conversation is known.
+                    # First-turn timeouts cannot be recovered because no durable
+                    # worker conversation identity is known yet.
                     worker_text = self._canonical_reconciled_worker_text(session)
                     if worker_text is None:
                         return SimpleWorkRunResult(
@@ -315,13 +333,20 @@ class SimpleWorkRuntime:
                         )
                     worker_conversation_id = session.worker_conversation_id
                 else:
-                    worker_text = worker_response.text
                     worker_conversation_id = _conversation_id(worker_response)
                     if session.worker_conversation_id is not None:
                         if worker_conversation_id != session.worker_conversation_id:
                             raise RuntimeError(
                                 "persistent worker conversation identity changed"
                             )
+                    self.store.append_event(
+                        work_id=session.work_id,
+                        actor="codexia_to_worker",
+                        text=worker_prompt,
+                        conversation_id=worker_conversation_id,
+                        worker_mode=mode,
+                    )
+                    worker_text = worker_response.text
 
             session, codexia = self._record_worker_and_continue(
                 session,
