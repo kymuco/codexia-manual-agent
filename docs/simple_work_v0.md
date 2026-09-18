@@ -113,10 +113,23 @@ python -m codexia_manual_agent.simple_work.cli resume <work_id>
 
 If a persistent worker write ends with an ambiguous `CHATGPT_TURN_TIMEOUT`,
 Simple Work never resubmits that worker message automatically. It first performs
-canonical readback of the already-known worker conversation. If the exact
-`[Codexia]` message and its following assistant response are proven, that response
-is ingested locally and the loop continues. Otherwise the work stops in
-`reconcile_required`.
+canonical readback of the already-known worker conversation. Visible assistant
+text alone is not finality: reconciliation requires the canonical conversation
+status to be `completed` and binds the recovered assistant to the canonical
+final message identity (or an explicit assistant finish reason when the status
+message id is unavailable). Only then can the response be ingested locally.
+Otherwise the work stops in `reconcile_required`.
+
+If CWA rejects the next persistent-worker write at preflight with
+`CANONICAL_CONVERSATION_NOT_COMPLETED`, Simple Work records no submitted
+dispatch and returns `worker_busy`. The pending Codexia message remains locally
+ready for a later safe `resume`; no ambiguous-write reconciliation is needed.
+
+A narrow backward repair also exists for the short-lived v0.1 bug that consumed
+an in-progress worker body. If the stale next Codexia dispatch is absent from the
+canonical worker branch and the previous worker turn later has a different
+canonical final response, `reconcile` records the corrected worker result and
+sends Codexia an explicit correction before continuing.
 
 A later read-only reconciliation can be requested explicitly:
 
