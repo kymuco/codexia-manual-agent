@@ -11,6 +11,7 @@ from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.simple_work.runtime import SimpleWorkRuntime
 from codexia_manual_agent.simple_work.session import (
     SimpleCodexiaSession,
+    SimpleWorkArtifact,
     SimpleWorkEvent,
     SimpleWorkSession,
     SimpleWorkStore,
@@ -50,6 +51,14 @@ def _parser() -> argparse.ArgumentParser:
     history = sub.add_parser("history")
     history.add_argument("work_id")
     history.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
+
+    artifacts = sub.add_parser("artifacts")
+    artifacts.add_argument("work_id")
+    artifacts.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
+
+    intake = sub.add_parser("intake-artifacts")
+    intake.add_argument("work_id")
+    _common_run_args(intake)
 
     codexia = sub.add_parser("codexia-status")
     codexia.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
@@ -98,6 +107,19 @@ def _codexia_payload(session: SimpleCodexiaSession) -> dict[str, object]:
     }
 
 
+def _artifact_payload(artifact: SimpleWorkArtifact) -> dict[str, object]:
+    return {
+        "artifact_id": artifact.artifact_id,
+        "worker_turn": artifact.worker_turn,
+        "source_filename": artifact.source_filename,
+        "local_path": artifact.local_path,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "source_conversation_id": artifact.source_conversation_id,
+        "created_at": artifact.created_at,
+    }
+
+
 def _event_payload(event: SimpleWorkEvent) -> dict[str, object]:
     return {
         "event_id": event.event_id,
@@ -131,6 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     for event in store.history(args.work_id)
                 ],
             }
+        elif args.command == "artifacts":
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "artifacts",
+                "work_id": args.work_id,
+                "artifacts": [
+                    _artifact_payload(artifact)
+                    for artifact in store.artifacts(args.work_id)
+                ],
+            }
         elif args.command == "codexia-status":
             store = SimpleWorkStore(args.database)
             payload = {
@@ -154,14 +186,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.answer,
                     max_cycles=args.max_cycles,
                 )
+            elif args.command == "intake-artifacts":
+                artifacts = runtime.intake_artifacts(args.work_id)
+                payload = {
+                    "action": "intake-artifacts",
+                    "work_id": args.work_id,
+                    "artifacts": [
+                        _artifact_payload(artifact)
+                        for artifact in artifacts
+                    ],
+                }
+                result = None
             else:  # pragma: no cover
                 raise RuntimeError(f"unknown command: {args.command}")
-            payload = {
-                "action": args.command,
-                "stop": result.stop,
-                "codexia": _codexia_payload(result.codexia),
-                "session": _session_payload(result.session),
-            }
+            if result is not None:
+                payload = {
+                    "action": args.command,
+                    "stop": result.stop,
+                    "codexia": _codexia_payload(result.codexia),
+                    "session": _session_payload(result.session),
+                }
     except (CodexiaError, KeyError, RuntimeError, ValueError, OSError) as exc:
         print(f"simple-work: {exc}", file=sys.stderr)
         return 1
