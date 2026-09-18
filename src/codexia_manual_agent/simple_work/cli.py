@@ -34,6 +34,10 @@ def _parser() -> argparse.ArgumentParser:
     resume.add_argument("work_id")
     _common_run_args(resume)
 
+    reconcile = sub.add_parser("reconcile")
+    reconcile.add_argument("work_id")
+    _common_run_args(reconcile)
+
     answer = sub.add_parser("answer")
     answer.add_argument("work_id")
     answer.add_argument("answer")
@@ -139,6 +143,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = runtime.start(args.request, max_cycles=args.max_cycles)
             elif args.command == "resume":
                 result = runtime.resume(args.work_id, max_cycles=args.max_cycles)
+            elif args.command == "reconcile":
+                result = runtime.reconcile(
+                    args.work_id,
+                    max_cycles=args.max_cycles,
+                )
             elif args.command == "answer":
                 result = runtime.answer(
                     args.work_id,
