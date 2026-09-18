@@ -60,6 +60,14 @@ class FakeRuntime:
         self.calls.append(("send_text_observed", text, kwargs))
         return SimpleNamespace(transport="browser-owned", response=self.response)
 
+    def get_status(self, conversation_id):
+        self.calls.append(("status", conversation_id))
+        return SimpleNamespace(
+            status="completed",
+            message_id="m-assistant",
+            finish_reason="stop",
+        )
+
     def get_messages(self, conversation_id, **kwargs):
         self.calls.append(("history", conversation_id, kwargs))
         return self.messages
@@ -201,6 +209,17 @@ class ChatGPTWebProviderTests(unittest.TestCase):
         self.assertEqual(captured["transport"], "browser-owned")
         self.assertEqual(captured["auth_file"], "auth.json")
         self.assertEqual(captured["client_timeout"], 91)
+
+    def test_status_read_exposes_canonical_completion_identity(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        status = provider.read_status("existing")
+
+        self.assertEqual(status.status, "completed")
+        self.assertEqual(status.message_id, "m-assistant")
+        self.assertEqual(status.finish_reason, "stop")
+        self.assertEqual(runtime.calls[0], ("status", "existing"))
 
     def test_history_read_uses_complete_canonical_current_branch_surface(self) -> None:
         runtime = FakeRuntime()
