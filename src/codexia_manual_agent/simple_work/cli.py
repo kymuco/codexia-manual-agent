@@ -29,6 +29,11 @@ def _parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start")
     start.add_argument("request")
+    start.add_argument(
+        "--codexia",
+        default="general",
+        help="saved Codexia chat alias; defaults to general",
+    )
     _common_run_args(start)
 
     resume = sub.add_parser("resume")
@@ -61,7 +66,22 @@ def _parser() -> argparse.ArgumentParser:
     _common_run_args(intake)
 
     codexia = sub.add_parser("codexia-status")
+    codexia.add_argument("--codexia", default="general")
     codexia.add_argument("--database", default=".codexia/simple_work_v0.sqlite3")
+
+    codexia_list = sub.add_parser("codexia-list")
+    codexia_list.add_argument(
+        "--database",
+        default=".codexia/simple_work_v0.sqlite3",
+    )
+
+    codexia_add = sub.add_parser("codexia-add")
+    codexia_add.add_argument("alias")
+    codexia_add.add_argument("conversation_id")
+    codexia_add.add_argument(
+        "--database",
+        default=".codexia/simple_work_v0.sqlite3",
+    )
 
     return parser
 
@@ -87,6 +107,7 @@ def _runtime(args: argparse.Namespace) -> SimpleWorkRuntime:
 def _session_payload(session: SimpleWorkSession) -> dict[str, object]:
     return {
         "work_id": session.work_id,
+        "codexia_alias": session.codexia_alias,
         "status": session.status.value,
         "user_request": session.user_request,
         "worker_mode": session.worker_mode.value,
@@ -100,6 +121,7 @@ def _session_payload(session: SimpleWorkSession) -> dict[str, object]:
 
 def _codexia_payload(session: SimpleCodexiaSession) -> dict[str, object]:
     return {
+        "alias": session.alias,
         "session_id": session.session_id,
         "conversation_id": session.conversation_id,
         "created_at": session.created_at,
@@ -138,10 +160,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "status":
             store = SimpleWorkStore(args.database)
+            session = store.load(args.work_id)
             payload = {
                 "action": "status",
-                "codexia": _codexia_payload(store.codexia()),
-                "session": _session_payload(store.load(args.work_id)),
+                "codexia": _codexia_payload(
+                    store.codexia(session.codexia_alias)
+                ),
+                "session": _session_payload(session),
             }
         elif args.command == "history":
             store = SimpleWorkStore(args.database)
@@ -167,12 +192,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             store = SimpleWorkStore(args.database)
             payload = {
                 "action": "codexia-status",
-                "codexia": _codexia_payload(store.codexia()),
+                "codexia": _codexia_payload(store.codexia(args.codexia)),
+            }
+        elif args.command == "codexia-list":
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "codexia-list",
+                "codexia_chats": [
+                    _codexia_payload(session)
+                    for session in store.codexia_chats()
+                ],
+            }
+        elif args.command == "codexia-add":
+            store = SimpleWorkStore(args.database)
+            payload = {
+                "action": "codexia-add",
+                "codexia": _codexia_payload(
+                    store.add_codexia(args.alias, args.conversation_id)
+                ),
             }
         else:
             runtime = _runtime(args)
             if args.command == "start":
-                result = runtime.start(args.request, max_cycles=args.max_cycles)
+                result = runtime.start(
+                    args.request,
+                    codexia_alias=args.codexia,
+                    max_cycles=args.max_cycles,
+                )
             elif args.command == "resume":
                 result = runtime.resume(args.work_id, max_cycles=args.max_cycles)
             elif args.command == "reconcile":
