@@ -293,3 +293,12 @@ Saved Codexia selection runs on CWA's retained per-conversation background-tab
 transport. Sidebar discovery, durable recovery of Temporary Codexia sessions,
 direct Temporary-Codexia artifact intake, and local execution authority remain
 separate later milestones.
+
+
+### Temporary close hardening
+
+The pinned CWA candidate includes restart-safe explicit Temporary lifecycle
+closure. If Chrome restarts the MV3 extension worker after a successful Temporary
+turn, live continuation authority is already gone; explicit close now retires any
+remaining CWA-owned Temporary tab without recreating authority. A stale token may
+not close a different live Temporary lifecycle.
