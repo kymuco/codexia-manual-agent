@@ -60,11 +60,13 @@ class _Provider:
         temporary_replies: list[_Reply] | None = None,
         histories: dict[str, tuple[_Visible, ...]] | None = None,
         statuses: dict[str, _Status] | None = None,
+        temporary_end_error: Exception | None = None,
     ) -> None:
         self.normal_replies = list(normal_replies)
         self.temporary_replies = list(temporary_replies or [])
         self.histories = dict(histories or {})
         self.statuses = dict(statuses or {})
+        self.temporary_end_error = temporary_end_error
         self.requests: list[ProviderRequest] = []
         self.history_reads: list[str] = []
         self.temporary_prompts: list[str] = []
@@ -124,6 +126,8 @@ class _Provider:
 
     def end_temporary_chat(self) -> bool:
         self.temporary_end_count += 1
+        if self.temporary_end_error is not None:
+            raise self.temporary_end_error
         return True
 
 
@@ -1047,3 +1051,58 @@ def test_saved_registry_reserves_temporary_alias(tmp_path) -> None:
         assert "reserved" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("temporary alias must be reserved")
+
+
+def test_temporary_codexia_preserves_completed_result_when_cleanup_is_unproven(
+    tmp_path,
+) -> None:
+    provider = _Provider(
+        [],
+        temporary_replies=[
+            _Reply("ГОТОВО: Результат уже готов.", "temporary-codexia-1")
+        ],
+        temporary_end_error=ProviderError(
+            "failed to end chatgpt temporary lifecycle: "
+            "PR8_13_TEMPORARY_LIFECYCLE_END_NOT_PROVEN"
+        ),
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start("Одноразовая задача.", temporary_codexia=True)
+
+    assert result.stop == "completed_cleanup_unproven"
+    assert result.session.status is SimpleWorkStatus.COMPLETED
+    assert result.session.final_text == "Результат уже готов."
+    assert provider.temporary_end_count == 1
+    history = store.history(result.session.work_id)
+    cleanup_events = [
+        event
+        for event in history
+        if event.actor == "codexia_temporary_close_unproven"
+    ]
+    assert len(cleanup_events) == 1
+    assert "PR8_13_TEMPORARY_LIFECYCLE_END_NOT_PROVEN" in cleanup_events[0].text
+
+
+def test_temporary_codexia_human_boundary_remains_terminal_when_cleanup_is_unproven(
+    tmp_path,
+) -> None:
+    provider = _Provider(
+        [],
+        temporary_replies=[
+            _Reply("К ПОЛЬЗОВАТЕЛЮ: Нужен выбор.", "temporary-codexia-1")
+        ],
+        temporary_end_error=ProviderError(
+            "failed to end chatgpt temporary lifecycle"
+        ),
+    )
+    store = SimpleWorkStore(tmp_path / "simple.sqlite3")
+    runtime = SimpleWorkRuntime(provider=provider, store=store)
+
+    result = runtime.start("Спроси только если нужно.", temporary_codexia=True)
+
+    assert result.stop == "temporary_close_unproven"
+    assert result.session.status is SimpleWorkStatus.TEMPORARY_CLOSED
+    assert result.session.pending_human_question == "Нужен выбор."
+    assert provider.temporary_end_count == 1
