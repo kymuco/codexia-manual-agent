@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from codexia_manual_agent.domain.errors import ProviderError
 from codexia_manual_agent.domain.models import (
     ProviderConversation,
     ProviderRequest,
@@ -20,6 +21,12 @@ _TO_HUMAN = "К ПОЛЬЗОВАТЕЛЮ:"
 _DONE = "ГОТОВО:"
 _TEMP_WORKER = "ВРЕМЕННЫЙ WORKER:"
 _PERSISTENT_WORKER = "ПОСТОЯННЫЙ WORKER:"
+_CHATGPT_TURN_TIMEOUT = "CHATGPT_TURN_TIMEOUT"
+
+
+class _VisibleMessage(Protocol):
+    role: str
+    text: str
 
 
 class _Provider(Protocol):
@@ -28,6 +35,10 @@ class _Provider(Protocol):
     def send_temporary(self, prompt: str) -> ProviderResponse: ...
 
     def end_temporary_chat(self) -> bool: ...
+
+    def read_messages(
+        self, conversation_id: str
+    ) -> tuple[_VisibleMessage, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +53,11 @@ class SimpleWorkRuntime:
 
     One long-lived Codexia conversation handles many user tasks. Simple tasks can
     finish directly. A worker exists only when Codexia explicitly asks for one.
-    Persistent workers are reserved for work whose separate history should survive.
+
+    Persistent worker writes obey one strict recovery rule: an ambiguous turn
+    timeout is never retry authority. If the worker conversation is already known,
+    Simple Work may recover only by canonical readback of the exact already-sent
+    Codexia message and its following assistant response.
     """
 
     def __init__(self, *, provider: _Provider, store: SimpleWorkStore) -> None:
@@ -97,10 +112,81 @@ class SimpleWorkRuntime:
                 codexia=codexia,
                 stop="waiting_human",
             )
+
+        # Backward-safe guard for a timeout produced by an older Simple Work build:
+        # a durable codexia_to_worker tail means the write may already have happened.
+        if (
+            session.status is SimpleWorkStatus.RECONCILE_REQUIRED
+            or self._pending_persistent_dispatch(session) is not None
+        ):
+            if session.status is not SimpleWorkStatus.RECONCILE_REQUIRED:
+                session = session.updated(status=SimpleWorkStatus.RECONCILE_REQUIRED)
+                self.store.save(session)
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=codexia,
+                stop="reconcile_required",
+            )
+
         if session.next_worker_message is None:
             raise RuntimeError("ready simple work has no pending worker instruction")
         if session.worker_mode is WorkerMode.NONE:
             raise RuntimeError("ready simple work has no active worker route")
+        return self._drive(session, codexia, max_cycles=max_cycles)
+
+    def reconcile(
+        self,
+        work_id: str,
+        *,
+        max_cycles: int = 8,
+    ) -> SimpleWorkRunResult:
+        """Read-only recover one ambiguous persistent worker turn.
+
+        This method never submits the pending worker message again.
+        """
+
+        _validate_cycles(max_cycles)
+        session = self.store.load(work_id)
+        codexia = self.store.codexia()
+
+        if session.status is SimpleWorkStatus.COMPLETED:
+            return SimpleWorkRunResult(session=session, codexia=codexia, stop="completed")
+        if session.status is SimpleWorkStatus.WAITING_HUMAN:
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=codexia,
+                stop="waiting_human",
+            )
+
+        dispatch = self._pending_persistent_dispatch(session)
+        if dispatch is None:
+            raise RuntimeError("simple work has no ambiguous persistent worker dispatch")
+
+        if session.status is not SimpleWorkStatus.RECONCILE_REQUIRED:
+            session = session.updated(status=SimpleWorkStatus.RECONCILE_REQUIRED)
+            self.store.save(session)
+
+        worker_text = self._canonical_reconciled_worker_text(session)
+        if worker_text is None:
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=codexia,
+                stop="reconcile_required",
+            )
+
+        session, codexia = self._record_worker_and_continue(
+            session,
+            codexia,
+            mode=WorkerMode.PERSISTENT,
+            worker_text=worker_text,
+            worker_conversation_id=session.worker_conversation_id,
+        )
+        if session.status is not SimpleWorkStatus.READY:
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=codexia,
+                stop=session.status.value,
+            )
         return self._drive(session, codexia, max_cycles=max_cycles)
 
     def answer(
@@ -184,58 +270,57 @@ class SimpleWorkRuntime:
 
             if mode is WorkerMode.TEMPORARY:
                 worker_response = self.provider.send_temporary(worker_prompt)
+                worker_text = worker_response.text
                 worker_conversation_id = None
             else:
-                worker_response = self.provider.send(
-                    ProviderRequest(
-                        prompt=worker_prompt,
-                        conversation=(
-                            ProviderConversation(
-                                conversation_id=session.worker_conversation_id
-                            )
-                            if session.worker_conversation_id is not None
-                            else None
-                        ),
+                try:
+                    worker_response = self.provider.send(
+                        ProviderRequest(
+                            prompt=worker_prompt,
+                            conversation=(
+                                ProviderConversation(
+                                    conversation_id=session.worker_conversation_id
+                                )
+                                if session.worker_conversation_id is not None
+                                else None
+                            ),
+                        )
                     )
-                )
-                worker_conversation_id = _conversation_id(worker_response)
-                if session.worker_conversation_id is not None:
-                    if worker_conversation_id != session.worker_conversation_id:
-                        raise RuntimeError("persistent worker conversation identity changed")
+                except ProviderError as exc:
+                    if not _is_chatgpt_turn_timeout(exc):
+                        raise
+                    session = session.updated(
+                        status=SimpleWorkStatus.RECONCILE_REQUIRED
+                    )
+                    self.store.save(session)
 
-            self.store.append_event(
-                work_id=session.work_id,
-                actor="worker",
-                text=worker_response.text,
-                conversation_id=worker_conversation_id,
-                worker_mode=mode,
-            )
-            session = session.updated(
-                worker_conversation_id=worker_conversation_id,
-                last_worker_text=worker_response.text,
-                next_worker_message=None,
-                worker_turns=session.worker_turns + 1,
-            )
-            self.store.save(session)
-            remaining -= 1
+                    # Reconciliation is read-only. First-turn timeouts cannot be
+                    # recovered here because no durable worker conversation is known.
+                    worker_text = self._canonical_reconciled_worker_text(session)
+                    if worker_text is None:
+                        return SimpleWorkRunResult(
+                            session=session,
+                            codexia=codexia,
+                            stop="reconcile_required",
+                        )
+                    worker_conversation_id = session.worker_conversation_id
+                else:
+                    worker_text = worker_response.text
+                    worker_conversation_id = _conversation_id(worker_response)
+                    if session.worker_conversation_id is not None:
+                        if worker_conversation_id != session.worker_conversation_id:
+                            raise RuntimeError(
+                                "persistent worker conversation identity changed"
+                            )
 
-            if codexia.conversation_id is None:
-                raise RuntimeError("Codexia session lost its conversation")
-            codexia_response = self.provider.send(
-                ProviderRequest(
-                    prompt=_worker_result_prompt(mode, worker_response.text),
-                    conversation=ProviderConversation(
-                        conversation_id=codexia.conversation_id
-                    ),
-                )
-            )
-            session, codexia = self._accept_codexia_response(
+            session, codexia = self._record_worker_and_continue(
                 session,
                 codexia,
-                codexia_response,
+                mode=mode,
+                worker_text=worker_text,
+                worker_conversation_id=worker_conversation_id,
             )
-            self.store.save(session)
-            self.store.save_codexia(codexia)
+            remaining -= 1
 
             if session.status is SimpleWorkStatus.WAITING_HUMAN:
                 if mode is WorkerMode.TEMPORARY:
@@ -278,6 +363,131 @@ class SimpleWorkRuntime:
             codexia=codexia,
             stop="cycle_limit",
         )
+
+    def _record_worker_and_continue(
+        self,
+        session: SimpleWorkSession,
+        codexia: SimpleCodexiaSession,
+        *,
+        mode: WorkerMode,
+        worker_text: str,
+        worker_conversation_id: str | None,
+    ) -> tuple[SimpleWorkSession, SimpleCodexiaSession]:
+        self.store.append_event(
+            work_id=session.work_id,
+            actor="worker",
+            text=worker_text,
+            conversation_id=worker_conversation_id,
+            worker_mode=mode,
+        )
+        session = session.updated(
+            status=SimpleWorkStatus.READY,
+            worker_conversation_id=worker_conversation_id,
+            last_worker_text=worker_text,
+            next_worker_message=None,
+            worker_turns=session.worker_turns + 1,
+        )
+        self.store.save(session)
+
+        if codexia.conversation_id is None:
+            raise RuntimeError("Codexia session lost its conversation")
+        codexia_response = self.provider.send(
+            ProviderRequest(
+                prompt=_worker_result_prompt(mode, worker_text),
+                conversation=ProviderConversation(
+                    conversation_id=codexia.conversation_id
+                ),
+            )
+        )
+        session, codexia = self._accept_codexia_response(
+            session,
+            codexia,
+            codexia_response,
+        )
+        self.store.save(session)
+        self.store.save_codexia(codexia)
+        return session, codexia
+
+    def _pending_persistent_dispatch(self, session: SimpleWorkSession):
+        history = self.store.history(session.work_id)
+        if not history:
+            return None
+        tail = history[-1]
+        if (
+            tail.actor != "codexia_to_worker"
+            or tail.worker_mode is not WorkerMode.PERSISTENT
+        ):
+            return None
+        return tail
+
+    def _canonical_reconciled_worker_text(
+        self,
+        session: SimpleWorkSession,
+    ) -> str | None:
+        dispatch = self._pending_persistent_dispatch(session)
+        if dispatch is None:
+            return None
+
+        conversation_id = dispatch.conversation_id or session.worker_conversation_id
+        if not conversation_id:
+            return None
+        if (
+            session.worker_conversation_id is not None
+            and conversation_id != session.worker_conversation_id
+        ):
+            return None
+
+        local_history = self.store.history(session.work_id)
+        previous_worker = None
+        for event in reversed(local_history[:-1]):
+            if (
+                event.actor == "worker"
+                and event.worker_mode is WorkerMode.PERSISTENT
+                and event.conversation_id == conversation_id
+            ):
+                previous_worker = event
+                break
+        if previous_worker is None:
+            return None
+
+        try:
+            messages = self.provider.read_messages(conversation_id)
+        except ProviderError:
+            return None
+
+        anchor_indices = [
+            index
+            for index, message in enumerate(messages)
+            if message.role == "assistant" and message.text == previous_worker.text
+        ]
+        if not anchor_indices:
+            return None
+        anchor = anchor_indices[-1]
+
+        matching_dispatches = [
+            index
+            for index, message in enumerate(messages)
+            if (
+                index > anchor
+                and message.role == "user"
+                and message.text == dispatch.text
+            )
+        ]
+        if len(matching_dispatches) != 1:
+            return None
+        dispatch_index = matching_dispatches[0]
+
+        suffix = messages[dispatch_index + 1 :]
+        if any(message.role == "user" for message in suffix):
+            return None
+        assistants = [
+            message.text
+            for message in suffix
+            if message.role == "assistant" and message.text.strip()
+        ]
+        if not assistants:
+            return None
+        return assistants[-1]
 
     def _pause_temporary_at_cycle_limit(
         self,
@@ -331,6 +541,7 @@ class SimpleWorkRuntime:
         if codexia.conversation_id is not None:
             if codexia_conversation_id != codexia.conversation_id:
                 raise RuntimeError("Codexia conversation identity changed")
+            codexia = codexia.updated()
         else:
             codexia = codexia.updated(conversation_id=codexia_conversation_id)
 
@@ -418,6 +629,7 @@ class SimpleWorkRuntime:
 
         return (
             session.updated(
+                status=SimpleWorkStatus.READY,
                 last_codexia_text=text,
                 next_worker_message=text,
                 pending_human_question=None,
@@ -437,6 +649,10 @@ def _conversation_id(response: ProviderResponse) -> str:
 def _validate_cycles(value: int) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError("max_cycles must be a positive integer")
+
+
+def _is_chatgpt_turn_timeout(exc: ProviderError) -> bool:
+    return _CHATGPT_TURN_TIMEOUT in str(exc)
 
 
 def _worker_prompt(text: str) -> str:
