@@ -13,6 +13,7 @@ from codexia_manual_agent.domain.models import (
     ProviderResponse,
 )
 from codexia_manual_agent.simple_work.session import (
+    CodexiaMode,
     SimpleCodexiaSession,
     SimpleWorkArtifact,
     SimpleWorkSession,
@@ -103,14 +104,27 @@ class SimpleWorkRuntime:
         user_request: str,
         *,
         codexia_alias: str = "general",
+        temporary_codexia: bool = False,
         max_cycles: int = 8,
     ) -> SimpleWorkRunResult:
         _validate_cycles(max_cycles)
-        codexia = self.store.codexia(codexia_alias)
+        if temporary_codexia and codexia_alias != "general":
+            raise ValueError(
+                "temporary Codexia cannot be combined with a saved Codexia alias"
+            )
+
+        if temporary_codexia:
+            codexia = SimpleCodexiaSession.create(alias="temporary")
+            codexia_mode = CodexiaMode.TEMPORARY
+        else:
+            codexia = self.store.codexia(codexia_alias)
+            codexia_mode = CodexiaMode.SAVED
+
         session = self.store.save(
             SimpleWorkSession.create(
                 user_request,
                 codexia_alias=codexia.alias,
+                codexia_mode=codexia_mode,
             )
         )
         self.store.append_event(
@@ -119,35 +133,52 @@ class SimpleWorkRuntime:
             text=session.user_request,
         )
 
-        if codexia.conversation_id is None:
-            request = ProviderRequest(prompt=_codexia_bootstrap(session.user_request))
-        else:
-            request = ProviderRequest(
-                prompt=_new_task_prompt(session.user_request),
-                conversation=ProviderConversation(
-                    conversation_id=codexia.conversation_id
-                ),
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            response = self.provider.send_temporary(
+                _temporary_codexia_bootstrap(session.user_request)
             )
-        response = self.provider.send(request)
+        elif codexia.conversation_id is None:
+            response = self.provider.send(
+                ProviderRequest(prompt=_codexia_bootstrap(session.user_request))
+            )
+        else:
+            response = self.provider.send(
+                ProviderRequest(
+                    prompt=_new_task_prompt(session.user_request),
+                    conversation=ProviderConversation(
+                        conversation_id=codexia.conversation_id
+                    ),
+                )
+            )
         session, codexia = self._accept_codexia_response(
             session,
             codexia,
             response,
         )
         self.store.save(session)
-        self.store.save_codexia(codexia)
+        self._save_codexia_if_saved(session, codexia)
 
         if session.status is not SimpleWorkStatus.READY:
-            return SimpleWorkRunResult(
+            result = SimpleWorkRunResult(
                 session=session,
                 codexia=codexia,
                 stop=session.status.value,
             )
-        return self._drive(session, codexia, max_cycles=max_cycles)
+        else:
+            result = self._drive(session, codexia, max_cycles=max_cycles)
+
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            return self._close_temporary_codexia_result(result)
+        return result
 
     def resume(self, work_id: str, *, max_cycles: int = 8) -> SimpleWorkRunResult:
         _validate_cycles(max_cycles)
         session = self.store.load(work_id)
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            raise RuntimeError(
+                "temporary Codexia work cannot cross a process boundary; "
+                "start a new temporary or saved Codexia work instead"
+            )
         codexia = self.store.codexia(session.codexia_alias)
         if session.status is SimpleWorkStatus.COMPLETED:
             return SimpleWorkRunResult(session=session, codexia=codexia, stop="completed")
@@ -192,6 +223,11 @@ class SimpleWorkRuntime:
 
         _validate_cycles(max_cycles)
         session = self.store.load(work_id)
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            raise RuntimeError(
+                "temporary Codexia work cannot cross a process boundary; "
+                "start a new temporary or saved Codexia work instead"
+            )
         codexia = self.store.codexia(session.codexia_alias)
 
         if session.status is SimpleWorkStatus.COMPLETED:
@@ -256,6 +292,11 @@ class SimpleWorkRuntime:
         if not value:
             raise ValueError("answer must be non-empty")
         session = self.store.load(work_id)
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            raise RuntimeError(
+                "temporary Codexia work cannot cross a process boundary; "
+                "start a new temporary or saved Codexia work instead"
+            )
         codexia = self.store.codexia(session.codexia_alias)
         if session.status is not SimpleWorkStatus.WAITING_HUMAN:
             raise RuntimeError("simple work is not waiting for the human")
@@ -317,6 +358,61 @@ class SimpleWorkRuntime:
             worker_turn=turn,
         )
         return artifacts
+
+    def _send_codexia_turn(
+        self,
+        session: SimpleWorkSession,
+        codexia: SimpleCodexiaSession,
+        prompt: str,
+    ) -> ProviderResponse:
+        if session.codexia_mode is CodexiaMode.TEMPORARY:
+            return self.provider.send_temporary(prompt)
+        if codexia.conversation_id is None:
+            raise RuntimeError("Codexia session lost its conversation")
+        return self.provider.send(
+            ProviderRequest(
+                prompt=prompt,
+                conversation=ProviderConversation(
+                    conversation_id=codexia.conversation_id
+                ),
+            )
+        )
+
+    def _save_codexia_if_saved(
+        self,
+        session: SimpleWorkSession,
+        codexia: SimpleCodexiaSession,
+    ) -> None:
+        if session.codexia_mode is CodexiaMode.SAVED:
+            self.store.save_codexia(codexia)
+
+    def _close_temporary_codexia_result(
+        self,
+        result: SimpleWorkRunResult,
+    ) -> SimpleWorkRunResult:
+        if result.session.codexia_mode is not CodexiaMode.TEMPORARY:
+            return result
+
+        closed = self.provider.end_temporary_chat()
+        if closed is not True:
+            raise RuntimeError("temporary Codexia lifecycle did not close cleanly")
+
+        session = result.session
+        self.store.append_event(
+            work_id=session.work_id,
+            actor="codexia_temporary_closed",
+            text=f"stop={result.stop}",
+            conversation_id=result.codexia.conversation_id,
+        )
+        if session.status is not SimpleWorkStatus.COMPLETED:
+            session = session.updated(status=SimpleWorkStatus.TEMPORARY_CLOSED)
+            self.store.save(session)
+            return SimpleWorkRunResult(
+                session=session,
+                codexia=result.codexia,
+                stop=SimpleWorkStatus.TEMPORARY_CLOSED.value,
+            )
+        return result
 
     def _drive(
         self,
@@ -505,20 +601,15 @@ class SimpleWorkRuntime:
         )
         self.store.save(session)
 
-        if codexia.conversation_id is None:
-            raise RuntimeError("Codexia session lost its conversation")
-        codexia_response = self.provider.send(
-            ProviderRequest(
-                prompt=_worker_result_prompt(
-                    mode,
-                    worker_text,
-                    artifacts=artifacts,
-                    artifact_failures=artifact_failures,
-                ),
-                conversation=ProviderConversation(
-                    conversation_id=codexia.conversation_id
-                ),
-            )
+        codexia_response = self._send_codexia_turn(
+            session,
+            codexia,
+            _worker_result_prompt(
+                mode,
+                worker_text,
+                artifacts=artifacts,
+                artifact_failures=artifact_failures,
+            ),
         )
         session, codexia = self._accept_codexia_response(
             session,
@@ -526,7 +617,7 @@ class SimpleWorkRuntime:
             codexia_response,
         )
         self.store.save(session)
-        self.store.save_codexia(codexia)
+        self._save_codexia_if_saved(session, codexia)
         return session, codexia
 
     def _pending_persistent_dispatch(self, session: SimpleWorkSession):
@@ -760,8 +851,6 @@ class SimpleWorkRuntime:
         )
         self.store.save(session)
 
-        if codexia.conversation_id is None:
-            raise RuntimeError("Codexia session lost its conversation")
         correction = (
             "Исправление transport reconciliation. Предыдущий переданный тебе "
             "ответ рабочего чата оказался промежуточным: worker ещё продолжал "
@@ -781,13 +870,10 @@ class SimpleWorkRuntime:
             text=correction,
             conversation_id=codexia.conversation_id,
         )
-        response = self.provider.send(
-            ProviderRequest(
-                prompt=correction,
-                conversation=ProviderConversation(
-                    conversation_id=codexia.conversation_id
-                ),
-            )
+        response = self._send_codexia_turn(
+            session,
+            codexia,
+            correction,
         )
         session, codexia = self._accept_codexia_response(
             session,
@@ -795,7 +881,7 @@ class SimpleWorkRuntime:
             response,
         )
         self.store.save(session)
-        self.store.save_codexia(codexia)
+        self._save_codexia_if_saved(session, codexia)
         return session, codexia
 
     def _materialize_worker_artifacts(
@@ -979,6 +1065,11 @@ class SimpleWorkRuntime:
             )
 
         if text.startswith(_TEMP_WORKER):
+            if session.codexia_mode is CodexiaMode.TEMPORARY:
+                raise RuntimeError(
+                    "temporary Codexia cannot create a temporary worker because "
+                    "CWA owns one live Temporary lifecycle; use a persistent worker"
+                )
             if session.worker_mode is not WorkerMode.NONE:
                 raise RuntimeError("Codexia tried to replace an active worker")
             instruction = text[len(_TEMP_WORKER) :].strip()
@@ -1141,6 +1232,40 @@ def _new_task_prompt(user_request: str) -> str:
 
 Если требуется настоящее решение пользователя:
 К ПОЛЬЗОВАТЕЛЮ: <один ясный вопрос>
+"""
+
+
+def _temporary_codexia_bootstrap(user_request: str) -> str:
+    return f"""Ты — Codexia в одноразовом Temporary Chat.
+
+Этот чат существует только в текущем процессе Simple Work и не станет selectable
+saved Codexia chat. Локальный transcript работы сохранится, но после завершения
+этого запуска продолжить именно этот Temporary Chat будет нельзя.
+
+Решай простые и достаточно сложные одноразовые задачи сама. Не создавай worker
+просто по привычке. Если действительно нужна отдельная длинная ветка работы,
+можно использовать только:
+
+ПОСТОЯННЫЙ WORKER: <поручение>
+
+ВРЕМЕННЫЙ WORKER в этом режиме запрещён: CWA поддерживает один live Temporary
+lifecycle, и он уже принадлежит этому Codexia-чату.
+
+Если задача завершена:
+ГОТОВО: <готовый итог>
+
+Если без решения пользователя продолжать нельзя:
+К ПОЛЬЗОВАТЕЛЮ: <один ясный вопрос>
+
+Помни: human boundary завершит этот Temporary Chat; следующего turn в нём уже не
+будет. Поэтому задавай вопрос только когда без него действительно нельзя.
+
+Worker — помощник Codexia, а не пользователь. Не используй JSON, digests или
+внутреннюю служебную онтологию.
+
+Текущее поручение пользователя:
+
+{user_request}
 """
 
 
