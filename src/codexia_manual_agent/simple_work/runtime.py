@@ -1229,6 +1229,13 @@ def _worker_result_prompt(
     label = "временный" if mode is WorkerMode.TEMPORARY else "постоянный"
     prompt = f"{label.capitalize()} рабочий чат ответил:\n\n{text}"
     prompt += _artifact_context(artifacts, artifact_failures)
+    prompt += (
+        "\nЭтот worker уже активен для текущей работы. Если ему нужен следующий "
+        "шаг, ответь обычным текстом следующего поручения — Simple Work отправит "
+        "его в тот же worker-чат. Не создавай worker заново. Если работа полностью "
+        "завершена, ответь ГОТОВО: <итог>. Если без решения пользователя продолжать "
+        "нельзя, ответь К ПОЛЬЗОВАТЕЛЮ: <вопрос>."
+    )
     return prompt
 
 

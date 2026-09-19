@@ -22,7 +22,20 @@ from codexia_manual_agent.simple_work.runtime import (
     _codexia_bootstrap,
     _new_task_prompt,
     _temporary_codexia_bootstrap,
+    _worker_result_prompt,
 )
+
+
+def test_worker_result_prompt_explains_same_worker_continuation() -> None:
+    prompt = _worker_result_prompt(
+        WorkerMode.PERSISTENT,
+        "Первый этап готов.",
+    )
+
+    assert "worker уже активен" in prompt
+    assert "обычным текстом" in prompt
+    assert "тот же worker-чат" in prompt
+    assert "ГОТОВО:" in prompt
 
 
 def test_codexia_prompts_honor_explicit_worker_routing() -> None:
