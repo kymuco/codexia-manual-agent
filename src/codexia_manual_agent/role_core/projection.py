@@ -10,8 +10,8 @@ from typing import Any
 from uuid import UUID
 
 from codexia_manual_agent.role_core.models import (
-    COGNITION_REQUESTED_EVENT,
     COGNITION_REQUEST_SCHEMA_VERSION,
+    COGNITION_REQUESTED_EVENT,
     ROLE_COMPLETED_EVENT,
     ROLE_FAILED_EVENT,
     ROLE_OUTCOME_UNKNOWN_EVENT,
