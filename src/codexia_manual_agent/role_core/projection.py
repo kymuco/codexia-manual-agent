@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from codexia_manual_agent.work_core import WorkEvent
 from codexia_manual_agent.role_core.models import (
+    COGNITION_REQUESTED_EVENT,
+    COGNITION_REQUEST_SCHEMA_VERSION,
     ROLE_COMPLETED_EVENT,
     ROLE_FAILED_EVENT,
     ROLE_OUTCOME_UNKNOWN_EVENT,
@@ -18,15 +22,19 @@ from codexia_manual_agent.role_core.models import (
     RoleRunState,
 )
 
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
 
 class RoleProjectionError(RuntimeError):
-    """Durable Work chronology violates G2.3 role semantics."""
+    """Durable Work chronology violates G2.3 role/cognition semantics."""
 
 
 @dataclass(slots=True)
 class _RoleState:
     run: RoleRun
     state: RoleRunState = RoleRunState.ACTIVE
+    request_id: str | None = None
+    request_digest: str | None = None
     terminal_event_id: str | None = None
     output_text: str | None = None
     error: str | None = None
@@ -34,10 +42,41 @@ class _RoleState:
 
 _ROLE_EVENT_KINDS = {
     ROLE_STARTED_EVENT,
+    COGNITION_REQUESTED_EVENT,
     ROLE_COMPLETED_EVENT,
     ROLE_FAILED_EVENT,
     ROLE_OUTCOME_UNKNOWN_EVENT,
 }
+
+_REQUEST_RECORD_KEYS = {
+    "schema_version",
+    "request_id",
+    "created_at",
+    "role_run_id",
+    "role_run_digest",
+    "work_id",
+    "work_digest",
+    "workflow_run_id",
+    "workflow_run_digest",
+    "expected_revision",
+    "expected_event_digest",
+    "instructions_digest",
+    "context_digest",
+    "request_digest",
+}
+
+
+def _is_uuid(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(UUID(value)) == value
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _is_digest(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
 
 
 def _unwrap_role_event(event: WorkEvent) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -56,6 +95,49 @@ def _unwrap_role_event(event: WorkEvent) -> tuple[dict[str, Any], dict[str, Any]
     if not isinstance(body, dict):
         raise RoleProjectionError("Role event body must be an object")
     return provenance, body
+
+
+def _request_record(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _REQUEST_RECORD_KEYS:
+        raise RoleProjectionError("cognition request record keys are not exact")
+    if value["schema_version"] != COGNITION_REQUEST_SCHEMA_VERSION:
+        raise RoleProjectionError("Unsupported cognition request record schema")
+    for field_name in ("request_id", "role_run_id", "work_id", "workflow_run_id"):
+        if not _is_uuid(value[field_name]):
+            raise RoleProjectionError(
+                f"cognition request {field_name} is not canonical UUID"
+            )
+    for field_name in (
+        "request_digest",
+        "role_run_digest",
+        "work_digest",
+        "workflow_run_digest",
+        "instructions_digest",
+        "context_digest",
+    ):
+        if not _is_digest(value[field_name]):
+            raise RoleProjectionError(
+                f"cognition request {field_name} is not SHA-256"
+            )
+    if (
+        type(value["expected_revision"]) is not int
+        or value["expected_revision"] < 0
+    ):
+        raise RoleProjectionError(
+            "cognition request expected_revision must be non-negative integer"
+        )
+    if value["expected_event_digest"] is None:
+        if value["expected_revision"] != 0:
+            raise RoleProjectionError(
+                "nonzero cognition request revision requires event digest"
+            )
+    elif not _is_digest(value["expected_event_digest"]):
+        raise RoleProjectionError(
+            "cognition request expected_event_digest is not SHA-256"
+        )
+    if not isinstance(value["created_at"], str) or not value["created_at"]:
+        raise RoleProjectionError("cognition request created_at is invalid")
+    return value
 
 
 def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, ...]:
@@ -112,6 +194,85 @@ def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, .
             order.append(run.role_run_id)
             continue
 
+        if event.kind == COGNITION_REQUESTED_EVENT:
+            if set(body) != {"cognition_request"}:
+                raise RoleProjectionError(
+                    "role.cognition-requested body is not exact"
+                )
+            request = _request_record(body["cognition_request"])
+            state = states.get(request["role_run_id"])
+            if state is None:
+                raise RoleProjectionError(
+                    "cognition request references unknown RoleRun"
+                )
+            run = state.run
+            if state.state is not RoleRunState.ACTIVE:
+                raise RoleProjectionError(
+                    "RoleRun received more than one cognition request"
+                )
+            if event.event_id != request["request_id"]:
+                raise RoleProjectionError(
+                    "cognition request event identity changed"
+                )
+            if event.created_at != request["created_at"]:
+                raise RoleProjectionError(
+                    "cognition request event timestamp changed"
+                )
+            if event.work_id != run.work_id or request["work_id"] != run.work_id:
+                raise RoleProjectionError("cognition request crosses Work identity")
+            if not hmac.compare_digest(request["work_digest"], run.work_digest):
+                raise RoleProjectionError("cognition request changed Work binding")
+            if request["workflow_run_id"] != run.workflow_run_id:
+                raise RoleProjectionError(
+                    "cognition request changed WorkflowRun identity"
+                )
+            if not hmac.compare_digest(
+                request["workflow_run_digest"],
+                run.workflow_run_digest,
+            ):
+                raise RoleProjectionError(
+                    "cognition request changed WorkflowRun binding"
+                )
+            if request["role_run_id"] != run.role_run_id:
+                raise RoleProjectionError("cognition request changed RoleRun identity")
+            if not hmac.compare_digest(
+                request["role_run_digest"],
+                run.run_digest,
+            ):
+                raise RoleProjectionError("cognition request changed RoleRun binding")
+            if request["instructions_digest"] != run.binding.instructions_digest:
+                raise RoleProjectionError(
+                    "cognition request changed RoleBinding instructions"
+                )
+            if request["context_digest"] != run.context.content_digest:
+                raise RoleProjectionError(
+                    "cognition request changed ContextProjection"
+                )
+            if event.sequence != request["expected_revision"] + 1:
+                raise RoleProjectionError(
+                    "cognition request event sequence changed"
+                )
+            if event.previous_event_digest != request["expected_event_digest"]:
+                raise RoleProjectionError(
+                    "cognition request prior event binding changed"
+                )
+            if workflow_provenance["workflow_run_id"] != run.workflow_run_id:
+                raise RoleProjectionError(
+                    "cognition request wrapper changed WorkflowRun identity"
+                )
+            if not hmac.compare_digest(
+                workflow_provenance["workflow_run_digest"],
+                run.workflow_run_digest,
+            ):
+                raise RoleProjectionError(
+                    "cognition request wrapper changed WorkflowRun binding"
+                )
+
+            state.state = RoleRunState.REQUESTED
+            state.request_id = request["request_id"]
+            state.request_digest = request["request_digest"]
+            continue
+
         if set(body) != {"cognition_outcome"} or not isinstance(
             body["cognition_outcome"],
             dict,
@@ -130,8 +291,21 @@ def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, .
                 "Role terminal event references unknown RoleRun"
             )
         run = state.run
-        if state.state is not RoleRunState.ACTIVE:
-            raise RoleProjectionError("Role terminal event follows terminal RoleRun")
+        if state.state is not RoleRunState.REQUESTED:
+            raise RoleProjectionError(
+                "Role terminal outcome requires one admitted cognition request"
+            )
+        if state.request_id != outcome.request_id:
+            raise RoleProjectionError(
+                "CognitionOutcome changed cognition request identity"
+            )
+        if state.request_digest is None or not hmac.compare_digest(
+            state.request_digest,
+            outcome.request_digest,
+        ):
+            raise RoleProjectionError(
+                "CognitionOutcome changed cognition request binding"
+            )
         if event.event_id != outcome.outcome_id:
             raise RoleProjectionError(
                 "Role terminal event identity differs from CognitionOutcome"
@@ -151,8 +325,6 @@ def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, .
             run.workflow_run_digest,
         ):
             raise RoleProjectionError("CognitionOutcome changed WorkflowRun binding")
-        if outcome.role_run_id != run.role_run_id:
-            raise RoleProjectionError("CognitionOutcome changed RoleRun identity")
         if not hmac.compare_digest(outcome.role_run_digest, run.run_digest):
             raise RoleProjectionError("CognitionOutcome changed RoleRun binding")
         if workflow_provenance["workflow_run_id"] != run.workflow_run_id:
@@ -192,6 +364,8 @@ def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, .
         RoleRunSnapshot(
             run=states[role_run_id].run,
             state=states[role_run_id].state,
+            request_id=states[role_run_id].request_id,
+            request_digest=states[role_run_id].request_digest,
             terminal_event_id=states[role_run_id].terminal_event_id,
             output_text=states[role_run_id].output_text,
             error=states[role_run_id].error,
