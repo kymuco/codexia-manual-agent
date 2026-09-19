@@ -5,7 +5,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 from types import MappingProxyType
@@ -124,7 +124,7 @@ def _validate_timestamp(value: Any, field_name: str) -> str:
 
 
 def _new_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _bounded_text(value: Any, field_name: str, max_chars: int) -> str:
@@ -153,7 +153,7 @@ class WorkIngressBinding:
         source_namespace: str,
         source_id: str,
         payload_digest: str,
-    ) -> "WorkIngressBinding":
+    ) -> WorkIngressBinding:
         namespace = _bounded_text(
             source_namespace,
             "source_namespace",
@@ -199,7 +199,7 @@ class WorkIngressBinding:
         return {**self._base_dict(), "binding_digest": self.binding_digest}
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "WorkIngressBinding":
+    def from_dict(cls, value: Mapping[str, Any]) -> WorkIngressBinding:
         return cls(
             schema_version=value["schema_version"],
             source_namespace=value["source_namespace"],
@@ -228,7 +228,7 @@ class Work:
         ingress: WorkIngressBinding,
         work_id: str | None = None,
         created_at: str | None = None,
-    ) -> "Work":
+    ) -> Work:
         if not isinstance(ingress, WorkIngressBinding):
             raise TypeError("ingress must be WorkIngressBinding")
         work_id = work_id or str(uuid4())
@@ -279,7 +279,7 @@ class Work:
         return {**self._base_dict(), "work_digest": self.work_digest}
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "Work":
+    def from_dict(cls, value: Mapping[str, Any]) -> Work:
         return cls(
             schema_version=value["schema_version"],
             work_id=value["work_id"],
@@ -289,7 +289,7 @@ class Work:
             work_digest=value["work_digest"],
         )
 
-    def same_ingress_semantics(self, other: "Work") -> bool:
+    def same_ingress_semantics(self, other: Work) -> bool:
         return (
             isinstance(other, Work)
             and self.objective == other.objective
@@ -322,7 +322,7 @@ class WorkEvent:
         previous_event_digest: str | None,
         event_id: str | None = None,
         created_at: str | None = None,
-    ) -> "WorkEvent":
+    ) -> WorkEvent:
         event_id = event_id or str(uuid4())
         created_at = created_at or _new_timestamp()
         _validate_uuid(event_id, "event_id")
@@ -393,7 +393,7 @@ class WorkEvent:
         return {**_thaw_json(self._base_dict()), "event_digest": self.event_digest}
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "WorkEvent":
+    def from_dict(cls, value: Mapping[str, Any]) -> WorkEvent:
         return cls(
             schema_version=value["schema_version"],
             event_id=value["event_id"],
