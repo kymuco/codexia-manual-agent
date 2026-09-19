@@ -309,3 +309,52 @@ def test_projection_rejects_unbound_workflow_terminal_event(tmp_path) -> None:
 
     with pytest.raises(WorkflowProjectionError):
         project_workflow_runs(store.events(run.work_id))
+
+
+def test_projection_rejects_workflow_run_shape_drift(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    initial = store.create(_work())
+    run = WorkflowRun.create(snapshot=initial, binding=_binding())
+    start = run.to_start_event()
+    payload = start.to_dict()["payload"]
+    payload["workflow_run"]["unexpected"] = True
+    forged = WorkEvent.create(
+        work_id=start.work_id,
+        sequence=start.sequence,
+        kind=start.kind,
+        payload=payload,
+        previous_event_digest=start.previous_event_digest,
+        event_id=start.event_id,
+        created_at=start.created_at,
+    )
+    store.append(initial.work.work_id, expected_revision=0, event=forged)
+
+    with pytest.raises(WorkflowProjectionError):
+        project_workflow_runs(store.events(initial.work.work_id))
+
+
+def test_projection_rejects_raw_workflow_direct_work_completion(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    run, _ = _started_run(store)
+    current = store.snapshot(run.work_id)
+    forged = WorkEvent.create(
+        work_id=run.work_id,
+        sequence=current.revision + 1,
+        kind=WORK_COMPLETED_EVENT,
+        payload={
+            "_workflow": {
+                "workflow_run_id": run.workflow_run_id,
+                "workflow_run_digest": run.run_digest,
+            },
+            "payload": {"summary": "bypass"},
+        },
+        previous_event_digest=current.last_event_digest,
+    )
+    store.append(
+        run.work_id,
+        expected_revision=current.revision,
+        event=forged,
+    )
+
+    with pytest.raises(WorkflowProjectionError):
+        project_workflow_runs(store.events(run.work_id))
