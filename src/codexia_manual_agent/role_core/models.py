@@ -645,10 +645,13 @@ class CognitionRequest:
             "expected_event_digest": snapshot.last_event_digest,
             "instructions_digest": _text_digest(instructions),
             "context_digest": _text_digest(context),
-            "instructions": instructions,
-            "context": context,
         }
-        return cls(**base, request_digest=_digest(base))
+        return cls(
+            **base,
+            instructions=instructions,
+            context=context,
+            request_digest=_digest(base),
+        )
 
     def __post_init__(self) -> None:
         if self.schema_version != COGNITION_REQUEST_SCHEMA_VERSION:
@@ -698,10 +701,13 @@ class CognitionRequest:
         ):
             raise InvalidRoleRecord("CognitionRequest context digest mismatch")
         _validate_digest(self.request_digest, "request_digest")
-        if not hmac.compare_digest(self.request_digest, _digest(self._base_dict())):
+        if not hmac.compare_digest(
+            self.request_digest,
+            _digest(self._durable_base_dict()),
+        ):
             raise InvalidRoleRecord("CognitionRequest digest mismatch")
 
-    def _base_dict(self) -> dict[str, Any]:
+    def _durable_base_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "request_id": self.request_id,
@@ -716,25 +722,11 @@ class CognitionRequest:
             "expected_event_digest": self.expected_event_digest,
             "instructions_digest": self.instructions_digest,
             "context_digest": self.context_digest,
-            "instructions": self.instructions,
-            "context": self.context,
         }
 
     def durable_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
-            "request_id": self.request_id,
-            "created_at": self.created_at,
-            "role_run_id": self.role_run_id,
-            "role_run_digest": self.role_run_digest,
-            "work_id": self.work_id,
-            "work_digest": self.work_digest,
-            "workflow_run_id": self.workflow_run_id,
-            "workflow_run_digest": self.workflow_run_digest,
-            "expected_revision": self.expected_revision,
-            "expected_event_digest": self.expected_event_digest,
-            "instructions_digest": self.instructions_digest,
-            "context_digest": self.context_digest,
+            **self._durable_base_dict(),
             "request_digest": self.request_digest,
         }
 
