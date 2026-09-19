@@ -437,3 +437,57 @@ def test_role_output_does_not_finish_workflow_when_role_completes(tmp_path) -> N
         workflow_run.workflow_run_id,
     ).state is WorkflowRunState.COMPLETED
     assert store.snapshot(role_run.work_id).state is WorkState.ACTIVE
+
+
+def test_exact_role_start_retry_is_idempotent(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, role_run, first = _started_role(store)
+
+    retried = RoleAdmission(store).admit_start(role_run)
+
+    assert retried == first
+    assert len(store.events(role_run.work_id)) == 2
+
+
+def test_second_distinct_request_for_requested_role_is_rejected(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, role_run, _, requested = _admitted_request(store)
+
+    with pytest.raises(InvalidRoleRecord):
+        CognitionRequest.create(
+            role=requested,
+            snapshot=store.snapshot(role_run.work_id),
+            instructions=INSTRUCTIONS,
+            context=CONTEXT,
+        )
+
+
+def test_projection_rejects_tampered_durable_request_digest(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, role_run, role = _started_role(store)
+    request = CognitionRequest.create(
+        role=role,
+        snapshot=store.snapshot(role_run.work_id),
+        instructions=INSTRUCTIONS,
+        context=CONTEXT,
+    )
+    candidate = request.to_workflow_candidate()
+    payload = candidate.event.to_dict()["payload"]
+    payload["payload"]["cognition_request"]["request_digest"] = "0" * 64
+    forged = WorkEvent.create(
+        work_id=candidate.event.work_id,
+        sequence=candidate.event.sequence,
+        kind=candidate.event.kind,
+        payload=payload,
+        previous_event_digest=candidate.event.previous_event_digest,
+        event_id=candidate.event.event_id,
+        created_at=candidate.event.created_at,
+    )
+    store.append(
+        role_run.work_id,
+        expected_revision=candidate.expected_revision,
+        event=forged,
+    )
+
+    with pytest.raises(RoleProjectionError):
+        project_role_runs(store.events(role_run.work_id))
