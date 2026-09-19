@@ -12,10 +12,7 @@ from codexia_manual_agent.workflow_core.models import (
     WorkflowRunSnapshot,
     WorkflowRunState,
 )
-from codexia_manual_agent.workflow_core.projection import (
-    WorkflowProjectionError,
-    project_workflow_run,
-)
+from codexia_manual_agent.workflow_core.projection import project_workflow_run
 
 
 class WorkflowAdmissionError(RuntimeError):
