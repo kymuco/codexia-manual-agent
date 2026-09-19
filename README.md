@@ -69,17 +69,17 @@ Simple Work currently supports:
 Start a normal work item:
 
 ```powershell
-python -m codexia_manual_agent.simple_work.cli start ^
-  "Придумай три нейтральных названия для тестового проекта заметок." ^
+python -m codexia_manual_agent.simple_work.cli start `
+  "Придумай три нейтральных названия для тестового проекта заметок." `
   --auth-file auth_data.json
 ```
 
 Start a disposable Temporary Codexia work item:
 
 ```powershell
-python -m codexia_manual_agent.simple_work.cli start ^
-  "Одноразово исследуй этот вопрос и дай итог." ^
-  --temporary-codexia ^
+python -m codexia_manual_agent.simple_work.cli start `
+  "Одноразово исследуй этот вопрос и дай итог." `
+  --temporary-codexia `
   --auth-file auth_data.json
 ```
 
@@ -96,12 +96,12 @@ python -m codexia_manual_agent.simple_work.cli reconcile <work_id>
 Saved Codexia contexts can be registered and selected explicitly:
 
 ```powershell
-python -m codexia_manual_agent.simple_work.cli codexia-add ^
+python -m codexia_manual_agent.simple_work.cli codexia-add `
   voice-engine <conversation_id>
 
-python -m codexia_manual_agent.simple_work.cli start ^
-  "Продолжи Voice Engine." ^
-  --codexia voice-engine ^
+python -m codexia_manual_agent.simple_work.cli start `
+  "Продолжи Voice Engine." `
+  --codexia voice-engine `
   --auth-file auth_data.json
 ```
 
@@ -160,8 +160,8 @@ It includes:
 Example read-only task:
 
 ```powershell
-codexia run "Inspect this repository and summarize its architecture" ^
-  --workspace W:\dev\some-repository ^
+codexia run "Inspect this repository and summarize its architecture" `
+  --workspace W:\dev\some-repository `
   --auth-file W:\secrets\auth_data.json
 ```
 
@@ -177,11 +177,11 @@ codexia inspect --workspace W:\dev\some-repository git-status
 Human-authorized bounded process execution:
 
 ```powershell
-codexia exec ^
-  --workspace W:\dev\some-repository ^
-  --approve ^
-  --timeout 60 ^
-  -- ^
+codexia exec `
+  --workspace W:\dev\some-repository `
+  --approve `
+  --timeout 60 `
+  -- `
   python -m pytest -q
 ```
 
