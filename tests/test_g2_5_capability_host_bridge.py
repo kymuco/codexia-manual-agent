@@ -17,6 +17,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityHostRequest,
     CapabilityHostRoutingConflictError,
     CapabilityNeed,
+    CapabilityNeedSnapshot,
     CapabilityNeedState,
     CapabilityOutcome,
     project_capability_handoff,
@@ -468,17 +469,22 @@ def test_projection_rejects_handoff_after_terminal_outcome(tmp_path) -> None:
     )
     CapabilityAdmission(store).admit_outcome(outcome)
 
-    current = store.snapshot(pending.need.work_id)
-    handoff = CapabilityHandoff(
-        schema_version=1,
-        handoff_id=str(__import__("uuid").uuid4()),
-        created_at=outcome.created_at,
-        host_id="standalone.local",
-        need_id=pending.need.need_id,
-        need_digest=pending.need.need_digest,
-        work_id=pending.need.work_id,
-        work_digest=pending.need.work_digest,
-        start_revision=current.revision,
-        start_event_digest=current.last_event_digest,
-        handoff_digest="0" * 64,
+    synthetic_pending = CapabilityNeedSnapshot(
+        need=pending.need,
+        state=CapabilityNeedState.PENDING,
+        outcome=None,
     )
+    current = store.snapshot(pending.need.work_id)
+    handoff = CapabilityHandoff.create(
+        need=synthetic_pending,
+        snapshot=current,
+        host_id="standalone.local",
+    )
+    store.append(
+        pending.need.work_id,
+        expected_revision=current.revision,
+        event=handoff.to_event(),
+    )
+
+    with pytest.raises(CapabilityHandoffProjectionError):
+        project_capability_handoffs(store.events(pending.need.work_id))
