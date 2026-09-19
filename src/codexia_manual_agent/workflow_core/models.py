@@ -244,7 +244,17 @@ class WorkflowRun:
             "start_revision": snapshot.revision,
             "start_event_digest": snapshot.last_event_digest,
         }
-        return cls(**base, binding=binding, run_digest=_digest(base))
+        return cls(
+            schema_version=WORKFLOW_RUN_SCHEMA_VERSION,
+            workflow_run_id=workflow_run_id,
+            created_at=created_at,
+            work_id=snapshot.work.work_id,
+            work_digest=snapshot.work.work_digest,
+            binding=binding,
+            start_revision=snapshot.revision,
+            start_event_digest=snapshot.last_event_digest,
+            run_digest=_digest(base),
+        )
 
     def __post_init__(self) -> None:
         if self.schema_version != WORKFLOW_RUN_SCHEMA_VERSION:
