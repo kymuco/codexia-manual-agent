@@ -358,3 +358,28 @@ def test_projection_rejects_raw_workflow_direct_work_completion(tmp_path) -> Non
 
     with pytest.raises(WorkflowProjectionError):
         project_workflow_runs(store.events(run.work_id))
+
+
+def test_projection_ignores_unrelated_non_object_payload(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    run, _ = _started_run(store)
+    current = store.snapshot(run.work_id)
+    unrelated = WorkEvent.create(
+        work_id=run.work_id,
+        sequence=current.revision + 1,
+        kind="domain.list-observation",
+        payload=["one", "two"],  # type: ignore[arg-type]
+        previous_event_digest=current.last_event_digest,
+    )
+    store.append(
+        run.work_id,
+        expected_revision=current.revision,
+        event=unrelated,
+    )
+
+    projected = project_workflow_run(
+        store.events(run.work_id),
+        run.workflow_run_id,
+    )
+
+    assert projected.state is WorkflowRunState.ACTIVE
