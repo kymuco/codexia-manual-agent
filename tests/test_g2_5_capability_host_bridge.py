@@ -8,8 +8,8 @@ from codexia_manual_agent.capability_core import (
     CAPABILITY_HANDOFF_ADMITTED_EVENT,
     CapabilityAdmission,
     CapabilityBinding,
-    CapabilityHandoffProjectionError,
     CapabilityHandoff,
+    CapabilityHandoffProjectionError,
     CapabilityHostBindingError,
     CapabilityHostBridge,
     CapabilityHostBridgeError,
@@ -19,7 +19,6 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedState,
     CapabilityOutcome,
-    InvalidCapabilityHostRecord,
     project_capability_handoff,
     project_capability_handoffs,
 )
@@ -456,3 +455,30 @@ def test_only_one_handoff_event_is_recorded(tmp_path) -> None:
         if event.kind == CAPABILITY_HANDOFF_ADMITTED_EVENT
     ]
     assert len(handoff_events) == 1
+
+
+def test_projection_rejects_handoff_after_terminal_outcome(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, _, pending = _pending_need(store)
+    outcome = CapabilityOutcome.failed(
+        pending,
+        attempt_id="terminal-attempt",
+        attempt_digest=_sha("terminal-attempt"),
+        error="terminal failure",
+    )
+    CapabilityAdmission(store).admit_outcome(outcome)
+
+    current = store.snapshot(pending.need.work_id)
+    handoff = CapabilityHandoff(
+        schema_version=1,
+        handoff_id=str(__import__("uuid").uuid4()),
+        created_at=outcome.created_at,
+        host_id="standalone.local",
+        need_id=pending.need.need_id,
+        need_digest=pending.need.need_digest,
+        work_id=pending.need.work_id,
+        work_digest=pending.need.work_digest,
+        start_revision=current.revision,
+        start_event_digest=current.last_event_digest,
+        handoff_digest="0" * 64,
+    )
