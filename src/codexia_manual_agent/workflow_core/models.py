@@ -62,6 +62,16 @@ def _digest(value: Any) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _exact_keys(
+    value: Mapping[str, Any],
+    expected: set[str],
+    record_name: str,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise InvalidWorkflowRecord(f"{record_name} keys are not exact")
+    return value
+
+
 def _validate_uuid(value: Any, field_name: str) -> str:
     if not isinstance(value, str):
         raise InvalidWorkflowRecord(f"{field_name} must be a canonical UUID")
@@ -192,6 +202,17 @@ class WorkflowBinding:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> WorkflowBinding:
+        value = _exact_keys(
+            value,
+            {
+                "schema_version",
+                "workflow_id",
+                "version",
+                "definition_digest",
+                "binding_digest",
+            },
+            "WorkflowBinding",
+        )
         return cls(
             schema_version=value["schema_version"],
             workflow_id=value["workflow_id"],
@@ -299,6 +320,21 @@ class WorkflowRun:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> WorkflowRun:
+        value = _exact_keys(
+            value,
+            {
+                "schema_version",
+                "workflow_run_id",
+                "created_at",
+                "work_id",
+                "work_digest",
+                "binding",
+                "start_revision",
+                "start_event_digest",
+                "run_digest",
+            },
+            "WorkflowRun",
+        )
         return cls(
             schema_version=value["schema_version"],
             workflow_run_id=value["workflow_run_id"],
