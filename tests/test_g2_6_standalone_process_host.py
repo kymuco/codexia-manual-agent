@@ -99,7 +99,7 @@ def test_adapter_requires_explicit_boolean_approval(tmp_path) -> None:
         StandaloneProcessCapabilityPort(
             workspace=tmp_path,
             binding=_binding(),
-            approved=None,  # type: ignore[arg-type]
+            approved=None,
         )
 
 
@@ -297,7 +297,7 @@ def test_workspace_root_is_host_configuration_not_need_payload(tmp_path) -> None
 
 def test_unexpected_service_exception_becomes_unknown_outcome(tmp_path) -> None:
     class ExplodingService:
-        def run(self, **kwargs):
+        def run(self, **_kwargs):
             raise RuntimeError("synthetic adapter ambiguity")
 
     store = SqliteWorkStore(tmp_path / "work.sqlite")
@@ -307,7 +307,7 @@ def test_unexpected_service_exception_becomes_unknown_outcome(tmp_path) -> None:
         workspace=tmp_path,
         binding=binding,
         approved=True,
-        service=ExplodingService(),  # type: ignore[arg-type]
+        service=ExplodingService(),
     )
 
     resolved = CapabilityHostBridge(store).dispatch_once(pending, port)
