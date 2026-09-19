@@ -9,7 +9,6 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
-from codexia_manual_agent.work_core import WorkEvent
 from codexia_manual_agent.role_core.models import (
     COGNITION_REQUESTED_EVENT,
     COGNITION_REQUEST_SCHEMA_VERSION,
@@ -24,6 +23,7 @@ from codexia_manual_agent.role_core.models import (
     RoleRunSnapshot,
     RoleRunState,
 )
+from codexia_manual_agent.work_core import WorkEvent
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
