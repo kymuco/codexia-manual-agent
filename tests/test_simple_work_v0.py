@@ -51,7 +51,7 @@ def test_codexia_prompts_honor_explicit_worker_routing() -> None:
         assert "явн" in prompt.lower()
         assert "обязатель" in prompt.lower()
         assert "не запускает worker" in prompt
-        assert "Не отвеч" in prompt and "ГОТОВО:" in prompt
+        assert "не отвеч" in prompt.lower() and "ГОТОВО:" in prompt
 
 
 @dataclass(frozen=True)
