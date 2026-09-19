@@ -161,7 +161,7 @@ def test_store_rejects_event_after_terminal_work(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     initial = store.create(_work())
     terminal_event = initial.next_event(kind=WORK_COMPLETED_EVENT)
-    terminal = store.append(initial.work.work_id, expected_revision=0, event=terminal_event)
+    store.append(initial.work.work_id, expected_revision=0, event=terminal_event)
 
     forged = terminal_event.create(
         work_id=initial.work.work_id,
