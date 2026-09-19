@@ -130,7 +130,6 @@ class AsyncHost:
     def submit(self, request: CapabilityHostRequest) -> None:
         self.calls += 1
         self.request = request
-        return None
 
 
 class RaisingHost:
