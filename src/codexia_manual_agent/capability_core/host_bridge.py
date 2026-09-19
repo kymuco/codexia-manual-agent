@@ -103,7 +103,7 @@ class CapabilityHostBridge:
             event=handoff.to_event(),
         )
 
-        request = CapabilityHostRequest(handoff=handoff, need=source)
+        request = CapabilityHostRequest(handoff=handoff, need=recovered)
         try:
             outcome = port.submit(request)
         except Exception as exc:
