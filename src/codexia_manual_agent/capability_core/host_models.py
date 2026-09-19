@@ -11,7 +11,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from codexia_manual_agent.capability_core.models import (
-    CapabilityNeed,
     CapabilityNeedSnapshot,
     CapabilityNeedState,
 )
@@ -304,31 +303,36 @@ class CapabilityHostRequest:
     """
 
     handoff: CapabilityHandoff
-    need: CapabilityNeed
+    need: CapabilityNeedSnapshot
 
     def __post_init__(self) -> None:
         if not isinstance(self.handoff, CapabilityHandoff):
             raise TypeError("handoff must be CapabilityHandoff")
-        if not isinstance(self.need, CapabilityNeed):
-            raise TypeError("need must be CapabilityNeed")
-        if self.handoff.need_id != self.need.need_id:
+        if not isinstance(self.need, CapabilityNeedSnapshot):
+            raise TypeError("need must be CapabilityNeedSnapshot")
+        if self.need.state is not CapabilityNeedState.PENDING:
+            raise InvalidCapabilityHostRecord(
+                "CapabilityHostRequest requires pending CapabilityNeed"
+            )
+        source = self.need.need
+        if self.handoff.need_id != source.need_id:
             raise InvalidCapabilityHostRecord(
                 "CapabilityHostRequest changed Need identity"
             )
         if not hmac.compare_digest(
             self.handoff.need_digest,
-            self.need.need_digest,
+            source.need_digest,
         ):
             raise InvalidCapabilityHostRecord(
                 "CapabilityHostRequest changed Need binding"
             )
-        if self.handoff.work_id != self.need.work_id:
+        if self.handoff.work_id != source.work_id:
             raise InvalidCapabilityHostRecord(
                 "CapabilityHostRequest changed Work identity"
             )
         if not hmac.compare_digest(
             self.handoff.work_digest,
-            self.need.work_digest,
+            source.work_digest,
         ):
             raise InvalidCapabilityHostRecord(
                 "CapabilityHostRequest changed Work binding"
