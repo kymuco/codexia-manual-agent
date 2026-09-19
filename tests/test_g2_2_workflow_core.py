@@ -368,7 +368,7 @@ def test_projection_ignores_unrelated_non_object_payload(tmp_path) -> None:
         work_id=run.work_id,
         sequence=current.revision + 1,
         kind="domain.list-observation",
-        payload=["one", "two"],  # type: ignore[arg-type]
+        payload=["one", "two"],
         previous_event_digest=current.last_event_digest,
     )
     store.append(
