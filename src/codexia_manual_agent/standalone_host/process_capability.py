@@ -32,6 +32,8 @@ PROCESS_CAPABILITY_VERSION = "1.0.0"
 PROCESS_OPERATION = "run"
 
 _REQUIRED_PARAMETER_KEYS = {"argv", "cwd_ref", "cwd", "limits"}
+_MAX_OUTCOME_STREAM_TEXT_CHARS = 32_768
+_MAX_OUTCOME_ERROR_CHARS = 16_000
 
 
 class StandaloneProcessHostError(RuntimeError):
@@ -52,17 +54,32 @@ def _sha256_json(value: Any) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _bounded_text(value: str, limit: int) -> str:
+    return value[:limit] if len(value) > limit else value
+
+
 def _error_text(exc: BaseException) -> str:
-    text = f"{type(exc).__name__}: {exc}"
-    return text[:16_000] if len(text) > 16_000 else text
+    return _bounded_text(
+        f"{type(exc).__name__}: {exc}",
+        _MAX_OUTCOME_ERROR_CHARS,
+    )
 
 
 def _stream_summary(stream) -> dict[str, Any]:
+    text = stream.text_utf8
+    preview = (
+        None
+        if text is None
+        else _bounded_text(text, _MAX_OUTCOME_STREAM_TEXT_CHARS)
+    )
     return {
         "byte_count": stream.byte_count,
         "sha256": stream.sha256,
         "truncated": stream.truncated,
-        "text_utf8": stream.text_utf8,
+        "text_utf8_preview": preview,
+        "text_preview_truncated": (
+            text is not None and len(text) > _MAX_OUTCOME_STREAM_TEXT_CHARS
+        ),
     }
 
 
@@ -204,12 +221,16 @@ class StandaloneProcessCapabilityPort:
             request.need,
             attempt_id=attempt_id,
             attempt_digest=attempt_digest,
-            error=(
-                process.error
-                or (
-                    "Process did not complete successfully: "
-                    f"{process.termination_reason.value}, exit_code={process.exit_code}"
-                )
+            error=_bounded_text(
+                (
+                    process.error
+                    or (
+                        "Process did not complete successfully: "
+                        f"{process.termination_reason.value}, "
+                        f"exit_code={process.exit_code}"
+                    )
+                ),
+                _MAX_OUTCOME_ERROR_CHARS,
             ),
             observation=observation,
         )
