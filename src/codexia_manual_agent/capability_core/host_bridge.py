@@ -18,6 +18,10 @@ from codexia_manual_agent.capability_core.models import (
 )
 from codexia_manual_agent.capability_core.projection import project_capability_need
 from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.workflow_core import (
+    WorkflowRunState,
+    project_workflow_run,
+)
 
 
 class CapabilityHostBridgeError(RuntimeError):
@@ -91,6 +95,16 @@ class CapabilityHostBridge:
         if recovered.state is not CapabilityNeedState.PENDING:
             raise CapabilityHostBridgeError(
                 f"CapabilityNeed is {recovered.state.value}; it cannot be dispatched"
+            )
+
+        workflow = project_workflow_run(events, source.workflow_run_id)
+        if workflow.state is not WorkflowRunState.ACTIVE:
+            raise CapabilityHostBridgeError(
+                "New CapabilityHandoff requires active requesting WorkflowRun"
+            )
+        if workflow.run.run_digest != source.workflow_run_digest:
+            raise CapabilityHostBindingError(
+                "CapabilityNeed changed WorkflowRun binding"
             )
 
         current = self._store.snapshot(source.work_id)
