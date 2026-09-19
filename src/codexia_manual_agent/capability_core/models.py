@@ -842,6 +842,39 @@ class CapabilityNeedSnapshot:
             raise InvalidCapabilityRecord(
                 "terminal CapabilityNeed requires CapabilityOutcome"
             )
+        if self.outcome.need_id != self.need.need_id:
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed Need identity"
+            )
+        if not hmac.compare_digest(
+            self.outcome.need_digest,
+            self.need.need_digest,
+        ):
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed Need binding"
+            )
+        if self.outcome.work_id != self.need.work_id:
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed Work identity"
+            )
+        if not hmac.compare_digest(
+            self.outcome.work_digest,
+            self.need.work_digest,
+        ):
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed Work binding"
+            )
+        if self.outcome.workflow_run_id != self.need.workflow_run_id:
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed WorkflowRun identity"
+            )
+        if not hmac.compare_digest(
+            self.outcome.workflow_run_digest,
+            self.need.workflow_run_digest,
+        ):
+            raise InvalidCapabilityRecord(
+                "CapabilityNeedSnapshot outcome changed WorkflowRun binding"
+            )
         expected_state = {
             CapabilityOutcomeStatus.SUCCEEDED: CapabilityNeedState.SUCCEEDED,
             CapabilityOutcomeStatus.FAILED: CapabilityNeedState.FAILED,
