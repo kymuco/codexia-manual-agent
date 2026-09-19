@@ -145,6 +145,8 @@ def test_approved_process_uses_existing_authority_and_execution_path(tmp_path) -
     assert observation["execution"]["started"] is True
     assert observation["execution"]["exit_code"] == 0
     assert observation["execution"]["termination_reason"] == "exited"
+    assert "argv" not in observation["execution"]
+    assert "resolved_executable" not in observation["execution"]
 
 
 def test_denied_process_becomes_known_failed_outcome_without_execution(tmp_path) -> None:
