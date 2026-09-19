@@ -4,6 +4,25 @@ from codexia_manual_agent.capability_core.admission import (
     CapabilityBindingError,
     CapabilityNeedStateError,
 )
+from codexia_manual_agent.capability_core.host_bridge import (
+    CapabilityHostBindingError,
+    CapabilityHostBridge,
+    CapabilityHostBridgeError,
+    CapabilityHostPortError,
+    CapabilityHostRoutingConflictError,
+)
+from codexia_manual_agent.capability_core.host_models import (
+    CAPABILITY_HANDOFF_ADMITTED_EVENT,
+    CapabilityHandoff,
+    CapabilityHostRequest,
+    InvalidCapabilityHostRecord,
+)
+from codexia_manual_agent.capability_core.host_port import CapabilityHostPort
+from codexia_manual_agent.capability_core.host_projection import (
+    CapabilityHandoffProjectionError,
+    project_capability_handoff,
+    project_capability_handoffs,
+)
 from codexia_manual_agent.capability_core.models import (
     CAPABILITY_NEED_DECLARED_EVENT,
     CAPABILITY_OUTCOME_RECORDED_EVENT,
@@ -22,12 +41,22 @@ from codexia_manual_agent.capability_core.projection import (
 )
 
 __all__ = [
+    "CAPABILITY_HANDOFF_ADMITTED_EVENT",
     "CAPABILITY_NEED_DECLARED_EVENT",
     "CAPABILITY_OUTCOME_RECORDED_EVENT",
     "CapabilityAdmission",
     "CapabilityAdmissionError",
     "CapabilityBinding",
     "CapabilityBindingError",
+    "CapabilityHandoff",
+    "CapabilityHandoffProjectionError",
+    "CapabilityHostBindingError",
+    "CapabilityHostBridge",
+    "CapabilityHostBridgeError",
+    "CapabilityHostPort",
+    "CapabilityHostPortError",
+    "CapabilityHostRequest",
+    "CapabilityHostRoutingConflictError",
     "CapabilityNeed",
     "CapabilityNeedSnapshot",
     "CapabilityNeedState",
@@ -35,7 +64,10 @@ __all__ = [
     "CapabilityOutcome",
     "CapabilityOutcomeStatus",
     "CapabilityProjectionError",
+    "InvalidCapabilityHostRecord",
     "InvalidCapabilityRecord",
+    "project_capability_handoff",
+    "project_capability_handoffs",
     "project_capability_need",
     "project_capability_needs",
 ]
