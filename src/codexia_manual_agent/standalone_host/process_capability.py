@@ -315,15 +315,19 @@ class StandaloneProcessCapabilityPort:
                 "observation_id": process.observation_id,
                 "observation_digest": process.observation_digest,
                 "started": process.started,
-                "pid": process.pid,
                 "cwd": process.cwd,
-                "resolved_executable": process.resolved_executable,
-                "argv": list(process.argv),
                 "exit_code": process.exit_code,
                 "termination_reason": process.termination_reason.value,
                 "duration_ms": process.duration_ms,
                 "stdout": _stream_summary(process.stdout),
                 "stderr": _stream_summary(process.stderr),
-                "error": process.error,
+                "error": (
+                    None
+                    if process.error is None
+                    else _bounded_text(
+                        process.error,
+                        _MAX_OUTCOME_ERROR_CHARS,
+                    )
+                ),
             },
         }
