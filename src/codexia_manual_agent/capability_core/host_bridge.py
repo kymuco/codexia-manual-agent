@@ -138,11 +138,16 @@ class CapabilityHostBridge:
             raise CapabilityHostBindingError(
                 "Host response changed Work binding"
             )
-        return self.record_outcome(outcome)
+        return self.record_outcome(
+            outcome,
+            host_id=handoff.host_id,
+        )
 
     def record_outcome(
         self,
         outcome: CapabilityOutcome,
+        *,
+        host_id: str,
     ) -> CapabilityNeedSnapshot:
         """Record an asynchronous or synchronous host observation.
 
@@ -152,4 +157,26 @@ class CapabilityHostBridge:
 
         if not isinstance(outcome, CapabilityOutcome):
             raise TypeError("outcome must be CapabilityOutcome")
+
+        events = self._store.events(outcome.work_id)
+        handoff = next(
+            (
+                item
+                for item in project_capability_handoffs(events)
+                if item.need_id == outcome.need_id
+            ),
+            None,
+        )
+        if handoff is None:
+            raise CapabilityHostBindingError(
+                "CapabilityOutcome has no durable host handoff"
+            )
+        if handoff.host_id != host_id:
+            raise CapabilityHostRoutingConflictError(
+                "CapabilityOutcome callback came from another host"
+            )
+        if not hmac.compare_digest(handoff.need_digest, outcome.need_digest):
+            raise CapabilityHostBindingError(
+                "CapabilityOutcome callback changed Need binding"
+            )
         return self._capability_admission.admit_outcome(outcome)
