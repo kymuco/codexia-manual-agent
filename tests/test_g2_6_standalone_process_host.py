@@ -10,10 +10,12 @@ from codexia_manual_agent.capability_core import (
     CapabilityAdmission,
     CapabilityBinding,
     CapabilityHostBridge,
+    CapabilityHostPortError,
     CapabilityNeed,
     CapabilityNeedState,
     CapabilityOutcomeStatus,
 )
+from codexia_manual_agent.domain.errors import ProcessExecutionError
 from codexia_manual_agent.execution import ProcessLimits
 from codexia_manual_agent.standalone_host import (
     PROCESS_CAPABILITY_ID,
@@ -297,10 +299,10 @@ def test_workspace_root_is_host_configuration_not_need_payload(tmp_path) -> None
     assert port.host_id == STANDALONE_PROCESS_HOST_ID
 
 
-def test_unexpected_service_exception_becomes_unknown_outcome(tmp_path) -> None:
-    class ExplodingService:
+def test_process_execution_error_becomes_unknown_outcome(tmp_path) -> None:
+    class AmbiguousExecutionService:
         def run(self, **_kwargs):
-            raise RuntimeError("synthetic adapter ambiguity")
+            raise ProcessExecutionError("synthetic execution ambiguity")
 
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     binding = _binding()
@@ -309,7 +311,7 @@ def test_unexpected_service_exception_becomes_unknown_outcome(tmp_path) -> None:
         workspace=tmp_path,
         binding=binding,
         approved=True,
-        service=ExplodingService(),
+        service=AmbiguousExecutionService(),
     )
 
     resolved = CapabilityHostBridge(store).dispatch_once(pending, port)
@@ -317,8 +319,27 @@ def test_unexpected_service_exception_becomes_unknown_outcome(tmp_path) -> None:
     assert resolved.state is CapabilityNeedState.OUTCOME_UNKNOWN
     assert resolved.outcome is not None
     assert resolved.outcome.status is CapabilityOutcomeStatus.UNKNOWN
-    assert resolved.outcome.observation["stage"] == "adapter_exception"
-    assert resolved.outcome.observation["error_type"] == "RuntimeError"
+    assert resolved.outcome.observation["stage"] == "execution_ambiguity"
+    assert resolved.outcome.observation["error_type"] == "ProcessExecutionError"
+
+
+def test_programmer_error_is_not_misreported_as_external_outcome(tmp_path) -> None:
+    class BrokenService:
+        def run(self, **_kwargs):
+            raise RuntimeError("synthetic adapter bug")
+
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    binding = _binding()
+    _, pending = _pending_need(store, binding=binding)
+    port = StandaloneProcessCapabilityPort(
+        workspace=tmp_path,
+        binding=binding,
+        approved=True,
+        service=BrokenService(),
+    )
+
+    with pytest.raises(CapabilityHostPortError):
+        CapabilityHostBridge(store).dispatch_once(pending, port)
 
 
 def test_standalone_host_depends_on_core_not_core_on_standalone_host() -> None:
