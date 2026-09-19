@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from codexia_manual_agent.domain.errors import ProviderError
@@ -13,9 +14,10 @@ class FakeMetrics:
         return {"total": 1.25}
 
 
-class FakeClient:
+class FakeRuntime:
     def __init__(self) -> None:
         self.calls = []
+        self.temporary_end_count = 0
         self.response = SimpleNamespace(
             text='{"type":"final","text":"ok"}',
             conversation=SimpleNamespace(
@@ -55,6 +57,59 @@ class FakeClient:
             ),
         ]
 
+    def send_text_observed(self, text, **kwargs):
+        self.calls.append(("send_text_observed", text, kwargs))
+        return SimpleNamespace(transport="browser-owned", response=self.response)
+
+    def get_status(self, conversation_id):
+        self.calls.append(("status", conversation_id))
+        return SimpleNamespace(
+            status="completed",
+            message_id="m-assistant",
+            finish_reason="stop",
+        )
+
+    def get_messages(self, conversation_id, **kwargs):
+        self.calls.append(("history", conversation_id, kwargs))
+        return self.messages
+
+    def end_temporary_chat(self):
+        self.temporary_end_count += 1
+        return True
+
+    def handoff_generated_artifact(
+        self,
+        conversation_id,
+        *,
+        filename,
+        destination,
+        overwrite=False,
+    ):
+        self.calls.append(
+            (
+                "handoff_generated_artifact",
+                conversation_id,
+                filename,
+                Path(destination),
+                overwrite,
+            )
+        )
+        return SimpleNamespace(
+            conversation_id=conversation_id,
+            source_filename=filename,
+            destination=Path(destination),
+            size_bytes=123,
+            sha256="b" * 64,
+            overwritten=False,
+            integrity_verified=True,
+        )
+
+
+class FakeLegacyClient:
+    def __init__(self) -> None:
+        self.calls = []
+        self.response = FakeRuntime().response
+
     def send(self, prompt, **kwargs):
         self.calls.append(("send", prompt, kwargs))
         return self.response
@@ -65,58 +120,159 @@ class FakeClient:
 
     def get_messages(self, conversation_id, **kwargs):
         self.calls.append(("history", conversation_id, kwargs))
-        return self.messages
+        return FakeRuntime().messages
 
 
 class ChatGPTWebProviderTests(unittest.TestCase):
-    def test_new_conversation_uses_stable_send(self) -> None:
-        client = FakeClient()
-        provider = ChatGPTWebProvider(
-            client=client,
-            model="thinking",
-            reasoning_effort="high",
-        )
-        response = provider.send(ProviderRequest(prompt="task", system="system"))
+    def test_product_runtime_new_conversation_uses_browser_owned_observed_send(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime, reasoning_effort="high")
 
-        call = client.calls[0]
-        self.assertEqual(call[0], "send")
+        response = provider.send(ProviderRequest(prompt="task"))
+
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "send_text_observed")
         self.assertEqual(call[1], "task")
-        self.assertEqual(call[2]["system"], "system")
-        self.assertFalse(call[2]["web_search"])
-        self.assertFalse(call[2]["temporary"])
+        self.assertIsNone(call[2]["conversation"])
+        self.assertEqual(call[2]["model_profile"], "DEEP")
         self.assertEqual(response.conversation.conversation_id, "c1")
         self.assertEqual(response.model, "gpt-test")
         self.assertEqual(response.reasoning_effort, "extended")
         self.assertEqual(response.metrics["total"], 1.25)
 
-    def test_existing_conversation_uses_send_to_conversation(self) -> None:
-        client = FakeClient()
-        provider = ChatGPTWebProvider(client=client)
+    def test_product_runtime_temporary_send_uses_session_scoped_mode(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime, reasoning_effort="high")
+
+        response = provider.send_temporary("temporary task")
+
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "send_text_observed")
+        self.assertEqual(call[1], "temporary task")
+        self.assertIsNone(call[2]["conversation"])
+        self.assertEqual(call[2]["conversation_mode"], "temporary")
+        self.assertEqual(call[2]["model_profile"], "DEEP")
+        self.assertEqual(response.conversation.conversation_id, "c1")
+
+    def test_product_runtime_temporary_session_can_be_explicitly_ended(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        self.assertTrue(provider.end_temporary_chat())
+        self.assertEqual(runtime.temporary_end_count, 1)
+
+    def test_generated_artifact_handoff_uses_product_runtime(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        artifact = provider.handoff_generated_artifact(
+            "existing",
+            filename="report.zip",
+            destination="./local/report.zip",
+        )
+
+        self.assertEqual(artifact.conversation_id, "existing")
+        self.assertEqual(artifact.source_filename, "report.zip")
+        self.assertEqual(artifact.size_bytes, 123)
+        self.assertEqual(artifact.sha256, "b" * 64)
+        self.assertTrue(artifact.integrity_verified)
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "handoff_generated_artifact")
+        self.assertEqual(call[1], "existing")
+        self.assertEqual(call[2], "report.zip")
+        self.assertFalse(call[4])
+
+    def test_product_runtime_existing_conversation_preserves_identity(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
         provider.send(
             ProviderRequest(
                 prompt="continue",
                 conversation=ProviderConversation(conversation_id="existing"),
             )
         )
-        call = client.calls[0]
-        self.assertEqual(call[:3], ("continue", "existing", "continue"))
-        self.assertTrue(call[3]["preserve_model"])
 
-    def test_explicit_model_disables_preserve_model(self) -> None:
-        client = FakeClient()
-        provider = ChatGPTWebProvider(client=client, model="gpt-explicit")
-        provider.send(
-            ProviderRequest(
-                prompt="continue",
-                conversation=ProviderConversation(conversation_id="existing"),
-            )
+        call = runtime.calls[0]
+        self.assertEqual(call[0], "send_text_observed")
+        self.assertEqual(call[1], "continue")
+        self.assertEqual(call[2]["conversation"], "existing")
+
+    def test_product_runtime_system_contract_is_visible_not_silently_dropped(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        provider.send(ProviderRequest(prompt="task", system="system contract"))
+
+        sent = runtime.calls[0][1]
+        self.assertEqual(
+            sent,
+            "[Codexia product-runtime system context]\n"
+            "system contract\n\n"
+            "[Codexia product-runtime request]\n"
+            "task",
         )
-        self.assertFalse(client.calls[0][3]["preserve_model"])
-        self.assertEqual(client.calls[0][3]["model"], "gpt-explicit")
 
-    def test_history_read_uses_current_branch_public_surface(self) -> None:
-        client = FakeClient()
-        provider = ChatGPTWebProvider(client=client)
+    def test_semantic_model_profile_is_forwarded(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime, model="balanced")
+
+        provider.send(ProviderRequest(prompt="task"))
+
+        self.assertEqual(runtime.calls[0][2]["model_profile"], "BALANCED")
+
+    def test_raw_model_slug_fails_closed_before_product_write(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime, model="gpt-5-6-thinking")
+
+        with self.assertRaisesRegex(ProviderError, "does not accept raw model slugs"):
+            provider.send(ProviderRequest(prompt="task"))
+        self.assertEqual(runtime.calls, [])
+
+    def test_conflicting_profile_and_reasoning_fail_closed(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(
+            runtime=runtime,
+            model="FAST",
+            reasoning_effort="high",
+        )
+
+        with self.assertRaisesRegex(ProviderError, "conflicting product modes"):
+            provider.send(ProviderRequest(prompt="task"))
+        self.assertEqual(runtime.calls, [])
+
+    def test_runtime_factory_receives_exact_product_transport(self) -> None:
+        runtime = FakeRuntime()
+        captured = {}
+
+        def factory(**kwargs):
+            captured.update(kwargs)
+            return runtime
+
+        ChatGPTWebProvider(
+            auth_file="auth.json",
+            timeout=91.9,
+            runtime_factory=factory,
+        )
+
+        self.assertEqual(captured["transport"], "browser-owned")
+        self.assertEqual(captured["auth_file"], "auth.json")
+        self.assertEqual(captured["client_timeout"], 91)
+
+    def test_status_read_exposes_canonical_completion_identity(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
+
+        status = provider.read_status("existing")
+
+        self.assertEqual(status.status, "completed")
+        self.assertEqual(status.message_id, "m-assistant")
+        self.assertEqual(status.finish_reason, "stop")
+        self.assertEqual(runtime.calls[0], ("status", "existing"))
+
+    def test_history_read_uses_complete_canonical_current_branch_surface(self) -> None:
+        runtime = FakeRuntime()
+        provider = ChatGPTWebProvider(runtime=runtime)
 
         messages = provider.read_messages("existing")
 
@@ -126,49 +282,86 @@ class ChatGPTWebProviderTests(unittest.TestCase):
         self.assertEqual(messages[0].role, "user")
         self.assertEqual(messages[0].text, "hello")
         self.assertEqual(messages[1].role, "assistant")
-        call = client.calls[0]
+        call = runtime.calls[0]
         self.assertEqual(call[:2], ("history", "existing"))
         self.assertEqual(call[2]["roles"], ("user", "assistant"))
         self.assertFalse(call[2]["include_empty"])
+        self.assertIsNone(call[2]["limit"])
 
     def test_history_requires_exact_visible_message_identity(self) -> None:
-        client = FakeClient()
-        client.messages[0].node_id = None
-        provider = ChatGPTWebProvider(client=client)
+        runtime = FakeRuntime()
+        runtime.messages[0].node_id = None
+        provider = ChatGPTWebProvider(runtime=runtime)
         with self.assertRaisesRegex(ProviderError, "missing node_id"):
             provider.read_messages("existing")
 
     def test_history_rejects_duplicate_provider_identity(self) -> None:
-        client = FakeClient()
-        client.messages[1].node_id = "n-user"
-        provider = ChatGPTWebProvider(client=client)
+        runtime = FakeRuntime()
+        runtime.messages[1].node_id = "n-user"
+        provider = ChatGPTWebProvider(runtime=runtime)
         with self.assertRaisesRegex(ProviderError, "duplicate message identity"):
             provider.read_messages("existing")
 
-    def test_transport_exception_is_wrapped(self) -> None:
-        class BrokenClient(FakeClient):
-            def send(self, prompt, **kwargs):
-                raise RuntimeError("backend changed")
+    def test_product_runtime_transport_identity_must_be_browser_owned(self) -> None:
+        class WrongTransportRuntime(FakeRuntime):
+            def send_text_observed(self, text, **kwargs):
+                self.calls.append(("send_text_observed", text, kwargs))
+                return SimpleNamespace(
+                    transport="browserless-request",
+                    response=self.response,
+                )
 
-        provider = ChatGPTWebProvider(client=BrokenClient())
-        with self.assertRaisesRegex(ProviderError, "backend changed"):
+        provider = ChatGPTWebProvider(runtime=WrongTransportRuntime())
+        with self.assertRaisesRegex(ProviderError, "unexpected transport identity"):
+            provider.send(ProviderRequest(prompt="task"))
+
+    def test_product_runtime_exception_is_wrapped(self) -> None:
+        class BrokenRuntime(FakeRuntime):
+            def send_text_observed(self, text, **kwargs):
+                raise RuntimeError("bridge changed")
+
+        provider = ChatGPTWebProvider(runtime=BrokenRuntime())
+        with self.assertRaisesRegex(ProviderError, "bridge changed"):
             provider.send(ProviderRequest(prompt="task"))
 
     def test_history_exception_is_wrapped(self) -> None:
-        class BrokenClient(FakeClient):
+        class BrokenRuntime(FakeRuntime):
             def get_messages(self, conversation_id, **kwargs):
                 raise RuntimeError("history backend changed")
 
-        provider = ChatGPTWebProvider(client=BrokenClient())
+        provider = ChatGPTWebProvider(runtime=BrokenRuntime())
         with self.assertRaisesRegex(ProviderError, "history backend changed"):
             provider.read_messages("existing")
 
     def test_missing_response_text_is_rejected(self) -> None:
-        client = FakeClient()
-        client.response = SimpleNamespace(text=None)
-        provider = ChatGPTWebProvider(client=client)
+        runtime = FakeRuntime()
+        runtime.response = SimpleNamespace(text=None)
+        provider = ChatGPTWebProvider(runtime=runtime)
         with self.assertRaisesRegex(ProviderError, "did not contain text"):
             provider.send(ProviderRequest(prompt="task"))
+
+    def test_explicit_legacy_client_injection_retains_historical_test_seam(self) -> None:
+        client = FakeLegacyClient()
+        provider = ChatGPTWebProvider(
+            client=client,
+            model="gpt-explicit",
+            reasoning_effort="extended",
+        )
+
+        provider.send(
+            ProviderRequest(
+                prompt="continue",
+                system="legacy-system",
+                conversation=ProviderConversation(conversation_id="existing"),
+            )
+        )
+
+        call = client.calls[0]
+        self.assertEqual(call[:3], ("continue", "existing", "continue"))
+        self.assertFalse(call[3]["preserve_model"])
+        self.assertEqual(call[3]["model"], "gpt-explicit")
+        self.assertEqual(call[3]["system"], "legacy-system")
+        self.assertEqual(call[3]["reasoning_effort"], "extended")
 
 
 if __name__ == "__main__":
