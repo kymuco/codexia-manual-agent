@@ -38,10 +38,11 @@ def project_capability_handoffs(
 ) -> tuple[CapabilityHandoff, ...]:
     """Project durable host routing facts without implying delivery or attempt."""
 
-    needs = {
-        snapshot.need.need_id: snapshot.need
+    need_snapshots = {
+        snapshot.need.need_id: snapshot
         for snapshot in project_capability_needs(events)
     }
+    event_sequence_by_id = {event.event_id: event.sequence for event in events}
     by_need: dict[str, CapabilityHandoff] = {}
     order: list[str] = []
 
@@ -52,11 +53,24 @@ def project_capability_handoffs(
             continue
 
         handoff = _handoff_record(event)
-        need = needs.get(handoff.need_id)
-        if need is None:
+        need_snapshot = need_snapshots.get(handoff.need_id)
+        if need_snapshot is None:
             raise CapabilityHandoffProjectionError(
                 "CapabilityHandoff references unknown CapabilityNeed"
             )
+        need = need_snapshot.need
+        if need_snapshot.outcome is not None:
+            outcome_sequence = event_sequence_by_id.get(
+                need_snapshot.outcome.outcome_id
+            )
+            if outcome_sequence is None:
+                raise CapabilityHandoffProjectionError(
+                    "CapabilityNeed terminal Outcome is missing from chronology"
+                )
+            if outcome_sequence < event.sequence:
+                raise CapabilityHandoffProjectionError(
+                    "CapabilityHandoff follows terminal CapabilityOutcome"
+                )
         if handoff.need_id in by_need:
             raise CapabilityHandoffProjectionError(
                 "CapabilityNeed received more than one host handoff"
