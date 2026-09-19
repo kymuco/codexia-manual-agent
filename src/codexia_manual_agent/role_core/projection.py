@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hmac
+import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
@@ -79,6 +82,17 @@ def _is_digest(value: Any) -> bool:
     return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
 
 
+def _digest(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _unwrap_role_event(event: WorkEvent) -> tuple[dict[str, Any], dict[str, Any]]:
     raw = event.to_dict()["payload"]
     if not isinstance(raw, dict) or set(raw) != {"_workflow", "payload"}:
@@ -137,6 +151,24 @@ def _request_record(value: Any) -> dict[str, Any]:
         )
     if not isinstance(value["created_at"], str) or not value["created_at"]:
         raise RoleProjectionError("cognition request created_at is invalid")
+    try:
+        parsed = datetime.fromisoformat(value["created_at"])
+    except ValueError as exc:
+        raise RoleProjectionError(
+            "cognition request created_at is not ISO-8601"
+        ) from exc
+    if parsed.tzinfo is None or parsed.isoformat() != value["created_at"]:
+        raise RoleProjectionError(
+            "cognition request created_at is not canonical ISO-8601"
+        )
+
+    digest_base = {
+        key: item
+        for key, item in value.items()
+        if key != "request_digest"
+    }
+    if not hmac.compare_digest(value["request_digest"], _digest(digest_base)):
+        raise RoleProjectionError("cognition request digest mismatch")
     return value
 
 
