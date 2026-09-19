@@ -4,7 +4,11 @@ import hmac
 from dataclasses import dataclass
 from typing import Any
 
-from codexia_manual_agent.work_core import WorkEvent
+from codexia_manual_agent.work_core import (
+    WORK_CANCELLED_EVENT,
+    WORK_COMPLETED_EVENT,
+    WorkEvent,
+)
 from codexia_manual_agent.workflow_core.models import (
     WORKFLOW_CANCELLED_EVENT,
     WORKFLOW_COMPLETED_EVENT,
@@ -64,10 +68,17 @@ def project_workflow_runs(
 
     states: dict[str, _WorkflowState] = {}
     order: list[str] = []
+    chronology_work_id: str | None = None
 
     for event in events:
         if not isinstance(event, WorkEvent):
             raise TypeError("events must contain WorkEvent values")
+        if chronology_work_id is None:
+            chronology_work_id = event.work_id
+        elif event.work_id != chronology_work_id:
+            raise WorkflowProjectionError(
+                "Workflow projection crossed Work chronology identity"
+            )
 
         if event.kind == WORKFLOW_STARTED_EVENT:
             payload = _event_payload(event)
@@ -125,6 +136,13 @@ def project_workflow_runs(
 
         if not has_workflow_provenance and not is_terminal_workflow_event:
             continue
+        if has_workflow_provenance and event.kind in {
+            WORK_COMPLETED_EVENT,
+            WORK_CANCELLED_EVENT,
+        }:
+            raise WorkflowProjectionError(
+                "Workflow-produced event cannot directly terminate Work"
+            )
 
         run_id, run_digest = _candidate_provenance(event)
         state = states.get(run_id)
