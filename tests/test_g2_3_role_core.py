@@ -5,6 +5,21 @@ import json
 
 import pytest
 
+from codexia_manual_agent.role_core import (
+    ROLE_COMPLETED_EVENT,
+    CognitionOutcome,
+    CognitionRequest,
+    ContextProjection,
+    InvalidRoleRecord,
+    RoleAdmission,
+    RoleBinding,
+    RoleProjectionError,
+    RoleRun,
+    RoleRunState,
+    RoleRunStateError,
+    project_role_run,
+    project_role_runs,
+)
 from codexia_manual_agent.work_core import (
     SqliteWorkStore,
     Work,
@@ -21,21 +36,6 @@ from codexia_manual_agent.workflow_core import (
     WorkflowRun,
     WorkflowRunState,
     project_workflow_run,
-)
-from codexia_manual_agent.role_core import (
-    ROLE_COMPLETED_EVENT,
-    CognitionOutcome,
-    CognitionRequest,
-    ContextProjection,
-    InvalidRoleRecord,
-    RoleAdmission,
-    RoleBinding,
-    RoleProjectionError,
-    RoleRun,
-    RoleRunState,
-    RoleRunStateError,
-    project_role_run,
-    project_role_runs,
 )
 
 INSTRUCTIONS = "Act as a bounded reviewer. Return only evidence-bounded analysis."
