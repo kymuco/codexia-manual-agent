@@ -30,9 +30,12 @@ from codexia_manual_agent.work_core import (
     WorkIngressBinding,
 )
 from codexia_manual_agent.workflow_core import (
+    WORKFLOW_COMPLETED_EVENT,
     WorkflowAdmission,
     WorkflowBinding,
+    WorkflowCandidate,
     WorkflowRun,
+    project_workflow_run,
 )
 
 PARAMETERS = {
@@ -488,3 +491,26 @@ def test_projection_rejects_handoff_after_terminal_outcome(tmp_path) -> None:
 
     with pytest.raises(CapabilityHandoffProjectionError):
         project_capability_handoffs(store.events(pending.need.work_id))
+
+
+def test_new_handoff_requires_active_requesting_workflow(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    workflow_run, _, pending = _pending_need(store)
+    workflow = project_workflow_run(
+        store.events(pending.need.work_id),
+        workflow_run.workflow_run_id,
+    )
+    completion = WorkflowCandidate.create(
+        run_snapshot=workflow,
+        work_snapshot=store.snapshot(pending.need.work_id),
+        event_kind=WORKFLOW_COMPLETED_EVENT,
+        payload={"reason": "workflow closed before dispatch"},
+    )
+    WorkflowAdmission(store).admit_candidate(completion)
+    host = AsyncHost("standalone.local")
+
+    with pytest.raises(CapabilityHostBridgeError):
+        CapabilityHostBridge(store).dispatch_once(pending, host)
+
+    assert host.calls == 0
+    assert project_capability_handoffs(store.events(pending.need.work_id)) == ()
