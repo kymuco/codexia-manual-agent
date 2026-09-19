@@ -1116,11 +1116,22 @@ class SimpleWorkRuntime:
                     "temporary Codexia cannot create a temporary worker because "
                     "CWA owns one live Temporary lifecycle; use a persistent worker"
                 )
-            if session.worker_mode is not WorkerMode.NONE:
-                raise RuntimeError("Codexia tried to replace an active worker")
             instruction = text[len(_TEMP_WORKER) :].strip()
             if not instruction:
                 raise RuntimeError("temporary worker instruction is empty")
+            if session.worker_mode is WorkerMode.PERSISTENT:
+                raise RuntimeError("Codexia tried to replace an active worker")
+            if session.worker_mode is WorkerMode.TEMPORARY:
+                return (
+                    session.updated(
+                        status=SimpleWorkStatus.READY,
+                        last_codexia_text=text,
+                        next_worker_message=instruction,
+                        pending_human_question=None,
+                        final_text=None,
+                    ),
+                    codexia,
+                )
             return (
                 session.updated(
                     worker_mode=WorkerMode.TEMPORARY,
@@ -1134,11 +1145,22 @@ class SimpleWorkRuntime:
             )
 
         if text.startswith(_PERSISTENT_WORKER):
-            if session.worker_mode is not WorkerMode.NONE:
-                raise RuntimeError("Codexia tried to replace an active worker")
             instruction = text[len(_PERSISTENT_WORKER) :].strip()
             if not instruction:
                 raise RuntimeError("persistent worker instruction is empty")
+            if session.worker_mode is WorkerMode.TEMPORARY:
+                raise RuntimeError("Codexia tried to replace an active worker")
+            if session.worker_mode is WorkerMode.PERSISTENT:
+                return (
+                    session.updated(
+                        status=SimpleWorkStatus.READY,
+                        last_codexia_text=text,
+                        next_worker_message=instruction,
+                        pending_human_question=None,
+                        final_text=None,
+                    ),
+                    codexia,
+                )
             return (
                 session.updated(
                     worker_mode=WorkerMode.PERSISTENT,
