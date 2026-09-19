@@ -502,6 +502,11 @@ class WorkflowCandidate:
             "workflow_run_digest",
         }:
             raise InvalidWorkflowRecord("WorkflowCandidate provenance is not exact")
+        if not isinstance(provenance["workflow_run_id"], str) or not isinstance(
+            provenance["workflow_run_digest"],
+            str,
+        ):
+            raise InvalidWorkflowRecord("WorkflowCandidate provenance types are invalid")
         if provenance["workflow_run_id"] != self.workflow_run_id:
             raise InvalidWorkflowRecord("WorkflowCandidate run identity changed")
         if not hmac.compare_digest(
