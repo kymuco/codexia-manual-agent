@@ -2,12 +2,6 @@ from __future__ import annotations
 
 import hmac
 
-from codexia_manual_agent.work_core import WorkStore
-from codexia_manual_agent.workflow_core import (
-    WorkflowAdmission,
-    WorkflowRunState,
-    project_workflow_run,
-)
 from codexia_manual_agent.role_core.models import (
     CognitionOutcome,
     CognitionRequest,
@@ -16,6 +10,12 @@ from codexia_manual_agent.role_core.models import (
     RoleRunState,
 )
 from codexia_manual_agent.role_core.projection import project_role_run
+from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.workflow_core import (
+    WorkflowAdmission,
+    WorkflowRunState,
+    project_workflow_run,
+)
 
 
 class RoleAdmissionError(RuntimeError):
