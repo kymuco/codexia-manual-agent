@@ -22,6 +22,7 @@ from codexia_manual_agent.domain.errors import (
     InvalidProcessSpecError,
     ProcessExecutableChangedError,
     ProcessExecutableNotFoundError,
+    ProcessExecutionError,
     ProcessWorkspaceBoundaryError,
 )
 from codexia_manual_agent.execution import ProcessLimits, ProcessTerminationReason
@@ -190,7 +191,7 @@ class StandaloneProcessCapabilityPort:
                     "error_type": type(exc).__name__,
                 },
             )
-        except Exception as exc:
+        except ProcessExecutionError as exc:
             return CapabilityOutcome.unknown(
                 request.need,
                 attempt_id=attempt_id,
@@ -198,7 +199,7 @@ class StandaloneProcessCapabilityPort:
                 detail=_error_text(exc),
                 observation={
                     "adapter": "standalone-process-host-v1",
-                    "stage": "adapter_exception",
+                    "stage": "execution_ambiguity",
                     "error_type": type(exc).__name__,
                 },
             )
