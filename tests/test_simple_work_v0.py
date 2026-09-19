@@ -18,6 +18,27 @@ from codexia_manual_agent.simple_work import (
     SimpleWorkStore,
     WorkerMode,
 )
+from codexia_manual_agent.simple_work.runtime import (
+    _codexia_bootstrap,
+    _new_task_prompt,
+    _temporary_codexia_bootstrap,
+)
+
+
+def test_codexia_prompts_honor_explicit_worker_routing() -> None:
+    request = (
+        "Используй один ПОСТОЯННЫЙ WORKER ровно в два последовательных цикла."
+    )
+
+    for prompt in (
+        _codexia_bootstrap(request),
+        _new_task_prompt(request),
+        _temporary_codexia_bootstrap(request),
+    ):
+        assert "явн" in prompt.lower()
+        assert "обязатель" in prompt.lower()
+        assert "не запускает worker" in prompt
+        assert "Не отвеч" in prompt and "ГОТОВО:" in prompt
 
 
 @dataclass(frozen=True)
