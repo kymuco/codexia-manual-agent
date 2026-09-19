@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+
 from codexia_manual_agent.capability_core.admission import CapabilityAdmission
 from codexia_manual_agent.capability_core.host_models import (
     CapabilityHandoff,
@@ -119,6 +121,22 @@ class CapabilityHostBridge:
         if not isinstance(outcome, CapabilityOutcome):
             raise CapabilityHostPortError(
                 "Host port returned neither CapabilityOutcome nor None"
+            )
+        if outcome.need_id != source.need_id:
+            raise CapabilityHostBindingError(
+                "Host response changed CapabilityNeed identity"
+            )
+        if not hmac.compare_digest(outcome.need_digest, source.need_digest):
+            raise CapabilityHostBindingError(
+                "Host response changed CapabilityNeed binding"
+            )
+        if outcome.work_id != source.work_id:
+            raise CapabilityHostBindingError(
+                "Host response crossed Work identity"
+            )
+        if not hmac.compare_digest(outcome.work_digest, source.work_digest):
+            raise CapabilityHostBindingError(
+                "Host response changed Work binding"
             )
         return self.record_outcome(outcome)
 
