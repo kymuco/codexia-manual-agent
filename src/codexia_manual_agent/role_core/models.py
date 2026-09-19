@@ -25,6 +25,7 @@ COGNITION_REQUEST_SCHEMA_VERSION = 1
 COGNITION_OUTCOME_SCHEMA_VERSION = 1
 
 ROLE_STARTED_EVENT = "role.started"
+COGNITION_REQUESTED_EVENT = "role.cognition-requested"
 ROLE_COMPLETED_EVENT = "role.completed"
 ROLE_FAILED_EVENT = "role.failed"
 ROLE_OUTCOME_UNKNOWN_EVENT = "role.outcome-unknown"
@@ -47,6 +48,7 @@ class InvalidRoleRecord(ValueError):
 
 class RoleRunState(StrEnum):
     ACTIVE = "active"
+    REQUESTED = "requested"
     COMPLETED = "completed"
     FAILED = "failed"
     OUTCOME_UNKNOWN = "outcome_unknown"
@@ -503,6 +505,8 @@ class RoleRun:
 class RoleRunSnapshot:
     run: RoleRun
     state: RoleRunState
+    request_id: str | None
+    request_digest: str | None
     terminal_event_id: str | None
     output_text: str | None
     error: str | None
@@ -514,10 +518,30 @@ class RoleRunSnapshot:
         if self.state is RoleRunState.ACTIVE:
             if any(
                 value is not None
+                for value in (
+                    self.request_id,
+                    self.request_digest,
+                    self.terminal_event_id,
+                    self.output_text,
+                    self.error,
+                )
+            ):
+                raise InvalidRoleRecord("active RoleRun cannot have cognition state")
+            return
+
+        if self.request_id is None or self.request_digest is None:
+            raise InvalidRoleRecord("non-active RoleRun requires cognition request")
+        _validate_uuid(self.request_id, "request_id")
+        _validate_digest(self.request_digest, "request_digest")
+
+        if self.state is RoleRunState.REQUESTED:
+            if any(
+                value is not None
                 for value in (self.terminal_event_id, self.output_text, self.error)
             ):
-                raise InvalidRoleRecord("active RoleRun cannot have terminal output")
+                raise InvalidRoleRecord("requested RoleRun cannot have terminal output")
             return
+
         if self.terminal_event_id is None:
             raise InvalidRoleRecord("terminal RoleRun requires terminal_event_id")
         _validate_uuid(self.terminal_event_id, "terminal_event_id")
@@ -550,6 +574,8 @@ class CognitionRequest:
     workflow_run_digest: str
     expected_revision: int
     expected_event_digest: str | None
+    instructions_digest: str
+    context_digest: str
     instructions: str
     context: str
     request_digest: str
@@ -617,6 +643,8 @@ class CognitionRequest:
             "workflow_run_digest": run.workflow_run_digest,
             "expected_revision": snapshot.revision,
             "expected_event_digest": snapshot.last_event_digest,
+            "instructions_digest": _text_digest(instructions),
+            "context_digest": _text_digest(context),
             "instructions": instructions,
             "context": context,
         }
@@ -646,13 +674,29 @@ class CognitionRequest:
                 raise InvalidRoleRecord(
                     "revision zero cannot have expected_event_digest"
                 )
-        _bounded_text(self.instructions, "instructions", MAX_INSTRUCTIONS_CHARS)
-        _bounded_text(
+        _validate_digest(self.instructions_digest, "instructions_digest")
+        _validate_digest(self.context_digest, "context_digest")
+        instructions = _bounded_text(
+            self.instructions,
+            "instructions",
+            MAX_INSTRUCTIONS_CHARS,
+        )
+        context = _bounded_text(
             self.context,
             "context",
             MAX_CONTEXT_CHARS,
             allow_empty=True,
         )
+        if not hmac.compare_digest(
+            self.instructions_digest,
+            _text_digest(instructions),
+        ):
+            raise InvalidRoleRecord("CognitionRequest instructions digest mismatch")
+        if not hmac.compare_digest(
+            self.context_digest,
+            _text_digest(context),
+        ):
+            raise InvalidRoleRecord("CognitionRequest context digest mismatch")
         _validate_digest(self.request_digest, "request_digest")
         if not hmac.compare_digest(self.request_digest, _digest(self._base_dict())):
             raise InvalidRoleRecord("CognitionRequest digest mismatch")
@@ -670,9 +714,52 @@ class CognitionRequest:
             "workflow_run_digest": self.workflow_run_digest,
             "expected_revision": self.expected_revision,
             "expected_event_digest": self.expected_event_digest,
+            "instructions_digest": self.instructions_digest,
+            "context_digest": self.context_digest,
             "instructions": self.instructions,
             "context": self.context,
         }
+
+    def durable_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "request_id": self.request_id,
+            "created_at": self.created_at,
+            "role_run_id": self.role_run_id,
+            "role_run_digest": self.role_run_digest,
+            "work_id": self.work_id,
+            "work_digest": self.work_digest,
+            "workflow_run_id": self.workflow_run_id,
+            "workflow_run_digest": self.workflow_run_digest,
+            "expected_revision": self.expected_revision,
+            "expected_event_digest": self.expected_event_digest,
+            "instructions_digest": self.instructions_digest,
+            "context_digest": self.context_digest,
+            "request_digest": self.request_digest,
+        }
+
+    def to_workflow_candidate(self) -> WorkflowCandidate:
+        event = WorkEvent.create(
+            work_id=self.work_id,
+            sequence=self.expected_revision + 1,
+            kind=COGNITION_REQUESTED_EVENT,
+            payload=_workflow_wrapped_payload(
+                workflow_run_id=self.workflow_run_id,
+                workflow_run_digest=self.workflow_run_digest,
+                payload={"cognition_request": self.durable_dict()},
+            ),
+            previous_event_digest=self.expected_event_digest,
+            event_id=self.request_id,
+            created_at=self.created_at,
+        )
+        return WorkflowCandidate(
+            schema_version=1,
+            workflow_run_id=self.workflow_run_id,
+            workflow_run_digest=self.workflow_run_digest,
+            expected_revision=self.expected_revision,
+            expected_event_digest=self.expected_event_digest,
+            event=event,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,6 +863,7 @@ class CognitionOutcome:
         created_at = created_at or _new_timestamp()
         _validate_uuid(outcome_id, "outcome_id")
         _validate_timestamp(created_at, "created_at")
+        request_event = request.to_workflow_candidate().event
         base = {
             "schema_version": COGNITION_OUTCOME_SCHEMA_VERSION,
             "outcome_id": outcome_id,
@@ -788,8 +876,8 @@ class CognitionOutcome:
             "work_digest": request.work_digest,
             "workflow_run_id": request.workflow_run_id,
             "workflow_run_digest": request.workflow_run_digest,
-            "expected_revision": request.expected_revision,
-            "expected_event_digest": request.expected_event_digest,
+            "expected_revision": request.expected_revision + 1,
+            "expected_event_digest": request_event.event_digest,
             "status": status.value,
             "output_text": output_text,
             "output_digest": output_digest,
@@ -807,8 +895,8 @@ class CognitionOutcome:
             work_digest=request.work_digest,
             workflow_run_id=request.workflow_run_id,
             workflow_run_digest=request.workflow_run_digest,
-            expected_revision=request.expected_revision,
-            expected_event_digest=request.expected_event_digest,
+            expected_revision=request.expected_revision + 1,
+            expected_event_digest=request_event.event_digest,
             status=status,
             output_text=output_text,
             output_digest=output_digest,
