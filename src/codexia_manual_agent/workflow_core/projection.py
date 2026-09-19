@@ -127,13 +127,19 @@ def project_workflow_runs(
             order.append(run.workflow_run_id)
             continue
 
-        payload = _event_payload(event)
-        has_workflow_provenance = "_workflow" in payload
+        raw_payload = event.to_dict()["payload"]
         is_terminal_workflow_event = event.kind in {
             WORKFLOW_COMPLETED_EVENT,
             WORKFLOW_CANCELLED_EVENT,
         }
+        if not isinstance(raw_payload, dict):
+            if is_terminal_workflow_event:
+                raise WorkflowProjectionError(
+                    "Workflow terminal event payload must be an object"
+                )
+            continue
 
+        has_workflow_provenance = "_workflow" in raw_payload
         if not has_workflow_provenance and not is_terminal_workflow_event:
             continue
         if has_workflow_provenance and event.kind in {
