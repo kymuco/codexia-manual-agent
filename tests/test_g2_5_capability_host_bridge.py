@@ -9,8 +9,10 @@ from codexia_manual_agent.capability_core import (
     CapabilityAdmission,
     CapabilityBinding,
     CapabilityHandoffProjectionError,
+    CapabilityHandoff,
     CapabilityHostBindingError,
     CapabilityHostBridge,
+    CapabilityHostBridgeError,
     CapabilityHostPortError,
     CapabilityHostRequest,
     CapabilityHostRoutingConflictError,
@@ -21,7 +23,12 @@ from codexia_manual_agent.capability_core import (
     project_capability_handoff,
     project_capability_handoffs,
 )
-from codexia_manual_agent.work_core import SqliteWorkStore, Work, WorkIngressBinding
+from codexia_manual_agent.work_core import (
+    SqliteWorkStore,
+    Work,
+    WorkEvent,
+    WorkIngressBinding,
+)
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowBinding,
@@ -396,7 +403,7 @@ def test_terminal_need_is_not_dispatched(tmp_path) -> None:
     terminal = CapabilityAdmission(store).admit_outcome(outcome)
     host = AsyncHost("standalone.local")
 
-    with pytest.raises(Exception):
+    with pytest.raises(CapabilityHostBridgeError):
         CapabilityHostBridge(store).dispatch_once(terminal, host)
 
     assert host.calls == 0
@@ -404,37 +411,34 @@ def test_terminal_need_is_not_dispatched(tmp_path) -> None:
 
 def test_projection_rejects_handoff_for_unknown_need(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
-    _, _, pending = _pending_need(store)
-    current = store.snapshot(pending.need.work_id)
+    _, _, first = _pending_need(store, source_id="first")
+    _, _, second = _pending_need(store, source_id="second")
 
-    # Construct a valid handoff for the admitted Need, then rewrite the durable
-    # body to an unknown need identity and re-digest the outer WorkEvent only.
-    from codexia_manual_agent.capability_core import CapabilityHandoff
-
-    handoff = CapabilityHandoff.create(
-        need=pending,
-        snapshot=current,
+    first_snapshot = store.snapshot(first.need.work_id)
+    valid_foreign_handoff = CapabilityHandoff.create(
+        need=first,
+        snapshot=first_snapshot,
         host_id="standalone.local",
     )
-    payload = handoff.to_dict()
-    payload["need_id"] = str(__import__("uuid").uuid4())
-    forged = WorkEvent.create(
-        work_id=handoff.work_id,
-        sequence=current.revision + 1,
+
+    second_snapshot = store.snapshot(second.need.work_id)
+    forged_outer_event = WorkEvent.create(
+        work_id=second.need.work_id,
+        sequence=second_snapshot.revision + 1,
         kind=CAPABILITY_HANDOFF_ADMITTED_EVENT,
-        payload={"capability_handoff": payload},
-        previous_event_digest=current.last_event_digest,
-        event_id=handoff.handoff_id,
-        created_at=handoff.created_at,
+        payload={"capability_handoff": valid_foreign_handoff.to_dict()},
+        previous_event_digest=second_snapshot.last_event_digest,
+        event_id=valid_foreign_handoff.handoff_id,
+        created_at=valid_foreign_handoff.created_at,
     )
     store.append(
-        pending.need.work_id,
-        expected_revision=current.revision,
-        event=forged,
+        second.need.work_id,
+        expected_revision=second_snapshot.revision,
+        event=forged_outer_event,
     )
 
     with pytest.raises(CapabilityHandoffProjectionError):
-        project_capability_handoffs(store.events(pending.need.work_id))
+        project_capability_handoffs(store.events(second.need.work_id))
 
 
 def test_only_one_handoff_event_is_recorded(tmp_path) -> None:
