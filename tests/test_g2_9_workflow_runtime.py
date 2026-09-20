@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import sys
@@ -455,7 +456,7 @@ def test_same_workflow_id_version_with_changed_digest_is_rejected(tmp_path) -> N
 
 def test_context_rejects_pack_pin_for_another_workflow(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
-    _, first, first_pin = _started(store, source_id="first")
+    _, _, first_pin = _started(store, source_id="first")
 
     second_work = Work.create(
         objective="Second",
@@ -708,19 +709,35 @@ def test_concrete_binding_matches_g2_8_example_distribution(monkeypatch) -> None
 
 def test_workflow_runtime_has_no_store_admission_executor_or_model_imports() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
-    source = (
-        (root / "workflow_runtime" / "boundary.py").read_text(
-            encoding="utf-8"
-        )
-        + (root / "workflow_runtime" / "standalone_process.py").read_text(
-            encoding="utf-8"
-        )
-    )
+    forbidden_names = {
+        "WorkStore",
+        "WorkflowAdmission",
+        "RoleAdmission",
+        "CapabilityAdmission",
+        "ProcessExecutor",
+        "CognitionPort",
+        "Scheduler",
+    }
 
-    assert "WorkStore" not in source
-    assert "WorkflowAdmission" not in source
-    assert "RoleAdmission" not in source
-    assert "CapabilityAdmission" not in source
-    assert "ProcessExecutor" not in source
-    assert "CognitionPort" not in source
-    assert "Scheduler" not in source
+    imported_names: set[str] = set()
+    imported_modules: set[str] = set()
+    for path in (
+        root / "workflow_runtime" / "boundary.py",
+        root / "workflow_runtime" / "standalone_process.py",
+    ):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module is not None:
+                    imported_modules.add(node.module)
+                imported_names.update(alias.name for alias in node.names)
+
+    assert forbidden_names.isdisjoint(imported_names)
+    assert not any(
+        module.endswith(".admission")
+        or module.endswith(".authority")
+        or module.endswith(".execution")
+        for module in imported_modules
+    )
