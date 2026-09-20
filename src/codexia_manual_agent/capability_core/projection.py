@@ -96,8 +96,6 @@ def _outcome_record(event: WorkEvent) -> CapabilityOutcome:
         ) from exc
 
 
-
-
 def _require_pack_capability_membership(
     events: tuple[WorkEvent, ...],
     need: CapabilityNeed,
