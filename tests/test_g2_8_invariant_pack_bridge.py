@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -27,6 +28,7 @@ from codexia_manual_agent.pack_core import (
     PackWorkflowBinding,
     project_workflow_pack_binding,
 )
+from codexia_manual_agent.standalone_host import StandaloneProcessCapabilityPort
 from codexia_manual_agent.work_core import (
     SqliteWorkStore,
     Work,
@@ -42,8 +44,6 @@ EXAMPLE_PROVIDER_REF = "codexia:process-pack-provider@7.3.0"
 
 
 def _sha(text: str) -> str:
-    import hashlib
-
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -164,6 +164,8 @@ def _started_workflow(
         "codexia:process-pack-provider@latest",
         " codexia:process-pack-provider@7.3.0",
         "codexia:process-pack-provider@",
+        "codexia:process@pack-provider@7.3.0",
+        "codexia:process-pack-provider@7.3.0 beta",
     ],
 )
 def test_bridge_requires_exact_versioned_provider_ref(provider_ref: str) -> None:
@@ -302,6 +304,26 @@ def test_pack_admission_remains_explicit_after_plugin_resolution(tmp_path) -> No
     admitted = PackAdmission(store).admit_workflow_binding(pin)
 
     assert admitted.pack == resolved.pack
+
+
+def test_distributed_process_binding_matches_g2_6_host_contract(tmp_path) -> None:
+    resolved = InvariantPackDistributionBridge(
+        _Service(
+            {
+                EXAMPLE_PROVIDER_REF: _Plugin(
+                    _distribution_record()
+                )
+            }
+        )
+    ).resolve(EXAMPLE_PROVIDER_REF)
+
+    port = StandaloneProcessCapabilityPort(
+        workspace=tmp_path,
+        binding=resolved.capabilities[0],
+        approved=False,
+    )
+
+    assert port.binding == resolved.capabilities[0]
 
 
 def test_pack_availability_does_not_create_capability_authority(tmp_path) -> None:
