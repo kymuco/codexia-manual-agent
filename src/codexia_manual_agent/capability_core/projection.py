@@ -13,6 +13,13 @@ from codexia_manual_agent.capability_core.models import (
     CapabilityOutcomeStatus,
     InvalidCapabilityRecord,
 )
+from codexia_manual_agent.pack_core.models import (
+    PackMemberBinding,
+    PackMemberKind,
+)
+from codexia_manual_agent.pack_core.projection import (
+    project_workflow_pack_binding,
+)
 from codexia_manual_agent.work_core import WorkEvent
 
 
@@ -89,6 +96,24 @@ def _outcome_record(event: WorkEvent) -> CapabilityOutcome:
         ) from exc
 
 
+def _require_pack_capability_membership(
+    events: tuple[WorkEvent, ...],
+    need: CapabilityNeed,
+) -> None:
+    pin = project_workflow_pack_binding(events, need.workflow_run_id)
+    if pin is None:
+        return
+    member = PackMemberBinding.create(
+        kind=PackMemberKind.CAPABILITY,
+        semantic_id=need.binding.capability_id,
+        version=need.binding.version,
+        binding_digest=need.binding.binding_digest,
+    )
+    if not pin.pack.contains(member):
+        raise CapabilityProjectionError(
+            "CapabilityBinding is not a member of the WorkflowRun Pack"
+        )
+
 def project_capability_needs(
     events: tuple[WorkEvent, ...],
 ) -> tuple[CapabilityNeedSnapshot, ...]:
@@ -128,6 +153,7 @@ def project_capability_needs(
                     "CapabilityNeed does not bind exact prior Work event"
                 )
 
+            _require_pack_capability_membership(events, need)
             states[need.need_id] = _CapabilityState(need=need)
             order.append(need.need_id)
             continue

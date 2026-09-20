@@ -9,6 +9,13 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
+from codexia_manual_agent.pack_core.models import (
+    PackMemberBinding,
+    PackMemberKind,
+)
+from codexia_manual_agent.pack_core.projection import (
+    project_workflow_pack_binding,
+)
 from codexia_manual_agent.role_core.models import (
     COGNITION_REQUEST_SCHEMA_VERSION,
     COGNITION_REQUESTED_EVENT,
@@ -172,6 +179,24 @@ def _request_record(value: Any) -> dict[str, Any]:
     return value
 
 
+def _require_pack_role_membership(
+    events: tuple[WorkEvent, ...],
+    run: RoleRun,
+) -> None:
+    pin = project_workflow_pack_binding(events, run.workflow_run_id)
+    if pin is None:
+        return
+    member = PackMemberBinding.create(
+        kind=PackMemberKind.ROLE,
+        semantic_id=run.binding.role_id,
+        version=run.binding.version,
+        binding_digest=run.binding.binding_digest,
+    )
+    if not pin.pack.contains(member):
+        raise RoleProjectionError(
+            "RoleBinding is not a member of the WorkflowRun Pack"
+        )
+
 def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, ...]:
     """Project RoleRun lifecycle from already-admitted Work chronology only."""
 
@@ -222,6 +247,7 @@ def project_role_runs(events: tuple[WorkEvent, ...]) -> tuple[RoleRunSnapshot, .
             ):
                 raise RoleProjectionError("role.started changed WorkflowRun binding")
 
+            _require_pack_role_membership(events, run)
             states[run.role_run_id] = _RoleState(run=run)
             order.append(run.role_run_id)
             continue

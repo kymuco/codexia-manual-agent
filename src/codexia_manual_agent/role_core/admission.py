@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import hmac
 
+from codexia_manual_agent.pack_core.models import (
+    PackMemberBinding,
+    PackMemberKind,
+)
+from codexia_manual_agent.pack_core.projection import (
+    project_workflow_pack_binding,
+)
 from codexia_manual_agent.role_core.models import (
     CognitionOutcome,
     CognitionRequest,
@@ -10,7 +17,7 @@ from codexia_manual_agent.role_core.models import (
     RoleRunState,
 )
 from codexia_manual_agent.role_core.projection import project_role_run
-from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.work_core import WorkEvent, WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowRunState,
@@ -29,6 +36,24 @@ class RoleBindingError(RoleAdmissionError):
 class RoleRunStateError(RoleAdmissionError):
     """Requested operation is invalid for the recovered RoleRun state."""
 
+
+def _require_pack_role_membership(
+    events: tuple[WorkEvent, ...],
+    run: RoleRun,
+) -> None:
+    pin = project_workflow_pack_binding(events, run.workflow_run_id)
+    if pin is None:
+        return
+    member = PackMemberBinding.create(
+        kind=PackMemberKind.ROLE,
+        semantic_id=run.binding.role_id,
+        version=run.binding.version,
+        binding_digest=run.binding.binding_digest,
+    )
+    if not pin.pack.contains(member):
+        raise RoleBindingError(
+            "RoleBinding is not a member of the WorkflowRun Pack"
+        )
 
 class RoleAdmission:
     """Admit RoleRun, cognition request, and cognition outcome into Work truth."""
@@ -54,6 +79,10 @@ class RoleAdmission:
             )
             if recovered.run != run:
                 raise RoleBindingError("role.start identity reused for different RoleRun")
+            _require_pack_role_membership(
+                self._store.events(run.work_id),
+                recovered.run,
+            )
             return recovered
 
         workflow = project_workflow_run(events, run.workflow_run_id)
@@ -69,6 +98,7 @@ class RoleAdmission:
         if not hmac.compare_digest(workflow.run.work_digest, run.work_digest):
             raise RoleBindingError("RoleRun changed Work binding")
 
+        _require_pack_role_membership(events, run)
         self._workflow_admission.admit_candidate(candidate)
         return project_role_run(
             self._store.events(run.work_id),
