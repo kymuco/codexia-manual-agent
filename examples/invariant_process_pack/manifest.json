@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "codexia:process-pack-provider",
+  "version": "7.3.0",
+  "source": {
+    "code_path": "plugin.py",
+    "class_name": "ProcessPackProvider"
+  }
+}
