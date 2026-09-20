@@ -66,12 +66,17 @@ def _validate_exact_provider_ref(value: Any) -> str:
             "Invariant plugin reference must be text"
         )
     normalized = value.strip()
-    if normalized != value or "@" not in normalized:
+    if normalized != value or normalized.count("@") != 1:
         raise InvariantPackDistributionError(
             "Invariant plugin reference must pin one exact version"
         )
-    plugin_id, version = normalized.rsplit("@", 1)
-    if not plugin_id or not version or version.lower() == "latest":
+    plugin_id, version = normalized.split("@", 1)
+    if (
+        not plugin_id
+        or not version
+        or any(char.isspace() for char in normalized)
+        or version.lower() == "latest"
+    ):
         raise InvariantPackDistributionError(
             "Invariant plugin reference must pin one exact non-latest version"
         )
