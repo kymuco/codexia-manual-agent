@@ -17,7 +17,7 @@ from codexia_manual_agent.role_core.models import (
     RoleRunState,
 )
 from codexia_manual_agent.role_core.projection import project_role_run
-from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.work_core import WorkEvent, WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowRunState,
@@ -40,7 +40,7 @@ class RoleRunStateError(RoleAdmissionError):
 
 
 def _require_pack_role_membership(
-    events,
+    events: tuple[WorkEvent, ...],
     run: RoleRun,
 ) -> None:
     pin = project_workflow_pack_binding(events, run.workflow_run_id)
