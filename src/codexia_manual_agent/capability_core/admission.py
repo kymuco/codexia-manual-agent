@@ -16,7 +16,7 @@ from codexia_manual_agent.pack_core.models import (
 from codexia_manual_agent.pack_core.projection import (
     project_workflow_pack_binding,
 )
-from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.work_core import WorkEvent, WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowRunState,
@@ -39,7 +39,7 @@ class CapabilityNeedStateError(CapabilityAdmissionError):
 
 
 def _require_pack_capability_membership(
-    events,
+    events: tuple[WorkEvent, ...],
     need: CapabilityNeed,
 ) -> None:
     pin = project_workflow_pack_binding(events, need.workflow_run_id)
