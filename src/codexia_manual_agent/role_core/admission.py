@@ -37,8 +37,6 @@ class RoleRunStateError(RoleAdmissionError):
     """Requested operation is invalid for the recovered RoleRun state."""
 
 
-
-
 def _require_pack_role_membership(
     events: tuple[WorkEvent, ...],
     run: RoleRun,
