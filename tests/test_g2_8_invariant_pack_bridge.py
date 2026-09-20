@@ -447,6 +447,18 @@ def test_bridge_has_no_mandatory_invariant_import() -> None:
     assert "import invariant" not in bridge_source
 
 
+def test_bridge_owns_no_work_admission_or_authority_surface() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
+    bridge_source = (
+        root / "invariant_bridge" / "pack_distribution.py"
+    ).read_text(encoding="utf-8")
+
+    assert "WorkStore" not in bridge_source
+    assert "PackAdmission" not in bridge_source
+    assert "Authorization" not in bridge_source
+    assert "ProcessExecutor" not in bridge_source
+
+
 def test_example_manifest_pins_technical_plugin_version() -> None:
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
