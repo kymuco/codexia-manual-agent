@@ -18,6 +18,7 @@ from codexia_manual_agent.pack_core import (
     PackBinding,
     PackMemberBinding,
     PackMemberKind,
+    PackProjectionError,
     PackWorkflowBinding,
     project_pack_workflow_bindings,
     project_workflow_pack_binding,
@@ -623,7 +624,7 @@ def test_raw_late_pack_event_is_rejected_during_recovery(tmp_path) -> None:
         event=forged_outer,
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(PackProjectionError):
         project_pack_workflow_bindings(
             store.events(pin.work_id)
         )
