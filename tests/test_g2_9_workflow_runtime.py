@@ -12,6 +12,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityAdmission,
     CapabilityBinding,
     CapabilityNeed,
+    CapabilityNeedSnapshot,
     CapabilityNeedState,
     CapabilityOutcome,
     project_capability_needs,
@@ -521,6 +522,36 @@ def test_context_rejects_capability_state_from_another_workflow(tmp_path) -> Non
             workflow=second,
             pack_binding=second_pin,
             capabilities=(first_pending,),
+        )
+
+
+def test_context_rejects_derived_capability_outside_pack(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, workflow, pin = _started(store)
+    other = CapabilityBinding.create(
+        capability_id="filesystem",
+        version="1.0.0",
+        contract_digest=_sha("filesystem"),
+    )
+    synthetic_need = CapabilityNeed.create(
+        workflow=workflow,
+        snapshot=store.snapshot(workflow.run.work_id),
+        binding=other,
+        operation="read",
+        parameters={"path": "README.md"},
+    )
+    synthetic_snapshot = CapabilityNeedSnapshot(
+        need=synthetic_need,
+        state=CapabilityNeedState.PENDING,
+        outcome=None,
+    )
+
+    with pytest.raises(WorkflowImplementationBindingError):
+        WorkflowStepContext(
+            work=store.snapshot(workflow.run.work_id),
+            workflow=workflow,
+            pack_binding=pin,
+            capabilities=(synthetic_snapshot,),
         )
 
 
