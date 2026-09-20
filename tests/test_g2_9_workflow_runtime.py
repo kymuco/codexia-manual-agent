@@ -736,8 +736,6 @@ def test_workflow_runtime_has_no_store_admission_executor_or_model_imports() -> 
 
     assert forbidden_names.isdisjoint(imported_names)
     assert not any(
-        module.endswith(".admission")
-        or module.endswith(".authority")
-        or module.endswith(".execution")
+        module.endswith((".admission", ".authority", ".execution"))
         for module in imported_modules
     )
