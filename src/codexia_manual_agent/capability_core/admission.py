@@ -9,6 +9,13 @@ from codexia_manual_agent.capability_core.models import (
     CapabilityOutcome,
 )
 from codexia_manual_agent.capability_core.projection import project_capability_need
+from codexia_manual_agent.pack_core.models import (
+    PackMemberBinding,
+    PackMemberKind,
+)
+from codexia_manual_agent.pack_core.projection import (
+    project_workflow_pack_binding,
+)
 from codexia_manual_agent.work_core import WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
@@ -28,6 +35,26 @@ class CapabilityBindingError(CapabilityAdmissionError):
 class CapabilityNeedStateError(CapabilityAdmissionError):
     """Requested operation is invalid for the recovered Need lifecycle."""
 
+
+
+
+def _require_pack_capability_membership(
+    events,
+    need: CapabilityNeed,
+) -> None:
+    pin = project_workflow_pack_binding(events, need.workflow_run_id)
+    if pin is None:
+        return
+    member = PackMemberBinding.create(
+        kind=PackMemberKind.CAPABILITY,
+        semantic_id=need.binding.capability_id,
+        version=need.binding.version,
+        binding_digest=need.binding.binding_digest,
+    )
+    if not pin.pack.contains(member):
+        raise CapabilityBindingError(
+            "CapabilityBinding is not a member of the WorkflowRun Pack"
+        )
 
 class CapabilityAdmission:
     """Admit Need declarations and host-originated outcomes into Work truth."""
@@ -55,6 +82,10 @@ class CapabilityAdmission:
                 raise CapabilityBindingError(
                     "capability need identity reused for different exact Need"
                 )
+            _require_pack_capability_membership(
+                self._store.events(need.work_id),
+                recovered.need,
+            )
             return recovered
 
         workflow = project_workflow_run(events, need.workflow_run_id)
@@ -72,6 +103,7 @@ class CapabilityAdmission:
         if not hmac.compare_digest(workflow.run.work_digest, need.work_digest):
             raise CapabilityBindingError("CapabilityNeed changed Work binding")
 
+        _require_pack_capability_membership(events, need)
         self._workflow_admission.admit_candidate(candidate)
         return project_capability_need(
             self._store.events(need.work_id),
