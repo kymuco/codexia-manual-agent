@@ -264,6 +264,62 @@ def test_pending_need_yields_no_second_proposal(tmp_path) -> None:
     assert len(project_capability_needs(store.events(workflow.run.work_id))) == 1
 
 
+def test_existing_need_with_changed_parameters_is_rejected(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, workflow, pin = _started(store)
+    changed = CapabilityNeed.create(
+        workflow=workflow,
+        snapshot=store.snapshot(workflow.run.work_id),
+        binding=standalone_process_capability_binding(),
+        operation="run",
+        parameters={
+            "argv": ["python", "-c", "print('different')"],
+            "cwd_ref": "workspace",
+            "cwd": ".",
+            "limits": {
+                "timeout_seconds": 30.0,
+                "max_stdout_bytes": 65_536,
+                "max_stderr_bytes": 65_536,
+            },
+        },
+    )
+    CapabilityAdmission(store).admit_need(changed)
+
+    with pytest.raises(WorkflowImplementationBindingError):
+        WorkflowImplementationBoundary().prepare(
+            StandaloneProcessWorkflowImplementation(),
+            _context(store, workflow, pin),
+        )
+
+
+def test_multiple_process_needs_are_not_silently_interpreted(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, workflow, pin = _started(store)
+    implementation = StandaloneProcessWorkflowImplementation()
+    boundary = WorkflowImplementationBoundary()
+    first = boundary.prepare(
+        implementation,
+        _context(store, workflow, pin),
+    )
+    assert isinstance(first, CapabilityNeed)
+    CapabilityAdmission(store).admit_need(first)
+
+    second = CapabilityNeed.create(
+        workflow=workflow,
+        snapshot=store.snapshot(workflow.run.work_id),
+        binding=standalone_process_capability_binding(),
+        operation="run",
+        parameters=first.to_dict()["parameters"],
+    )
+    CapabilityAdmission(store).admit_need(second)
+
+    with pytest.raises(WorkflowImplementationStateError):
+        boundary.prepare(
+            implementation,
+            _context(store, workflow, pin),
+        )
+
+
 def test_succeeded_need_prepares_workflow_completion_without_admission(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     _, workflow, pin = _started(store)
