@@ -179,8 +179,6 @@ def _request_record(value: Any) -> dict[str, Any]:
     return value
 
 
-
-
 def _require_pack_role_membership(
     events: tuple[WorkEvent, ...],
     run: RoleRun,
