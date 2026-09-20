@@ -140,6 +140,16 @@ class WorkflowStepContext:
                 workflow_run_id=role.workflow_run_id,
                 workflow_run_digest=role.workflow_run_digest,
             )
+            role_member = PackMemberBinding.create(
+                kind=PackMemberKind.ROLE,
+                semantic_id=role.binding.role_id,
+                version=role.binding.version,
+                binding_digest=role.binding.binding_digest,
+            )
+            if not pin.pack.contains(role_member):
+                raise WorkflowImplementationBindingError(
+                    "derived RoleRun state is outside pinned Pack"
+                )
 
         need_ids: set[str] = set()
         for snapshot in self.capabilities:
@@ -159,6 +169,16 @@ class WorkflowStepContext:
                 workflow_run_id=need.workflow_run_id,
                 workflow_run_digest=need.workflow_run_digest,
             )
+            capability_member = PackMemberBinding.create(
+                kind=PackMemberKind.CAPABILITY,
+                semantic_id=need.binding.capability_id,
+                version=need.binding.version,
+                binding_digest=need.binding.binding_digest,
+            )
+            if not pin.pack.contains(capability_member):
+                raise WorkflowImplementationBindingError(
+                    "derived CapabilityNeed state is outside pinned Pack"
+                )
 
     def _validate_child_binding(
         self,
