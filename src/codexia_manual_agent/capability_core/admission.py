@@ -36,8 +36,6 @@ class CapabilityNeedStateError(CapabilityAdmissionError):
     """Requested operation is invalid for the recovered Need lifecycle."""
 
 
-
-
 def _require_pack_capability_membership(
     events: tuple[WorkEvent, ...],
     need: CapabilityNeed,
