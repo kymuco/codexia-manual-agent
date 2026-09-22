@@ -215,10 +215,6 @@ class CognitionTransportBridge:
         request: CognitionRequest,
         role: RoleRunSnapshot,
     ) -> None:
-        if role.state is not RoleRunState.REQUESTED:
-            raise CognitionTransportBridgeError(
-                f"RoleRun is {role.state.value}; no cognition request is pending"
-            )
         if role.request_id != request.request_id:
             raise CognitionTransportBindingError(
                 "Caller CognitionRequest differs from durable request identity"
