@@ -26,18 +26,46 @@ from codexia_manual_agent.role_core.projection import (
     project_role_run,
     project_role_runs,
 )
+from codexia_manual_agent.role_core.transport_bridge import (
+    CognitionTransportBindingError,
+    CognitionTransportBridge,
+    CognitionTransportBridgeError,
+    CognitionTransportPortError,
+    CognitionTransportRoutingConflictError,
+)
+from codexia_manual_agent.role_core.transport_models import (
+    COGNITION_HANDOFF_ADMITTED_EVENT,
+    CognitionHandoff,
+    CognitionPortRequest,
+    InvalidCognitionTransportRecord,
+)
+from codexia_manual_agent.role_core.transport_projection import (
+    CognitionHandoffProjectionError,
+    project_cognition_handoff,
+    project_cognition_handoffs,
+)
 
 __all__ = [
+    "COGNITION_HANDOFF_ADMITTED_EVENT",
     "COGNITION_REQUESTED_EVENT",
     "ROLE_COMPLETED_EVENT",
     "ROLE_FAILED_EVENT",
     "ROLE_OUTCOME_UNKNOWN_EVENT",
     "ROLE_STARTED_EVENT",
+    "CognitionHandoff",
+    "CognitionHandoffProjectionError",
     "CognitionOutcome",
     "CognitionOutcomeStatus",
     "CognitionPort",
+    "CognitionPortRequest",
     "CognitionRequest",
+    "CognitionTransportBindingError",
+    "CognitionTransportBridge",
+    "CognitionTransportBridgeError",
+    "CognitionTransportPortError",
+    "CognitionTransportRoutingConflictError",
     "ContextProjection",
+    "InvalidCognitionTransportRecord",
     "InvalidRoleRecord",
     "RoleAdmission",
     "RoleAdmissionError",
@@ -48,6 +76,8 @@ __all__ = [
     "RoleRunSnapshot",
     "RoleRunState",
     "RoleRunStateError",
+    "project_cognition_handoff",
+    "project_cognition_handoffs",
     "project_role_run",
     "project_role_runs",
 ]
