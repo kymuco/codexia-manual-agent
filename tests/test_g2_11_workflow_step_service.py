@@ -13,8 +13,8 @@ import pytest
 from codexia_manual_agent.capability_core import (
     CapabilityAdmission,
     CapabilityNeed,
-    CapabilityOutcome,
     CapabilityNeedState,
+    CapabilityOutcome,
 )
 from codexia_manual_agent.invariant_bridge import (
     InvariantPackDistributionBridge,
@@ -23,6 +23,9 @@ from codexia_manual_agent.invariant_bridge import (
 )
 from codexia_manual_agent.pack_core import (
     PackAdmission,
+    PackBinding,
+    PackMemberBinding,
+    PackMemberKind,
     PackWorkflowBinding,
 )
 from codexia_manual_agent.work_core import (
@@ -48,6 +51,7 @@ from codexia_manual_agent.workflow_runtime import (
     StandaloneProcessWorkflowImplementation,
     WorkflowImplementationStateError,
     standalone_process_capability_binding,
+    standalone_process_workflow_binding,
 )
 
 PROVIDER_REF = "codexia:process-pack-provider@7.3.0"
@@ -368,15 +372,6 @@ def test_step_filters_capability_state_to_requested_workflow(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     capability = standalone_process_capability_binding()
 
-    from codexia_manual_agent.pack_core import (
-        PackBinding,
-        PackMemberBinding,
-        PackMemberKind,
-    )
-    from codexia_manual_agent.workflow_runtime import (
-        standalone_process_workflow_binding,
-    )
-
     workflow_binding = standalone_process_workflow_binding()
     pack = PackBinding.create(
         pack_id="codexia:standalone-process-pack",
@@ -542,8 +537,13 @@ def test_step_source_has_no_admission_append_host_executor_or_loop_surface() -> 
         "Scheduler",
     }
     assert forbidden.isdisjoint(imported_names)
-    assert ".append(" not in source
-    assert "while " not in source
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        for node in ast.walk(tree)
+    )
+    assert not any(isinstance(node, ast.While) for node in ast.walk(tree))
     assert not any(
         module.endswith((".admission", ".authority", ".execution"))
         for module in imported_modules
