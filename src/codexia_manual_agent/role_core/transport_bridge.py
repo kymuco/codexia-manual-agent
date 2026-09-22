@@ -204,6 +204,17 @@ class CognitionTransportBridge:
             raise CognitionTransportBindingError(
                 "CognitionOutcome callback changed Work binding"
             )
+        if handoff.workflow_run_id != outcome.workflow_run_id:
+            raise CognitionTransportBindingError(
+                "CognitionOutcome callback changed WorkflowRun identity"
+            )
+        if not hmac.compare_digest(
+            handoff.workflow_run_digest,
+            outcome.workflow_run_digest,
+        ):
+            raise CognitionTransportBindingError(
+                "CognitionOutcome callback changed WorkflowRun binding"
+            )
 
         current = self._store.snapshot(outcome.work_id)
         rebound = outcome.bind_to_snapshot(current)
