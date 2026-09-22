@@ -111,7 +111,11 @@ class WorkflowStepService:
     ) -> WorkflowStepResult:
         events = self._store.events(work_id)
         snapshot = self._store.snapshot(work_id)
-        self._validate_read_view(events=events, snapshot=snapshot)
+        self._validate_read_view(
+            expected_work_id=work_id,
+            events=events,
+            snapshot=snapshot,
+        )
 
         workflow = project_workflow_run(events, workflow_run_id)
         if workflow.run.work_id != work_id:
@@ -169,9 +173,14 @@ class WorkflowStepService:
     @staticmethod
     def _validate_read_view(
         *,
+        expected_work_id: str,
         events: tuple[WorkEvent, ...],
         snapshot: WorkSnapshot,
     ) -> None:
+        if snapshot.work.work_id != expected_work_id:
+            raise WorkflowStepReadConflictError(
+                "Recovered snapshot crossed requested Work identity"
+            )
         if snapshot.revision != len(events):
             raise WorkflowStepReadConflictError(
                 "Work changed while recovering events and snapshot"
@@ -181,7 +190,10 @@ class WorkflowStepService:
             raise WorkflowStepReadConflictError(
                 "Recovered snapshot does not match exact event chronology"
             )
-        if events and any(event.work_id != snapshot.work.work_id for event in events):
+        if events and any(
+            event.work_id != snapshot.work.work_id
+            for event in events
+        ):
             raise WorkflowStepReadConflictError(
                 "Recovered event chronology crossed Work identity"
             )
