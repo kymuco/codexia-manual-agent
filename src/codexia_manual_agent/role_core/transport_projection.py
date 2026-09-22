@@ -3,7 +3,10 @@ from __future__ import annotations
 import hmac
 
 from codexia_manual_agent.role_core.models import RoleRunState
-from codexia_manual_agent.role_core.projection import project_role_run
+from codexia_manual_agent.role_core.projection import (
+    RoleProjectionError,
+    project_role_run,
+)
 from codexia_manual_agent.role_core.transport_models import (
     COGNITION_HANDOFF_ADMITTED_EVENT,
     CognitionHandoff,
@@ -81,7 +84,7 @@ def project_cognition_handoffs(
         prefix = events[:index]
         try:
             role = project_role_run(prefix, handoff.role_run_id)
-        except Exception as exc:
+        except RoleProjectionError as exc:
             raise CognitionHandoffProjectionError(
                 "CognitionHandoff references unknown RoleRun"
             ) from exc
