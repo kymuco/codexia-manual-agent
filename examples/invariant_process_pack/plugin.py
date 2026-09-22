@@ -113,3 +113,24 @@ class ProcessPackProvider(BasePlugin):
             "roles": [],
             "capabilities": [capability],
         }
+
+    def codexia_workflow_implementation(
+        self,
+        workflow_binding: dict[str, Any],
+    ):
+        expected = _workflow_binding()
+        if workflow_binding != expected:
+            raise ValueError(
+                "Unsupported or non-exact WorkflowBinding"
+            )
+
+        from codexia_manual_agent.workflow_runtime import (
+            StandaloneProcessWorkflowImplementation,
+        )
+
+        implementation = StandaloneProcessWorkflowImplementation()
+        if implementation.binding.to_dict() != expected:
+            raise RuntimeError(
+                "Pack provider implementation drifted from distribution"
+            )
+        return implementation
