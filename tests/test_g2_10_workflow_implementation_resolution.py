@@ -203,7 +203,6 @@ def test_resolution_does_not_call_propose(tmp_path) -> None:
 
         def propose(self, context):
             self.calls += 1
-            return None
 
     implementation = CountingImplementation()
     plugin = _Plugin(implementation=implementation)
