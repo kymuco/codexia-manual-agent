@@ -1056,6 +1056,61 @@ class CognitionOutcome:
             outcome_digest=value["outcome_digest"],
         )
 
+    def bind_to_snapshot(
+        self,
+        snapshot: WorkSnapshot,
+    ) -> CognitionOutcome:
+        """Rebind transient outcome admission to one exact current Work snapshot.
+
+        The request/result identity and semantic payload remain unchanged. Only
+        the Work chronology CAS binding is updated so an admitted routing event
+        may exist between request and outcome.
+        """
+
+        if not isinstance(snapshot, WorkSnapshot):
+            raise TypeError("snapshot must be WorkSnapshot")
+        if snapshot.state is not WorkState.ACTIVE:
+            raise InvalidRoleRecord(
+                "CognitionOutcome cannot bind terminal Work"
+            )
+        if snapshot.work.work_id != self.work_id:
+            raise InvalidRoleRecord(
+                "CognitionOutcome belongs to another Work"
+            )
+        if not hmac.compare_digest(
+            snapshot.work.work_digest,
+            self.work_digest,
+        ):
+            raise InvalidRoleRecord(
+                "CognitionOutcome Work binding changed"
+            )
+
+        base = {
+            **self._base_dict(),
+            "expected_revision": snapshot.revision,
+            "expected_event_digest": snapshot.last_event_digest,
+        }
+        return CognitionOutcome(
+            schema_version=self.schema_version,
+            outcome_id=self.outcome_id,
+            created_at=self.created_at,
+            request_id=self.request_id,
+            request_digest=self.request_digest,
+            role_run_id=self.role_run_id,
+            role_run_digest=self.role_run_digest,
+            work_id=self.work_id,
+            work_digest=self.work_digest,
+            workflow_run_id=self.workflow_run_id,
+            workflow_run_digest=self.workflow_run_digest,
+            expected_revision=snapshot.revision,
+            expected_event_digest=snapshot.last_event_digest,
+            status=self.status,
+            output_text=self.output_text,
+            output_digest=self.output_digest,
+            error=self.error,
+            outcome_digest=_digest(base),
+        )
+
     def to_workflow_candidate(self) -> WorkflowCandidate:
         kind_by_status = {
             CognitionOutcomeStatus.SUCCEEDED: ROLE_COMPLETED_EVENT,
