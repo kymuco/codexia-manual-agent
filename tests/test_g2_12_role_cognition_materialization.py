@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -22,7 +23,6 @@ from codexia_manual_agent.role_core import (
     RoleBinding,
     RoleRun,
     RoleRunState,
-    project_role_run,
 )
 from codexia_manual_agent.work_core import (
     SqliteWorkStore,
@@ -471,11 +471,7 @@ def test_from_durable_dict_rejects_non_exact_record_shape(tmp_path) -> None:
 
 
 def test_materialization_source_has_no_admission_model_or_execution_surface() -> None:
-    root = (
-        __import__("pathlib").Path(__file__).resolve().parents[1]
-        / "src"
-        / "codexia_manual_agent"
-    )
+    root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
     path = root / "workflow_orchestration" / "role_cognition.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
 
