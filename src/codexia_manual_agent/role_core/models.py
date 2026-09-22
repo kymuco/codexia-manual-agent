@@ -1084,6 +1084,10 @@ class CognitionOutcome:
             raise InvalidRoleRecord(
                 "CognitionOutcome Work binding changed"
             )
+        if snapshot.revision < self.expected_revision:
+            raise InvalidRoleRecord(
+                "CognitionOutcome cannot bind an earlier Work revision"
+            )
 
         base = {
             **self._base_dict(),
