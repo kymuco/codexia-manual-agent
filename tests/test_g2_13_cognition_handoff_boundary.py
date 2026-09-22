@@ -293,6 +293,22 @@ def test_success_outcome_is_rebound_after_handoff_and_admitted(tmp_path) -> None
     assert outcome_event.sequence == handoff_event.sequence + 1
 
 
+def test_exact_retry_after_synchronous_completion_does_not_call_port_again(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, _, _, request = _requested(store)
+    port = SuccessPort("cognition.local")
+    bridge = CognitionTransportBridge(store)
+
+    first = bridge.dispatch_once(request, port)
+    second = bridge.dispatch_once(request, port)
+
+    assert first.state is RoleRunState.COMPLETED
+    assert second == first
+    assert port.calls == 1
+
+
 def test_exact_redispatch_does_not_call_same_port_twice(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     _, _, _, request = _requested(store)
