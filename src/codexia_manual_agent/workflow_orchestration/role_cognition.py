@@ -140,11 +140,10 @@ class RoleCognitionMaterializationService:
         work_id: str,
         role_run_id: str,
     ) -> CognitionRequestMaterialization:
-        events, snapshot, role, pack_binding = self._recover(
+        _events, snapshot, role, pack_binding = self._recover(
             work_id=work_id,
             role_run_id=role_run_id,
         )
-        del events
 
         if role.state is not RoleRunState.ACTIVE:
             raise RoleCognitionStateError(
