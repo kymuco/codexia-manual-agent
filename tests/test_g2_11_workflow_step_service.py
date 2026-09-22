@@ -48,7 +48,6 @@ from codexia_manual_agent.workflow_orchestration import (
     WorkflowStepService,
 )
 from codexia_manual_agent.workflow_runtime import (
-    StandaloneProcessWorkflowImplementation,
     WorkflowImplementationStateError,
     standalone_process_capability_binding,
     standalone_process_workflow_binding,
