@@ -12,4 +12,19 @@ __all__ = [
     "InvariantPackDistributionError",
     "ManagedPluginServicePort",
     "ResolvedPackDistribution",
+    "WORKFLOW_IMPLEMENTATION_EXPORT",
+    "InvariantWorkflowImplementationBindingError",
+    "InvariantWorkflowImplementationBridge",
+    "InvariantWorkflowImplementationError",
+    "InvariantWorkflowImplementationShapeError",
+    "ResolvedWorkflowImplementation",
 ]
+
+from codexia_manual_agent.invariant_bridge.workflow_implementation import (
+    WORKFLOW_IMPLEMENTATION_EXPORT,
+    InvariantWorkflowImplementationBindingError,
+    InvariantWorkflowImplementationBridge,
+    InvariantWorkflowImplementationError,
+    InvariantWorkflowImplementationShapeError,
+    ResolvedWorkflowImplementation,
+)
