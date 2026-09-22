@@ -33,8 +33,10 @@ from codexia_manual_agent.work_core import (
     WorkIngressBinding,
 )
 from codexia_manual_agent.workflow_core import (
+    WORKFLOW_COMPLETED_EVENT,
     WorkflowAdmission,
     WorkflowBinding,
+    WorkflowCandidate,
     WorkflowRun,
     WorkflowRunState,
     project_workflow_run,
@@ -488,10 +490,10 @@ def test_terminal_workflow_cannot_resolve_new_implementation(tmp_path) -> None:
     distribution = InvariantPackDistributionBridge(service).resolve(PROVIDER_V1)
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     _, workflow, pin = _started(store, distribution=distribution)
-    completion = workflow.run.to_terminal_candidate(
+    completion = WorkflowCandidate.create(
         run_snapshot=workflow,
         work_snapshot=store.snapshot(workflow.run.work_id),
-        state=WorkflowRunState.COMPLETED,
+        event_kind=WORKFLOW_COMPLETED_EVENT,
     )
     completed = WorkflowAdmission(store).admit_candidate(completion)
 
