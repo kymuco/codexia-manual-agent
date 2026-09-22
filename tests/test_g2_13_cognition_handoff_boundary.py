@@ -29,7 +29,6 @@ from codexia_manual_agent.role_core import (
     RoleRunState,
     project_cognition_handoff,
     project_cognition_handoffs,
-    project_role_run,
 )
 from codexia_manual_agent.work_core import (
     SqliteWorkStore,
@@ -98,12 +97,12 @@ def _pack(
 
 
 class _Instructions:
-    def resolve(self, binding: RoleBinding) -> str:
+    def resolve(self, _binding: RoleBinding) -> str:
         return INSTRUCTIONS
 
 
 class _Context:
-    def resolve(self, projection: ContextProjection) -> str:
+    def resolve(self, _projection: ContextProjection) -> str:
         return CONTEXT
 
 
@@ -173,7 +172,6 @@ class AsyncPort:
     def complete(self, request: CognitionPortRequest):
         self.calls += 1
         self.request = request
-        return None
 
 
 class SuccessPort:
@@ -204,7 +202,7 @@ class RaisingPort:
     def __init__(self) -> None:
         self.calls = 0
 
-    def complete(self, request: CognitionPortRequest):
+    def complete(self, _request: CognitionPortRequest):
         self.calls += 1
         raise RuntimeError("transport became ambiguous")
 
@@ -212,7 +210,7 @@ class RaisingPort:
 class InvalidReturnPort:
     port_id = "cognition.invalid"
 
-    def complete(self, request: CognitionPortRequest):
+    def complete(self, _request: CognitionPortRequest):
         return "not-an-outcome"
 
 
@@ -522,6 +520,42 @@ def test_projection_rejects_handoff_for_unknown_request(tmp_path) -> None:
         request.work_id,
         expected_revision=current.revision,
         event=forged,
+    )
+
+    with pytest.raises(CognitionHandoffProjectionError):
+        project_cognition_handoffs(store.events(request.work_id))
+
+
+def test_projection_rejects_handoff_after_terminal_role_outcome(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "work.sqlite")
+    _, _, requested, request = _requested(store)
+    terminal = RoleAdmission(store).admit_outcome(
+        CognitionOutcome.failed(
+            request,
+            error="terminal before handoff",
+        )
+    )
+    synthetic_requested = type(requested)(
+        run=terminal.run,
+        state=RoleRunState.REQUESTED,
+        request_id=request.request_id,
+        request_digest=request.request_digest,
+        terminal_event_id=None,
+        output_text=None,
+        error=None,
+    )
+    current = store.snapshot(request.work_id)
+    handoff = CognitionHandoff.create(
+        role=synthetic_requested,
+        snapshot=current,
+        port_id="cognition.local",
+    )
+    store.append(
+        request.work_id,
+        expected_revision=current.revision,
+        event=handoff.to_event(),
     )
 
     with pytest.raises(CognitionHandoffProjectionError):
