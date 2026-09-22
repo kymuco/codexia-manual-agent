@@ -730,6 +730,53 @@ class CognitionRequest:
             "request_digest": self.request_digest,
         }
 
+    @classmethod
+    def from_durable_dict(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        instructions: str,
+        context: str,
+    ) -> CognitionRequest:
+        value = _exact_keys(
+            value,
+            {
+                "schema_version",
+                "request_id",
+                "created_at",
+                "role_run_id",
+                "role_run_digest",
+                "work_id",
+                "work_digest",
+                "workflow_run_id",
+                "workflow_run_digest",
+                "expected_revision",
+                "expected_event_digest",
+                "instructions_digest",
+                "context_digest",
+                "request_digest",
+            },
+            "CognitionRequest durable record",
+        )
+        return cls(
+            schema_version=value["schema_version"],
+            request_id=value["request_id"],
+            created_at=value["created_at"],
+            role_run_id=value["role_run_id"],
+            role_run_digest=value["role_run_digest"],
+            work_id=value["work_id"],
+            work_digest=value["work_digest"],
+            workflow_run_id=value["workflow_run_id"],
+            workflow_run_digest=value["workflow_run_digest"],
+            expected_revision=value["expected_revision"],
+            expected_event_digest=value["expected_event_digest"],
+            instructions_digest=value["instructions_digest"],
+            context_digest=value["context_digest"],
+            instructions=instructions,
+            context=context,
+            request_digest=value["request_digest"],
+        )
+
     def to_workflow_candidate(self) -> WorkflowCandidate:
         event = WorkEvent.create(
             work_id=self.work_id,
