@@ -38,7 +38,6 @@ from codexia_manual_agent.workflow_core import (
     WorkflowBinding,
     WorkflowCandidate,
     WorkflowRun,
-    WorkflowRunState,
     project_workflow_run,
 )
 from codexia_manual_agent.workflow_runtime import (
@@ -510,7 +509,7 @@ def test_pack_binding_for_another_workflow_is_rejected(tmp_path) -> None:
     service = _Service({PROVIDER_V1: plugin})
     distribution = InvariantPackDistributionBridge(service).resolve(PROVIDER_V1)
     store = SqliteWorkStore(tmp_path / "work.sqlite")
-    _, first, first_pin = _started(
+    _, _, first_pin = _started(
         store,
         distribution=distribution,
         source_id="first",
