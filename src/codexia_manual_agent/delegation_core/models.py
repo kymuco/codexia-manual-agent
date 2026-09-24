@@ -185,7 +185,17 @@ class Delegation:
             "start_revision": parent.revision,
             "start_event_digest": parent.last_event_digest,
         }
-        return cls(**base, delegation_digest=_digest(base))
+        return cls(
+            schema_version=DELEGATION_SCHEMA_VERSION,
+            delegation_id=delegation_id,
+            created_at=created_at,
+            parent_work_id=parent.work.work_id,
+            parent_work_digest=parent.work.work_digest,
+            child_work=child_work,
+            start_revision=parent.revision,
+            start_event_digest=parent.last_event_digest,
+            delegation_digest=_digest(base),
+        )
 
     def __post_init__(self) -> None:
         if self.schema_version != DELEGATION_SCHEMA_VERSION:
