@@ -24,6 +24,8 @@ from codexia_manual_agent.workflow_core import (
 
 WorkflowProposal: TypeAlias = WorkflowCandidate | RoleRun | CapabilityNeed
 
+_RESERVED_CORE_EVENT_PREFIXES = ("role.", "capability.", "pack.")
+
 
 class WorkflowImplementationError(RuntimeError):
     """Base failure for the G2.9 workflow implementation boundary."""
@@ -35,6 +37,10 @@ class WorkflowImplementationBindingError(WorkflowImplementationError):
 
 class WorkflowImplementationStateError(WorkflowImplementationError):
     """Implementation cannot safely propose from the supplied derived state."""
+
+
+class WorkflowImplementationOwnershipError(WorkflowImplementationError):
+    """Generic WorkflowCandidate attempted to manufacture Core-owned child truth."""
 
 
 class WorkflowImplementationPort(Protocol):
@@ -255,6 +261,11 @@ class WorkflowImplementationBoundary:
         candidate: WorkflowCandidate,
         context: WorkflowStepContext,
     ) -> None:
+        if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
+            raise WorkflowImplementationOwnershipError(
+                "Generic WorkflowCandidate cannot manufacture role/capability/pack events"
+            )
+
         run = context.workflow.run
         if candidate.workflow_run_id != run.workflow_run_id:
             raise WorkflowImplementationBindingError(
