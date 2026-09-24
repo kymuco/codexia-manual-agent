@@ -29,6 +29,10 @@ from codexia_manual_agent.workflow_orchestration.step import (
     WorkflowStepResult,
     WorkflowStepService,
 )
+from codexia_manual_agent.workflow_orchestration.workflow_progression import (
+    WorkflowProgressionResult,
+    WorkflowProgressionService,
+)
 
 __all__ = [
     "CognitionRequestMaterialization",
@@ -46,6 +50,8 @@ __all__ = [
     "WorkflowProposalAdmissionPackRequiredError",
     "WorkflowProposalAdmissionResult",
     "WorkflowProposalAdmissionService",
+    "WorkflowProgressionResult",
+    "WorkflowProgressionService",
     "WorkflowReadStorePort",
     "WorkflowStepError",
     "WorkflowStepPackRequiredError",
@@ -55,3 +61,4 @@ __all__ = [
     "WorkflowStepResult",
     "WorkflowStepService",
 ]
+
