@@ -322,7 +322,8 @@ def test_g2_26_does_not_smuggle_child_state_into_parent_workflow_context() -> No
     assert "owned_children" not in fields
 
 
-def test_workflow_delegation_integration_adds_no_scheduler_executor_or_child_result() -> None:
+def test_workflow_delegation_integration_adds_no_scheduler_executor_or_child_result(
+    ) -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
     paths = [
         root / "workflow_runtime" / "boundary.py",
