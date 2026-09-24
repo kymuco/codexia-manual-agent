@@ -322,6 +322,7 @@ class AttentionNeed:
             event=event,
         )
 
+
 def _source_namespace(value: Any) -> str:
     value = _bounded_text(value, "source_namespace").lower()
     if (
