@@ -32,7 +32,7 @@ _SOURCE_NAMESPACE_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 
 
 class InvalidAttentionRecord(ValueError):
-    """Raised when a Gen2 AttentionNeed is structurally invalid."""
+    """Raised when a Gen2 attention record is structurally invalid."""
 
 
 def _canonical_json(value: Any) -> str:
