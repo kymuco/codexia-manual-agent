@@ -18,12 +18,17 @@ from codexia_manual_agent.workflow_core import (
 )
 
 ATTENTION_NEED_SCHEMA_VERSION = 1
+ATTENTION_RESPONSE_SCHEMA_VERSION = 1
 ATTENTION_NEED_DECLARED_EVENT = "attention.need-declared"
+ATTENTION_RESPONSE_RECORDED_EVENT = "attention.response-recorded"
 
 MAX_ATTENTION_TEXT_CHARS = 16_384
+MAX_SOURCE_ID_CHARS = 1_024
+MAX_SOURCE_NAMESPACE_CHARS = 128
 MAX_TIMESTAMP_CHARS = 64
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SOURCE_NAMESPACE_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
 
 
 class InvalidAttentionRecord(ValueError):
@@ -316,3 +321,237 @@ class AttentionNeed:
             expected_event_digest=self.start_event_digest,
             event=event,
         )
+
+def _source_namespace(value: Any) -> str:
+    value = _bounded_text(value, "source_namespace").lower()
+    if (
+        len(value) > MAX_SOURCE_NAMESPACE_CHARS
+        or _SOURCE_NAMESPACE_RE.fullmatch(value) is None
+    ):
+        raise InvalidAttentionRecord("source_namespace is not canonical")
+    return value
+
+
+def _source_id(value: Any) -> str:
+    value = _bounded_text(value, "source_id")
+    if len(value) > MAX_SOURCE_ID_CHARS:
+        raise InvalidAttentionRecord("source_id exceeds its text budget")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionResponse:
+    """Durable human-response evidence bound to one exact AttentionNeed.
+
+    Source fields preserve capture provenance supplied by the host/product.
+    They are not cryptographic proof of physical human authorship, execution
+    authority, approval, notification state, or permission to resume work.
+    """
+
+    schema_version: int
+    response_id: str
+    created_at: str
+    work_id: str
+    work_digest: str
+    workflow_run_id: str
+    workflow_run_digest: str
+    attention_id: str
+    attention_need_digest: str
+    response_text: str
+    source_namespace: str
+    source_id: str
+    source_payload_digest: str
+    start_revision: int
+    start_event_digest: str | None
+    response_digest: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        need: AttentionNeed,
+        snapshot: WorkSnapshot,
+        response_text: str,
+        source_namespace: str,
+        source_id: str,
+        response_id: str | None = None,
+        created_at: str | None = None,
+    ) -> AttentionResponse:
+        if not isinstance(need, AttentionNeed):
+            raise TypeError("need must be AttentionNeed")
+        if not isinstance(snapshot, WorkSnapshot):
+            raise TypeError("snapshot must be WorkSnapshot")
+        if snapshot.state is not WorkState.ACTIVE:
+            raise InvalidAttentionRecord(
+                "AttentionResponse cannot be recorded on terminal Work"
+            )
+        if snapshot.work.work_id != need.work_id:
+            raise InvalidAttentionRecord(
+                "AttentionResponse snapshot belongs to another Work"
+            )
+        if not hmac.compare_digest(snapshot.work.work_digest, need.work_digest):
+            raise InvalidAttentionRecord(
+                "AttentionResponse snapshot changed Work binding"
+            )
+
+        response_text = _bounded_text(response_text, "response_text")
+        namespace = _source_namespace(source_namespace)
+        if namespace != source_namespace:
+            raise InvalidAttentionRecord(
+                "source_namespace must already be canonical lowercase text"
+            )
+        source_id = _source_id(source_id)
+        source_payload_digest = _digest({"response_text": response_text})
+        response_id = response_id or str(uuid4())
+        created_at = created_at or _new_timestamp()
+        _validate_uuid(response_id, "response_id")
+        _validate_timestamp(created_at, "created_at")
+
+        base = {
+            "schema_version": ATTENTION_RESPONSE_SCHEMA_VERSION,
+            "response_id": response_id,
+            "created_at": created_at,
+            "work_id": need.work_id,
+            "work_digest": need.work_digest,
+            "workflow_run_id": need.workflow_run_id,
+            "workflow_run_digest": need.workflow_run_digest,
+            "attention_id": need.attention_id,
+            "attention_need_digest": need.need_digest,
+            "response_text": response_text,
+            "source_namespace": namespace,
+            "source_id": source_id,
+            "source_payload_digest": source_payload_digest,
+            "start_revision": snapshot.revision,
+            "start_event_digest": snapshot.last_event_digest,
+        }
+        return cls(**base, response_digest=_digest(base))
+
+    def __post_init__(self) -> None:
+        if self.schema_version != ATTENTION_RESPONSE_SCHEMA_VERSION:
+            raise InvalidAttentionRecord("Unsupported AttentionResponse schema")
+        _validate_uuid(self.response_id, "response_id")
+        _validate_timestamp(self.created_at, "created_at")
+        _validate_uuid(self.work_id, "work_id")
+        _validate_digest(self.work_digest, "work_digest")
+        _validate_uuid(self.workflow_run_id, "workflow_run_id")
+        _validate_digest(self.workflow_run_digest, "workflow_run_digest")
+        _validate_uuid(self.attention_id, "attention_id")
+        _validate_digest(self.attention_need_digest, "attention_need_digest")
+        response_text = _bounded_text(self.response_text, "response_text")
+        namespace = _source_namespace(self.source_namespace)
+        if namespace != self.source_namespace:
+            raise InvalidAttentionRecord(
+                "source_namespace must be canonical lowercase text"
+            )
+        _source_id(self.source_id)
+        _validate_digest(self.source_payload_digest, "source_payload_digest")
+        expected_payload_digest = _digest({"response_text": response_text})
+        if not hmac.compare_digest(
+            self.source_payload_digest,
+            expected_payload_digest,
+        ):
+            raise InvalidAttentionRecord(
+                "source_payload_digest does not bind response_text"
+            )
+        if type(self.start_revision) is not int or self.start_revision < 0:
+            raise InvalidAttentionRecord(
+                "start_revision must be non-negative integer"
+            )
+        if self.start_event_digest is None:
+            if self.start_revision != 0:
+                raise InvalidAttentionRecord(
+                    "nonzero start_revision requires start_event_digest"
+                )
+        else:
+            _validate_digest(self.start_event_digest, "start_event_digest")
+            if self.start_revision == 0:
+                raise InvalidAttentionRecord(
+                    "revision zero cannot have start_event_digest"
+                )
+        _validate_digest(self.response_digest, "response_digest")
+        if not hmac.compare_digest(
+            self.response_digest,
+            _digest(self._base_dict()),
+        ):
+            raise InvalidAttentionRecord("AttentionResponse digest mismatch")
+
+    def _base_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "response_id": self.response_id,
+            "created_at": self.created_at,
+            "work_id": self.work_id,
+            "work_digest": self.work_digest,
+            "workflow_run_id": self.workflow_run_id,
+            "workflow_run_digest": self.workflow_run_digest,
+            "attention_id": self.attention_id,
+            "attention_need_digest": self.attention_need_digest,
+            "response_text": self.response_text,
+            "source_namespace": self.source_namespace,
+            "source_id": self.source_id,
+            "source_payload_digest": self.source_payload_digest,
+            "start_revision": self.start_revision,
+            "start_event_digest": self.start_event_digest,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._base_dict(), "response_digest": self.response_digest}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> AttentionResponse:
+        value = _exact_keys(
+            value,
+            {
+                "schema_version",
+                "response_id",
+                "created_at",
+                "work_id",
+                "work_digest",
+                "workflow_run_id",
+                "workflow_run_digest",
+                "attention_id",
+                "attention_need_digest",
+                "response_text",
+                "source_namespace",
+                "source_id",
+                "source_payload_digest",
+                "start_revision",
+                "start_event_digest",
+                "response_digest",
+            },
+            "AttentionResponse",
+        )
+        return cls(
+            schema_version=value["schema_version"],
+            response_id=value["response_id"],
+            created_at=value["created_at"],
+            work_id=value["work_id"],
+            work_digest=value["work_digest"],
+            workflow_run_id=value["workflow_run_id"],
+            workflow_run_digest=value["workflow_run_digest"],
+            attention_id=value["attention_id"],
+            attention_need_digest=value["attention_need_digest"],
+            response_text=value["response_text"],
+            source_namespace=value["source_namespace"],
+            source_id=value["source_id"],
+            source_payload_digest=value["source_payload_digest"],
+            start_revision=value["start_revision"],
+            start_event_digest=value["start_event_digest"],
+            response_digest=value["response_digest"],
+        )
+
+    def to_work_event(self) -> WorkEvent:
+        return WorkEvent.create(
+            work_id=self.work_id,
+            sequence=self.start_revision + 1,
+            kind=ATTENTION_RESPONSE_RECORDED_EVENT,
+            payload=_workflow_wrapped_payload(
+                workflow_run_id=self.workflow_run_id,
+                workflow_run_digest=self.workflow_run_digest,
+                payload={"attention_response": self.to_dict()},
+            ),
+            previous_event_digest=self.start_event_digest,
+            event_id=self.response_id,
+            created_at=self.created_at,
+        )
+
