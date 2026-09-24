@@ -301,7 +301,7 @@ def test_projection_rejects_unbound_workflow_terminal_event(tmp_path) -> None:
         payload={"summary": "missing workflow provenance"},
         previous_event_digest=current.last_event_digest,
     )
-    store.append(
+    store.append_completion(
         run.work_id,
         expected_revision=current.revision,
         event=forged,
