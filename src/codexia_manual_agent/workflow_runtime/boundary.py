@@ -43,6 +43,20 @@ class WorkflowImplementationOwnershipError(WorkflowImplementationError):
     """Generic WorkflowCandidate attempted to manufacture Core-owned semantic truth."""
 
 
+def validate_generic_workflow_candidate_ownership(
+    candidate: WorkflowCandidate,
+) -> None:
+    """Reject generic candidates that occupy specialized Core namespaces."""
+
+    if not isinstance(candidate, WorkflowCandidate):
+        raise TypeError("candidate must be WorkflowCandidate")
+    if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
+        raise WorkflowImplementationOwnershipError(
+            "Generic WorkflowCandidate cannot manufacture "
+            "role/capability/pack events"
+        )
+
+
 class WorkflowImplementationPort(Protocol):
     """One exact pure proposal implementation for one WorkflowBinding."""
 
@@ -261,11 +275,7 @@ class WorkflowImplementationBoundary:
         candidate: WorkflowCandidate,
         context: WorkflowStepContext,
     ) -> None:
-        if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
-            raise WorkflowImplementationOwnershipError(
-                "Generic WorkflowCandidate cannot manufacture "
-                "role/capability/pack events"
-            )
+        validate_generic_workflow_candidate_ownership(candidate)
 
         run = context.workflow.run
         if candidate.workflow_run_id != run.workflow_run_id:
