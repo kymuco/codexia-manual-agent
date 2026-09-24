@@ -7,6 +7,7 @@ from codexia_manual_agent.workflow_runtime.boundary import (
     WorkflowImplementationStateError,
     WorkflowProposal,
     WorkflowStepContext,
+    validate_generic_workflow_candidate_ownership,
 )
 from codexia_manual_agent.workflow_runtime.standalone_process import (
     CAPABILITY_ID,
@@ -32,6 +33,7 @@ __all__ = [
     "WorkflowImplementationStateError",
     "WorkflowProposal",
     "WorkflowStepContext",
+    "validate_generic_workflow_candidate_ownership",
     "standalone_process_capability_binding",
     "standalone_process_workflow_binding",
 ]
