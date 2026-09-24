@@ -1,3 +1,9 @@
+from codexia_manual_agent.delegation_core.completion import (
+    DelegationChildrenLiveError,
+    DelegationCompletionBindingError,
+    DelegationCompletionError,
+    DelegationCompletionGuard,
+)
 from codexia_manual_agent.delegation_core.admission import (
     DelegationAdmission,
     DelegationAdmissionError,
@@ -22,6 +28,10 @@ __all__ = [
     "DelegationAdmission",
     "DelegationAdmissionError",
     "DelegationBindingError",
+    "DelegationChildrenLiveError",
+    "DelegationCompletionBindingError",
+    "DelegationCompletionError",
+    "DelegationCompletionGuard",
     "DelegationProjectionError",
     "InvalidDelegationRecord",
     "project_delegation",
