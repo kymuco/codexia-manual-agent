@@ -5,7 +5,9 @@ from typing import Protocol
 
 from codexia_manual_agent.attention_core import (
     AttentionNeed,
+    AttentionResponse,
     project_attention_needs,
+    project_attention_responses,
 )
 from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
@@ -182,6 +184,7 @@ class WorkflowStepService:
         roles = self._workflow_roles(events, workflow)
         capabilities = self._workflow_capabilities(events, workflow)
         attentions = self._workflow_attentions(events, workflow)
+        attention_responses = self._workflow_attention_responses(events, workflow)
 
         context = WorkflowStepContext(
             work=snapshot,
@@ -190,6 +193,7 @@ class WorkflowStepService:
             roles=roles,
             capabilities=capabilities,
             attentions=attentions,
+            attention_responses=attention_responses,
         )
 
         resolved = self._resolver.resolve(
@@ -302,6 +306,18 @@ class WorkflowStepService:
             need
             for need in project_attention_needs(events)
             if need.workflow_run_id == run_id
+        )
+
+    @staticmethod
+    def _workflow_attention_responses(
+        events: tuple[WorkEvent, ...],
+        workflow: WorkflowRunSnapshot,
+    ) -> tuple[AttentionResponse, ...]:
+        run_id = workflow.run.workflow_run_id
+        return tuple(
+            response
+            for response in project_attention_responses(events)
+            if response.workflow_run_id == run_id
         )
 
     @staticmethod

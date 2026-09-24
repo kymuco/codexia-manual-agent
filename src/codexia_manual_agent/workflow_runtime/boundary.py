@@ -4,7 +4,7 @@ import hmac
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
-from codexia_manual_agent.attention_core import AttentionNeed
+from codexia_manual_agent.attention_core import AttentionNeed, AttentionResponse
 from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
@@ -86,6 +86,7 @@ class WorkflowStepContext:
     roles: tuple[RoleRunSnapshot, ...] = ()
     capabilities: tuple[CapabilityNeedSnapshot, ...] = ()
     attentions: tuple[AttentionNeed, ...] = ()
+    attention_responses: tuple[AttentionResponse, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.work, WorkSnapshot):
@@ -205,6 +206,7 @@ class WorkflowStepContext:
                 )
 
         attention_ids: set[str] = set()
+        attention_by_id: dict[str, AttentionNeed] = {}
         for attention in self.attentions:
             if not isinstance(attention, AttentionNeed):
                 raise TypeError(
@@ -215,12 +217,50 @@ class WorkflowStepContext:
                     "attentions contains duplicate AttentionNeed identity"
                 )
             attention_ids.add(attention.attention_id)
+            attention_by_id[attention.attention_id] = attention
             self._validate_child_binding(
                 child_work_id=attention.work_id,
                 child_work_digest=attention.work_digest,
                 workflow_run_id=attention.workflow_run_id,
                 workflow_run_digest=attention.workflow_run_digest,
             )
+
+        response_ids: set[str] = set()
+        response_sources: set[tuple[str, str]] = set()
+        for response in self.attention_responses:
+            if not isinstance(response, AttentionResponse):
+                raise TypeError(
+                    "attention_responses must contain AttentionResponse values"
+                )
+            if response.response_id in response_ids:
+                raise WorkflowImplementationStateError(
+                    "attention_responses contains duplicate AttentionResponse identity"
+                )
+            response_ids.add(response.response_id)
+            source_key = (response.source_namespace, response.source_id)
+            if source_key in response_sources:
+                raise WorkflowImplementationStateError(
+                    "attention_responses contains duplicate capture source identity"
+                )
+            response_sources.add(source_key)
+            self._validate_child_binding(
+                child_work_id=response.work_id,
+                child_work_digest=response.work_digest,
+                workflow_run_id=response.workflow_run_id,
+                workflow_run_digest=response.workflow_run_digest,
+            )
+            attention = attention_by_id.get(response.attention_id)
+            if attention is None:
+                raise WorkflowImplementationBindingError(
+                    "AttentionResponse references AttentionNeed outside context"
+                )
+            if not hmac.compare_digest(
+                response.attention_need_digest,
+                attention.need_digest,
+            ):
+                raise WorkflowImplementationBindingError(
+                    "AttentionResponse changed AttentionNeed binding"
+                )
 
     def _validate_child_binding(
         self,
