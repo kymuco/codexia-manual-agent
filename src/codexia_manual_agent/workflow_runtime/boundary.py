@@ -9,6 +9,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
 )
+from codexia_manual_agent.delegation_core import Delegation
 from codexia_manual_agent.pack_core import (
     PackMemberBinding,
     PackMemberKind,
@@ -22,19 +23,6 @@ from codexia_manual_agent.workflow_core import (
     WorkflowRunSnapshot,
     WorkflowRunState,
 )
-
-WorkflowProposal: TypeAlias = (
-    WorkflowCandidate | RoleRun | CapabilityNeed | AttentionNeed
-)
-
-_RESERVED_CORE_EVENT_PREFIXES = (
-    "role.",
-    "capability.",
-    "pack.",
-    "attention.",
-    "delegation.",
-)
-
 
 class WorkflowImplementationError(RuntimeError):
     """Base failure for the G2.9 workflow implementation boundary."""
@@ -50,6 +38,78 @@ class WorkflowImplementationStateError(WorkflowImplementationError):
 
 class WorkflowImplementationOwnershipError(WorkflowImplementationError):
     """Generic WorkflowCandidate attempted to manufacture Core-owned semantic truth."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowDelegationProposal:
+    """Ephemeral exact-Workflow provenance wrapper around durable Delegation.
+
+    Delegation itself remains Work-level truth. This wrapper exists only while
+    one Workflow proposal is being validated/admitted and is never persisted as
+    a separate canonical entity.
+    """
+
+    workflow_run_id: str
+    workflow_run_digest: str
+    delegation: Delegation
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workflow_run_id, str) or not self.workflow_run_id:
+            raise TypeError("workflow_run_id must be non-empty text")
+        if (
+            not isinstance(self.workflow_run_digest, str)
+            or len(self.workflow_run_digest) != 64
+        ):
+            raise TypeError("workflow_run_digest must be SHA-256 text")
+        if not isinstance(self.delegation, Delegation):
+            raise TypeError("delegation must be Delegation")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        workflow: WorkflowRunSnapshot,
+        snapshot: WorkSnapshot,
+        child_objective: str,
+    ) -> WorkflowDelegationProposal:
+        if not isinstance(workflow, WorkflowRunSnapshot):
+            raise TypeError("workflow must be WorkflowRunSnapshot")
+        if not isinstance(snapshot, WorkSnapshot):
+            raise TypeError("snapshot must be WorkSnapshot")
+        run = workflow.run
+        if run.work_id != snapshot.work.work_id:
+            raise WorkflowImplementationBindingError(
+                "WorkflowDelegationProposal crossed Work identity"
+            )
+        if not hmac.compare_digest(run.work_digest, snapshot.work.work_digest):
+            raise WorkflowImplementationBindingError(
+                "WorkflowDelegationProposal changed Work binding"
+            )
+        return cls(
+            workflow_run_id=run.workflow_run_id,
+            workflow_run_digest=run.run_digest,
+            delegation=Delegation.create(
+                parent=snapshot,
+                child_objective=child_objective,
+            ),
+        )
+
+
+WorkflowProposal: TypeAlias = (
+    WorkflowCandidate
+    | RoleRun
+    | CapabilityNeed
+    | AttentionNeed
+    | WorkflowDelegationProposal
+)
+
+_RESERVED_CORE_EVENT_PREFIXES = (
+    "role.",
+    "capability.",
+    "pack.",
+    "attention.",
+    "delegation.",
+)
 
 
 def validate_generic_workflow_candidate_ownership(
@@ -337,6 +397,9 @@ class WorkflowImplementationBoundary:
         if isinstance(proposal, AttentionNeed):
             self._validate_attention_need(proposal, context)
             return proposal
+        if isinstance(proposal, WorkflowDelegationProposal):
+            self._validate_delegation(proposal, context)
+            return proposal
         raise WorkflowImplementationError(
             "Workflow implementation returned unsupported proposal type"
         )
@@ -452,6 +515,44 @@ class WorkflowImplementationBoundary:
         if need.start_event_digest != context.work.last_event_digest:
             raise WorkflowImplementationStateError(
                 "AttentionNeed does not bind current Work chronology"
+            )
+
+    @staticmethod
+    def _validate_delegation(
+        proposal: WorkflowDelegationProposal,
+        context: WorkflowStepContext,
+    ) -> None:
+        run = context.workflow.run
+        delegation = proposal.delegation
+        if proposal.workflow_run_id != run.workflow_run_id:
+            raise WorkflowImplementationBindingError(
+                "WorkflowDelegationProposal changed WorkflowRun identity"
+            )
+        if not hmac.compare_digest(
+            proposal.workflow_run_digest,
+            run.run_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "WorkflowDelegationProposal changed WorkflowRun binding"
+            )
+        if delegation.parent_work_id != run.work_id:
+            raise WorkflowImplementationBindingError(
+                "Delegation crossed parent Work identity"
+            )
+        if not hmac.compare_digest(
+            delegation.parent_work_digest,
+            run.work_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "Delegation changed parent Work binding"
+            )
+        if delegation.start_revision != context.work.revision:
+            raise WorkflowImplementationStateError(
+                "Delegation does not bind current Work revision"
+            )
+        if delegation.start_event_digest != context.work.last_event_digest:
+            raise WorkflowImplementationStateError(
+                "Delegation does not bind current Work chronology"
             )
 
     @staticmethod
