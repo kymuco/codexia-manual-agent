@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from codexia_manual_agent.attention_core import (
+    AttentionNeed,
+    project_attention_needs,
+)
 from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
     project_capability_needs,
@@ -177,6 +181,7 @@ class WorkflowStepService:
 
         roles = self._workflow_roles(events, workflow)
         capabilities = self._workflow_capabilities(events, workflow)
+        attentions = self._workflow_attentions(events, workflow)
 
         context = WorkflowStepContext(
             work=snapshot,
@@ -184,6 +189,7 @@ class WorkflowStepService:
             pack_binding=pack_binding,
             roles=roles,
             capabilities=capabilities,
+            attentions=attentions,
         )
 
         resolved = self._resolver.resolve(
@@ -284,6 +290,18 @@ class WorkflowStepService:
             need
             for need in project_capability_needs(events)
             if need.need.workflow_run_id == run_id
+        )
+
+    @staticmethod
+    def _workflow_attentions(
+        events: tuple[WorkEvent, ...],
+        workflow: WorkflowRunSnapshot,
+    ) -> tuple[AttentionNeed, ...]:
+        run_id = workflow.run.workflow_run_id
+        return tuple(
+            need
+            for need in project_attention_needs(events)
+            if need.workflow_run_id == run_id
         )
 
     @staticmethod

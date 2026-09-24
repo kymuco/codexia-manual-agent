@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 from typing import TypeAlias
 
+from codexia_manual_agent.attention_core import AttentionAdmission, AttentionNeed
 from codexia_manual_agent.capability_core import (
     CapabilityAdmission,
     CapabilityNeed,
@@ -27,7 +28,11 @@ from codexia_manual_agent.workflow_runtime import (
 )
 
 WorkflowProposalAdmissionResult: TypeAlias = (
-    WorkflowRunSnapshot | RoleRunSnapshot | CapabilityNeedSnapshot | None
+    WorkflowRunSnapshot
+    | RoleRunSnapshot
+    | CapabilityNeedSnapshot
+    | AttentionNeed
+    | None
 )
 
 
@@ -60,6 +65,7 @@ class WorkflowProposalAdmissionService:
         self._workflow = WorkflowAdmission(store)
         self._role = RoleAdmission(store)
         self._capability = CapabilityAdmission(store)
+        self._attention = AttentionAdmission(store)
 
     def admit(
         self,
@@ -109,6 +115,9 @@ class WorkflowProposalAdmissionService:
         if isinstance(proposal, CapabilityNeed):
             self._validate_capability(result, proposal, workflow)
             return self._capability.admit_need(proposal)
+        if isinstance(proposal, AttentionNeed):
+            self._validate_attention(result, proposal, workflow)
+            return self._attention.admit_need(proposal)
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
 
     @staticmethod
@@ -168,6 +177,23 @@ class WorkflowProposalAdmissionService:
         cls,
         result: WorkflowStepResult,
         proposal: RoleRun,
+        workflow: WorkflowRunSnapshot,
+    ) -> None:
+        cls._validate_common(
+            result,
+            proposal_work_id=proposal.work_id,
+            proposal_workflow_run_id=proposal.workflow_run_id,
+            proposal_workflow_run_digest=proposal.workflow_run_digest,
+            proposal_revision=proposal.start_revision,
+            proposal_event_digest=proposal.start_event_digest,
+            workflow=workflow,
+        )
+
+    @classmethod
+    def _validate_attention(
+        cls,
+        result: WorkflowStepResult,
+        proposal: AttentionNeed,
         workflow: WorkflowRunSnapshot,
     ) -> None:
         cls._validate_common(

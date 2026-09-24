@@ -186,6 +186,7 @@ def test_context_surface_has_no_store_authority_executor_or_scheduler(tmp_path) 
         "pack_binding",
         "roles",
         "capabilities",
+        "attentions",
     }
 
 
