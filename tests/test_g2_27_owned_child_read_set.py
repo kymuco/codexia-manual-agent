@@ -334,14 +334,20 @@ def test_exact_retry_after_commit_survives_later_child_drift(tmp_path) -> None:
     service = WorkflowProposalAdmissionService(store)
 
     first = service.admit(result)
-    parent_after_first = store.events(work.work_id)
     _complete_child(store, delegation)
+    later_child = _delegate(
+        store,
+        work,
+        objective="A later owned child absent from the original read prefix",
+    )
+    before_retry = store.events(work.work_id)
 
     retried = service.admit(result)
 
     assert retried == first
-    assert store.events(work.work_id) == parent_after_first
+    assert store.events(work.work_id) == before_retry
     assert store.snapshot(delegation.child_work.work_id).state is WorkState.COMPLETED
+    assert store.snapshot(later_child.child_work.work_id).state is WorkState.ACTIVE
 
 
 def test_incomplete_child_read_set_fails_before_parent_mutation(tmp_path) -> None:
