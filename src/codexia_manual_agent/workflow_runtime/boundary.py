@@ -42,6 +42,35 @@ class WorkflowImplementationOwnershipError(WorkflowImplementationError):
 
 
 @dataclass(frozen=True, slots=True)
+class OwnedChildWorkSnapshot:
+    """Ephemeral exact read view of one durable parent-owned child Work."""
+
+    delegation: Delegation
+    child: WorkSnapshot
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.delegation, Delegation):
+            raise TypeError("delegation must be Delegation")
+        if not isinstance(self.child, WorkSnapshot):
+            raise TypeError("child must be WorkSnapshot")
+        if self.child.work.work_id != self.delegation.child_work.work_id:
+            raise WorkflowImplementationBindingError(
+                "owned child snapshot crossed child Work identity"
+            )
+        if not hmac.compare_digest(
+            self.child.work.work_digest,
+            self.delegation.child_work.work_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "owned child snapshot changed child Work binding"
+            )
+        if self.child.work.to_dict() != self.delegation.child_work.to_dict():
+            raise WorkflowImplementationBindingError(
+                "owned child snapshot changed exact child Work bytes"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowDelegationProposal:
     """Ephemeral exact-Workflow provenance wrapper around durable Delegation.
 
@@ -154,6 +183,7 @@ class WorkflowStepContext:
     capabilities: tuple[CapabilityNeedSnapshot, ...] = ()
     attentions: tuple[AttentionNeed, ...] = ()
     attention_responses: tuple[AttentionResponse, ...] = ()
+    owned_children: tuple[OwnedChildWorkSnapshot, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.work, WorkSnapshot):
@@ -327,6 +357,36 @@ class WorkflowStepContext:
             ):
                 raise WorkflowImplementationBindingError(
                     "AttentionResponse changed AttentionNeed binding"
+                )
+
+        delegation_ids: set[str] = set()
+        child_work_ids: set[str] = set()
+        for owned in self.owned_children:
+            if not isinstance(owned, OwnedChildWorkSnapshot):
+                raise TypeError(
+                    "owned_children must contain OwnedChildWorkSnapshot values"
+                )
+            delegation = owned.delegation
+            if delegation.delegation_id in delegation_ids:
+                raise WorkflowImplementationStateError(
+                    "owned_children contains duplicate Delegation identity"
+                )
+            if delegation.child_work.work_id in child_work_ids:
+                raise WorkflowImplementationStateError(
+                    "owned_children contains duplicate child Work identity"
+                )
+            delegation_ids.add(delegation.delegation_id)
+            child_work_ids.add(delegation.child_work.work_id)
+            if delegation.parent_work_id != run.work_id:
+                raise WorkflowImplementationBindingError(
+                    "owned child Delegation crossed parent Work identity"
+                )
+            if not hmac.compare_digest(
+                delegation.parent_work_digest,
+                run.work_digest,
+            ):
+                raise WorkflowImplementationBindingError(
+                    "owned child Delegation changed parent Work binding"
                 )
 
     def _validate_child_binding(
