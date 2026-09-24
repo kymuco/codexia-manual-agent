@@ -60,6 +60,15 @@ class WorkStore(Protocol):
         event: WorkEvent,
     ) -> WorkSnapshot: ...
 
+    def append_with_child_create(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        child_work: Work,
+    ) -> tuple[WorkSnapshot, WorkSnapshot]: ...
+
 
 class SqliteWorkStore:
     """SQLite proof implementation for the Gen2 Work truth boundary.
@@ -305,6 +314,202 @@ class SqliteWorkStore:
             result = self._snapshot_in_connection(connection, work_id)
             connection.commit()
             return result
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def append_with_child_create(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        child_work: Work,
+    ) -> tuple[WorkSnapshot, WorkSnapshot]:
+        """Atomically append one parent fact and create one new child Work.
+
+        This is a storage/concurrency primitive, not delegation policy.
+        Exact retries after commit are idempotent. A child Work that already
+        exists without the exact parent event is rejected rather than adopted.
+        """
+
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
+        if not isinstance(event, WorkEvent):
+            raise TypeError("event must be WorkEvent")
+        if not isinstance(child_work, Work):
+            raise TypeError("child_work must be Work")
+        if event.work_id != work_id:
+            raise WorkIdentityConflictError(
+                "WorkEvent is bound to another work_id"
+            )
+        if child_work.work_id == work_id:
+            raise WorkIdentityConflictError(
+                "child Work cannot equal parent Work"
+            )
+
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_work_row(connection, work_id)
+
+            event_id_row = connection.execute(
+                "SELECT * FROM g2_work_event_v1 WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+            if event_id_row is not None:
+                existing_event = self._event_from_row(event_id_row)
+                if existing_event.to_dict() != event.to_dict():
+                    raise WorkIdentityConflictError(
+                        "event_id is already bound to different exact WorkEvent bytes"
+                    )
+                child_row = connection.execute(
+                    "SELECT * FROM g2_work_v1 WHERE work_id = ?",
+                    (child_work.work_id,),
+                ).fetchone()
+                if child_row is None:
+                    raise WorkPersistenceIntegrityError(
+                        "exact parent event exists without its atomic child Work"
+                    )
+                existing_child = self._work_from_row(child_row)
+                if existing_child.to_dict() != child_work.to_dict():
+                    raise WorkIdentityConflictError(
+                        "atomic child work_id is bound to different exact Work bytes"
+                    )
+                parent_snapshot = self._snapshot_in_connection(
+                    connection,
+                    work_id,
+                )
+                child_snapshot = self._snapshot_in_connection(
+                    connection,
+                    child_work.work_id,
+                )
+                connection.commit()
+                return parent_snapshot, child_snapshot
+
+            sequence_row = connection.execute(
+                """
+                SELECT * FROM g2_work_event_v1
+                WHERE work_id = ? AND sequence = ?
+                """,
+                (work_id, event.sequence),
+            ).fetchone()
+            if sequence_row is not None:
+                existing = self._event_from_row(sequence_row)
+                if existing.to_dict() == event.to_dict():
+                    raise WorkPersistenceIntegrityError(
+                        "exact parent event exists but event-id lookup missed it"
+                    )
+                raise WorkConcurrencyError(
+                    "Candidate sequence is already occupied by another WorkEvent"
+                )
+
+            snapshot = self._snapshot_in_connection(connection, work_id)
+            if snapshot.revision != expected_revision:
+                raise WorkConcurrencyError(
+                    f"Stale Work revision: expected={expected_revision} "
+                    f"actual={snapshot.revision}"
+                )
+            if snapshot.state is not WorkState.ACTIVE:
+                raise WorkStateError(
+                    f"Work is {snapshot.state.value}; terminal Work cannot append events"
+                )
+            if event.sequence != expected_revision + 1:
+                raise WorkConcurrencyError(
+                    "WorkEvent sequence does not bind the expected revision"
+                )
+            if event.previous_event_digest != snapshot.last_event_digest:
+                raise WorkConcurrencyError(
+                    "WorkEvent previous digest does not bind the exact snapshot"
+                )
+
+            ingress_row = connection.execute(
+                """
+                SELECT * FROM g2_work_v1
+                WHERE source_namespace = ? AND source_id = ?
+                """,
+                (
+                    child_work.ingress.source_namespace,
+                    child_work.ingress.source_id,
+                ),
+            ).fetchone()
+            if ingress_row is not None:
+                raise WorkIngressConflictError(
+                    "atomic child ingress already exists without exact parent event"
+                )
+            identity_row = connection.execute(
+                "SELECT * FROM g2_work_v1 WHERE work_id = ?",
+                (child_work.work_id,),
+            ).fetchone()
+            if identity_row is not None:
+                raise WorkIdentityConflictError(
+                    "atomic child work_id already exists without exact parent event"
+                )
+
+            connection.execute(
+                """
+                INSERT INTO g2_work_v1 (
+                    work_id,
+                    created_at,
+                    objective,
+                    source_namespace,
+                    source_id,
+                    ingress_payload_digest,
+                    ingress_binding_digest,
+                    work_digest
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    child_work.work_id,
+                    child_work.created_at,
+                    child_work.objective,
+                    child_work.ingress.source_namespace,
+                    child_work.ingress.source_id,
+                    child_work.ingress.payload_digest,
+                    child_work.ingress.binding_digest,
+                    child_work.work_digest,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO g2_work_event_v1 (
+                    event_id,
+                    work_id,
+                    sequence,
+                    created_at,
+                    kind,
+                    payload_json,
+                    previous_event_digest,
+                    event_digest
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    event.work_id,
+                    event.sequence,
+                    event.created_at,
+                    event.kind,
+                    json.dumps(
+                        event.to_dict()["payload"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ),
+                    event.previous_event_digest,
+                    event.event_digest,
+                ),
+            )
+
+            parent_snapshot = self._snapshot_in_connection(connection, work_id)
+            child_snapshot = self._snapshot_in_connection(
+                connection,
+                child_work.work_id,
+            )
+            connection.commit()
+            return parent_snapshot, child_snapshot
         except Exception:
             connection.rollback()
             raise

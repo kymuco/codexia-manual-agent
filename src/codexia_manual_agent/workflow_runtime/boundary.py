@@ -27,7 +27,13 @@ WorkflowProposal: TypeAlias = (
     WorkflowCandidate | RoleRun | CapabilityNeed | AttentionNeed
 )
 
-_RESERVED_CORE_EVENT_PREFIXES = ("role.", "capability.", "pack.", "attention.")
+_RESERVED_CORE_EVENT_PREFIXES = (
+    "role.",
+    "capability.",
+    "pack.",
+    "attention.",
+    "delegation.",
+)
 
 
 class WorkflowImplementationError(RuntimeError):
@@ -56,7 +62,7 @@ def validate_generic_workflow_candidate_ownership(
     if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
         raise WorkflowImplementationOwnershipError(
             "Generic WorkflowCandidate cannot manufacture "
-            "role/capability/pack/attention events"
+            "role/capability/pack/attention/delegation events"
         )
 
 
