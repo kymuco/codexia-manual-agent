@@ -1,4 +1,5 @@
 from codexia_manual_agent.workflow_runtime.boundary import (
+    OwnedChildWorkSnapshot,
     WorkflowImplementationBindingError,
     WorkflowImplementationBoundary,
     WorkflowImplementationError,
@@ -26,6 +27,7 @@ __all__ = [
     "WORKFLOW_ID",
     "WORKFLOW_VERSION",
     "StandaloneProcessWorkflowImplementation",
+    "OwnedChildWorkSnapshot",
     "WorkflowImplementationBindingError",
     "WorkflowImplementationBoundary",
     "WorkflowImplementationError",
