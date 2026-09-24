@@ -233,4 +233,7 @@ def test_workflow_and_domain_candidate_namespaces_remain_available(
         def propose(self, _context):
             return candidate
 
-    assert WorkflowImplementationBoundary().prepare(Implementation(), context) == candidate
+    assert (
+        WorkflowImplementationBoundary().prepare(Implementation(), context)
+        == candidate
+    )
