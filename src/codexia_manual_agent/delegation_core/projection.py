@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hmac
-
 from codexia_manual_agent.delegation_core.models import (
     DELEGATION_CHILD_OWNED_EVENT,
     Delegation,
