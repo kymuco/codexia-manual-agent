@@ -13,7 +13,7 @@ from codexia_manual_agent.work_core import WorkEvent
 
 
 class AttentionProjectionError(RuntimeError):
-    """Durable Work chronology violates Gen2 AttentionNeed semantics."""
+    """Durable Work chronology violates Gen2 attention semantics."""
 
 
 def _workflow_wrapped_need(event: WorkEvent) -> AttentionNeed:
@@ -115,6 +115,7 @@ def project_attention_need(
             return need
     raise AttentionProjectionError(f"Unknown AttentionNeed: {attention_id}")
 
+
 def _workflow_wrapped_response(event: WorkEvent) -> AttentionResponse:
     raw = event.to_dict()["payload"]
     if not isinstance(raw, dict) or set(raw) != {"_workflow", "payload"}:
@@ -183,7 +184,10 @@ def project_attention_responses(
             raise AttentionProjectionError(
                 "AttentionResponse changed AttentionNeed binding"
             )
-        if response.work_id != need.work_id or response.work_digest != need.work_digest:
+        if (
+            response.work_id != need.work_id
+            or response.work_digest != need.work_digest
+        ):
             raise AttentionProjectionError(
                 "AttentionResponse changed Work binding"
             )
