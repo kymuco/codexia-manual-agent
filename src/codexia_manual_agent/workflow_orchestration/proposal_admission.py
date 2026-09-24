@@ -9,6 +9,10 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
 )
+from codexia_manual_agent.delegation_core import (
+    Delegation,
+    DelegationAdmission,
+)
 from codexia_manual_agent.pack_core import project_workflow_pack_binding
 from codexia_manual_agent.role_core import (
     RoleAdmission,
@@ -24,6 +28,7 @@ from codexia_manual_agent.workflow_core import (
 )
 from codexia_manual_agent.workflow_orchestration.step import WorkflowStepResult
 from codexia_manual_agent.workflow_runtime import (
+    WorkflowDelegationProposal,
     validate_generic_workflow_candidate_ownership,
 )
 
@@ -32,6 +37,7 @@ WorkflowProposalAdmissionResult: TypeAlias = (
     | RoleRunSnapshot
     | CapabilityNeedSnapshot
     | AttentionNeed
+    | Delegation
     | None
 )
 
@@ -66,6 +72,7 @@ class WorkflowProposalAdmissionService:
         self._role = RoleAdmission(store)
         self._capability = CapabilityAdmission(store)
         self._attention = AttentionAdmission(store)
+        self._delegation = DelegationAdmission(store)
 
     def admit(
         self,
@@ -118,6 +125,9 @@ class WorkflowProposalAdmissionService:
         if isinstance(proposal, AttentionNeed):
             self._validate_attention(result, proposal, workflow)
             return self._attention.admit_need(proposal)
+        if isinstance(proposal, WorkflowDelegationProposal):
+            self._validate_delegation(result, proposal, workflow)
+            return self._delegation.admit(proposal.delegation)
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
 
     @staticmethod
@@ -205,6 +215,31 @@ class WorkflowProposalAdmissionService:
             proposal_event_digest=proposal.start_event_digest,
             workflow=workflow,
         )
+
+    @classmethod
+    def _validate_delegation(
+        cls,
+        result: WorkflowStepResult,
+        proposal: WorkflowDelegationProposal,
+        workflow: WorkflowRunSnapshot,
+    ) -> None:
+        delegation = proposal.delegation
+        cls._validate_common(
+            result,
+            proposal_work_id=delegation.parent_work_id,
+            proposal_workflow_run_id=proposal.workflow_run_id,
+            proposal_workflow_run_digest=proposal.workflow_run_digest,
+            proposal_revision=delegation.start_revision,
+            proposal_event_digest=delegation.start_event_digest,
+            workflow=workflow,
+        )
+        if not hmac.compare_digest(
+            delegation.parent_work_digest,
+            workflow.run.work_digest,
+        ):
+            raise WorkflowProposalAdmissionBindingError(
+                "Delegation changed canonical parent Work binding"
+            )
 
     @classmethod
     def _validate_capability(
