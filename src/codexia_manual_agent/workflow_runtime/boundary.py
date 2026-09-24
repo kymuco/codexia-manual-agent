@@ -4,6 +4,7 @@ import hmac
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
+from codexia_manual_agent.attention_core import AttentionNeed
 from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
@@ -22,7 +23,9 @@ from codexia_manual_agent.workflow_core import (
     WorkflowRunState,
 )
 
-WorkflowProposal: TypeAlias = WorkflowCandidate | RoleRun | CapabilityNeed
+WorkflowProposal: TypeAlias = (
+    WorkflowCandidate | RoleRun | CapabilityNeed | AttentionNeed
+)
 
 _RESERVED_CORE_EVENT_PREFIXES = ("role.", "capability.", "pack.", "attention.")
 
@@ -82,6 +85,7 @@ class WorkflowStepContext:
     pack_binding: PackWorkflowBinding
     roles: tuple[RoleRunSnapshot, ...] = ()
     capabilities: tuple[CapabilityNeedSnapshot, ...] = ()
+    attentions: tuple[AttentionNeed, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.work, WorkSnapshot):
@@ -200,6 +204,24 @@ class WorkflowStepContext:
                     "derived CapabilityNeed state is outside pinned Pack"
                 )
 
+        attention_ids: set[str] = set()
+        for attention in self.attentions:
+            if not isinstance(attention, AttentionNeed):
+                raise TypeError(
+                    "attentions must contain AttentionNeed values"
+                )
+            if attention.attention_id in attention_ids:
+                raise WorkflowImplementationStateError(
+                    "attentions contains duplicate AttentionNeed identity"
+                )
+            attention_ids.add(attention.attention_id)
+            self._validate_child_binding(
+                child_work_id=attention.work_id,
+                child_work_digest=attention.work_digest,
+                workflow_run_id=attention.workflow_run_id,
+                workflow_run_digest=attention.workflow_run_digest,
+            )
+
     def _validate_child_binding(
         self,
         *,
@@ -265,6 +287,9 @@ class WorkflowImplementationBoundary:
             return proposal
         if isinstance(proposal, CapabilityNeed):
             self._validate_capability_need(proposal, context)
+            return proposal
+        if isinstance(proposal, AttentionNeed):
+            self._validate_attention_need(proposal, context)
             return proposal
         raise WorkflowImplementationError(
             "Workflow implementation returned unsupported proposal type"
@@ -347,6 +372,40 @@ class WorkflowImplementationBoundary:
         if not context.pack_binding.pack.contains(member):
             raise WorkflowImplementationBindingError(
                 "RoleRun proposal is outside pinned Pack"
+            )
+
+    @staticmethod
+    def _validate_attention_need(
+        need: AttentionNeed,
+        context: WorkflowStepContext,
+    ) -> None:
+        run = context.workflow.run
+        if need.work_id != run.work_id:
+            raise WorkflowImplementationBindingError(
+                "AttentionNeed crossed Work identity"
+            )
+        if not hmac.compare_digest(need.work_digest, run.work_digest):
+            raise WorkflowImplementationBindingError(
+                "AttentionNeed changed Work binding"
+            )
+        if need.workflow_run_id != run.workflow_run_id:
+            raise WorkflowImplementationBindingError(
+                "AttentionNeed changed WorkflowRun identity"
+            )
+        if not hmac.compare_digest(
+            need.workflow_run_digest,
+            run.run_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "AttentionNeed changed WorkflowRun binding"
+            )
+        if need.start_revision != context.work.revision:
+            raise WorkflowImplementationStateError(
+                "AttentionNeed does not bind current Work revision"
+            )
+        if need.start_event_digest != context.work.last_event_digest:
+            raise WorkflowImplementationStateError(
+                "AttentionNeed does not bind current Work chronology"
             )
 
     @staticmethod
