@@ -295,8 +295,7 @@ def test_forged_attention_step_binding_fails_before_mutation(tmp_path) -> None:
     assert store.events(work.work_id) == before
 
 
-def test_attention_integration_adds_no_scheduler_notification_or_answer_surface(
-) -> None:
+def test_attention_integration_has_no_scheduler_or_notification_surface() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
     paths = [
         root / "workflow_runtime" / "boundary.py",
