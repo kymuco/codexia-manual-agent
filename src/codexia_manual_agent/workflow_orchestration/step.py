@@ -100,33 +100,18 @@ class WorkflowChildReadBinding:
 
     delegation_id: str
     delegation_digest: str
-    child_work_id: str
-    child_work_digest: str
-    revision: int
-    event_digest: str | None
+    child: WorkSnapshot
 
     def __post_init__(self) -> None:
-        for field_name, value in (
-            ("delegation_id", self.delegation_id),
-            ("child_work_id", self.child_work_id),
+        if not isinstance(self.delegation_id, str) or not self.delegation_id:
+            raise TypeError("delegation_id must be non-empty text")
+        if (
+            not isinstance(self.delegation_digest, str)
+            or len(self.delegation_digest) != 64
         ):
-            if not isinstance(value, str) or not value:
-                raise TypeError(f"{field_name} must be non-empty text")
-        for field_name, value in (
-            ("delegation_digest", self.delegation_digest),
-            ("child_work_digest", self.child_work_digest),
-        ):
-            if not isinstance(value, str) or len(value) != 64:
-                raise TypeError(f"{field_name} must be SHA-256 text")
-        if type(self.revision) is not int or self.revision < 0:
-            raise TypeError("revision must be a non-negative integer")
-        if self.event_digest is None:
-            if self.revision != 0:
-                raise TypeError("nonzero child revision requires event_digest")
-        elif not isinstance(self.event_digest, str) or len(self.event_digest) != 64:
-            raise TypeError("event_digest must be SHA-256 text or None")
-        elif self.revision == 0:
-            raise TypeError("revision zero cannot have event_digest")
+            raise TypeError("delegation_digest must be SHA-256 text")
+        if not isinstance(self.child, WorkSnapshot):
+            raise TypeError("child must be WorkSnapshot")
 
     @classmethod
     def from_owned_child(
@@ -135,15 +120,10 @@ class WorkflowChildReadBinding:
     ) -> WorkflowChildReadBinding:
         if not isinstance(owned, OwnedChildWorkSnapshot):
             raise TypeError("owned must be OwnedChildWorkSnapshot")
-        delegation = owned.delegation
-        child = owned.child
         return cls(
-            delegation_id=delegation.delegation_id,
-            delegation_digest=delegation.delegation_digest,
-            child_work_id=child.work.work_id,
-            child_work_digest=child.work.work_digest,
-            revision=child.revision,
-            event_digest=child.last_event_digest,
+            delegation_id=owned.delegation.delegation_id,
+            delegation_digest=owned.delegation.delegation_digest,
+            child=owned.child,
         )
 
 
@@ -190,10 +170,11 @@ class WorkflowStepResult:
                 )
             if read.delegation_id in delegation_ids:
                 raise TypeError("child_reads contains duplicate Delegation identity")
-            if read.child_work_id in child_work_ids:
+            child_work_id = read.child.work.work_id
+            if child_work_id in child_work_ids:
                 raise TypeError("child_reads contains duplicate child Work identity")
             delegation_ids.add(read.delegation_id)
-            child_work_ids.add(read.child_work_id)
+            child_work_ids.add(child_work_id)
 
 
 class WorkflowStepService:
