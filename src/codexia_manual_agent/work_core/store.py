@@ -389,6 +389,23 @@ class SqliteWorkStore:
                 connection.commit()
                 return parent_snapshot, child_snapshot
 
+            sequence_row = connection.execute(
+                """
+                SELECT * FROM g2_work_event_v1
+                WHERE work_id = ? AND sequence = ?
+                """,
+                (work_id, event.sequence),
+            ).fetchone()
+            if sequence_row is not None:
+                existing = self._event_from_row(sequence_row)
+                if existing.to_dict() == event.to_dict():
+                    raise WorkPersistenceIntegrityError(
+                        "exact parent event exists but event-id lookup missed it"
+                    )
+                raise WorkConcurrencyError(
+                    "Candidate sequence is already occupied by another WorkEvent"
+                )
+
             snapshot = self._snapshot_in_connection(connection, work_id)
             if snapshot.revision != expected_revision:
                 raise WorkConcurrencyError(
