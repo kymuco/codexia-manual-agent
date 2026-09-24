@@ -1,3 +1,6 @@
+from codexia_manual_agent.workflow_orchestration.cognition_progression import (
+    RoleCognitionProgressionService,
+)
 from codexia_manual_agent.workflow_orchestration.role_cognition import (
     CognitionRequestMaterialization,
     ContextProjectionMaterialPort,
@@ -25,6 +28,7 @@ __all__ = [
     "RoleCognitionMaterializationError",
     "RoleCognitionMaterializationService",
     "RoleCognitionPackRequiredError",
+    "RoleCognitionProgressionService",
     "RoleCognitionReadConflictError",
     "RoleCognitionStateError",
     "RoleInstructionsMaterialPort",
