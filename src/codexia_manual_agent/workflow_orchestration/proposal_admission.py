@@ -12,6 +12,7 @@ from codexia_manual_agent.capability_core import (
 from codexia_manual_agent.delegation_core import (
     Delegation,
     DelegationAdmission,
+    project_delegations,
 )
 from codexia_manual_agent.pack_core import project_workflow_pack_binding
 from codexia_manual_agent.role_core import (
@@ -52,6 +53,12 @@ class WorkflowProposalAdmissionBindingError(WorkflowProposalAdmissionError):
 
 class WorkflowProposalAdmissionPackRequiredError(WorkflowProposalAdmissionError):
     """Proposal admission requires the durable Pack pin used by G2.11."""
+
+
+class WorkflowProposalAdmissionChildReadConflictError(
+    WorkflowProposalAdmissionError
+):
+    """A child Work changed after the Workflow computation read it."""
 
 
 class WorkflowProposalAdmissionService:
@@ -115,20 +122,101 @@ class WorkflowProposalAdmissionService:
         if isinstance(proposal, WorkflowCandidate):
             self._validate_candidate(result, proposal, workflow)
             validate_generic_workflow_candidate_ownership(proposal)
+            self._validate_child_reads_before_new_mutation(
+                result,
+                events,
+                proposal.event.event_id,
+            )
             return self._workflow.admit_candidate(proposal)
         if isinstance(proposal, RoleRun):
             self._validate_role(result, proposal, workflow)
+            self._validate_child_reads_before_new_mutation(
+                result,
+                events,
+                proposal.role_run_id,
+            )
             return self._role.admit_start(proposal)
         if isinstance(proposal, CapabilityNeed):
             self._validate_capability(result, proposal, workflow)
+            self._validate_child_reads_before_new_mutation(
+                result,
+                events,
+                proposal.need_id,
+            )
             return self._capability.admit_need(proposal)
         if isinstance(proposal, AttentionNeed):
             self._validate_attention(result, proposal, workflow)
+            self._validate_child_reads_before_new_mutation(
+                result,
+                events,
+                proposal.attention_id,
+            )
             return self._attention.admit_need(proposal)
         if isinstance(proposal, WorkflowDelegationProposal):
             self._validate_delegation(result, proposal, workflow)
+            self._validate_child_reads_before_new_mutation(
+                result,
+                events,
+                proposal.delegation.delegation_id,
+            )
             return self._delegation.admit(proposal.delegation)
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
+
+    def _validate_child_reads_before_new_mutation(
+        self,
+        result: WorkflowStepResult,
+        events,
+        proposal_event_id: str,
+    ) -> None:
+        # Exact retry after an ambiguous acknowledgement must remain idempotent
+        # even if owned children advanced after the already-canonical proposal.
+        # The typed admission owner will still verify exact proposal identity.
+        if any(event.event_id == proposal_event_id for event in events):
+            return
+
+        delegations = project_delegations(events)
+        if len(result.child_reads) != len(delegations):
+            raise WorkflowProposalAdmissionBindingError(
+                "WorkflowStepResult child read set is incomplete"
+            )
+
+        for delegation, read in zip(delegations, result.child_reads, strict=True):
+            if read.delegation_id != delegation.delegation_id:
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed Delegation read identity"
+                )
+            if not hmac.compare_digest(
+                read.delegation_digest,
+                delegation.delegation_digest,
+            ):
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed Delegation read binding"
+                )
+            if read.child_work_id != delegation.child_work.work_id:
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed child Work identity"
+                )
+            if not hmac.compare_digest(
+                read.child_work_digest,
+                delegation.child_work.work_digest,
+            ):
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed child Work binding"
+                )
+
+            current = self._store.snapshot(read.child_work_id)
+            if current.work.to_dict() != delegation.child_work.to_dict():
+                raise WorkflowProposalAdmissionBindingError(
+                    "durable child Work no longer matches Delegation binding"
+                )
+            if current.revision != read.revision:
+                raise WorkflowProposalAdmissionChildReadConflictError(
+                    "owned child Work revision changed after Workflow read"
+                )
+            if current.last_event_digest != read.event_digest:
+                raise WorkflowProposalAdmissionChildReadConflictError(
+                    "owned child Work chronology changed after Workflow read"
+                )
 
     @staticmethod
     def _validate_common(
