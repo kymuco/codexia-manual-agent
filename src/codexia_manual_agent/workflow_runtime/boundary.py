@@ -24,6 +24,7 @@ from codexia_manual_agent.workflow_core import (
     WorkflowRunState,
 )
 
+
 class WorkflowImplementationError(RuntimeError):
     """Base failure for the G2.9 workflow implementation boundary."""
 
