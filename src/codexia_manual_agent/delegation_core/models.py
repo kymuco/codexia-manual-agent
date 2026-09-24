@@ -20,6 +20,7 @@ from codexia_manual_agent.work_core import (
 DELEGATION_SCHEMA_VERSION = 1
 DELEGATION_CHILD_OWNED_EVENT = "delegation.child-owned"
 DELEGATION_INGRESS_NAMESPACE = "codexia.delegation"
+MAX_OBJECTIVE_CHARS = 16_384
 MAX_TIMESTAMP_CHARS = 64
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -97,6 +98,21 @@ def _new_timestamp() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _canonical_objective(value: Any) -> str:
+    if not isinstance(value, str):
+        raise InvalidDelegationRecord("child_objective must be text")
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_OBJECTIVE_CHARS
+        or "\x00" in normalized
+    ):
+        raise InvalidDelegationRecord(
+            "child_objective is empty or exceeds its text budget"
+        )
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class Delegation:
     """Exact durable ownership relation from one parent Work to one child Work.
@@ -131,6 +147,7 @@ class Delegation:
             raise InvalidDelegationRecord(
                 "Delegation requires active parent Work"
             )
+        child_objective = _canonical_objective(child_objective)
         delegation_id = delegation_id or str(uuid4())
         child_work_id = child_work_id or str(uuid4())
         created_at = created_at or _new_timestamp()
