@@ -36,8 +36,46 @@ class WorkflowStepReadConflictError(WorkflowStepError):
     """Work changed while the service was recovering one exact read view."""
 
 
+class WorkflowStepPreconditionError(WorkflowStepError):
+    """Recovered Work no longer matches the caller-bound read view."""
+
+
 class WorkflowStepPackRequiredError(WorkflowStepError):
     """G2.11 requires an exact durable Pack pin for the WorkflowRun."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowStepReadPrecondition:
+    """Caller-owned exact Work read view for one bounded Workflow step."""
+
+    revision: int
+    event_digest: str | None
+
+    def __post_init__(self) -> None:
+        if type(self.revision) is not int or self.revision < 0:
+            raise TypeError("revision must be a non-negative integer")
+        if self.event_digest is None:
+            if self.revision != 0:
+                raise TypeError("nonzero revision requires event_digest")
+        elif (
+            not isinstance(self.event_digest, str)
+            or len(self.event_digest) != 64
+        ):
+            raise TypeError("event_digest must be SHA-256 text or None")
+        elif self.revision == 0:
+            raise TypeError("revision zero cannot have event_digest")
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: WorkSnapshot,
+    ) -> WorkflowStepReadPrecondition:
+        if not isinstance(snapshot, WorkSnapshot):
+            raise TypeError("snapshot must be WorkSnapshot")
+        return cls(
+            revision=snapshot.revision,
+            event_digest=snapshot.last_event_digest,
+        )
 
 
 class WorkflowReadStorePort(Protocol):
@@ -108,12 +146,17 @@ class WorkflowStepService:
         work_id: str,
         workflow_run_id: str,
         provider_ref: str,
+        precondition: WorkflowStepReadPrecondition | None = None,
     ) -> WorkflowStepResult:
         events = self._store.events(work_id)
         snapshot = self._store.snapshot(work_id)
         self._validate_read_view(
             expected_work_id=work_id,
             events=events,
+            snapshot=snapshot,
+        )
+        self._validate_precondition(
+            precondition=precondition,
             snapshot=snapshot,
         )
 
@@ -196,6 +239,27 @@ class WorkflowStepService:
         ):
             raise WorkflowStepReadConflictError(
                 "Recovered event chronology crossed Work identity"
+            )
+
+    @staticmethod
+    def _validate_precondition(
+        *,
+        precondition: WorkflowStepReadPrecondition | None,
+        snapshot: WorkSnapshot,
+    ) -> None:
+        if precondition is None:
+            return
+        if not isinstance(precondition, WorkflowStepReadPrecondition):
+            raise TypeError(
+                "precondition must be WorkflowStepReadPrecondition or None"
+            )
+        if snapshot.revision != precondition.revision:
+            raise WorkflowStepPreconditionError(
+                "Work revision no longer matches caller-bound read view"
+            )
+        if snapshot.last_event_digest != precondition.event_digest:
+            raise WorkflowStepPreconditionError(
+                "Work chronology no longer matches caller-bound read view"
             )
 
     @staticmethod
