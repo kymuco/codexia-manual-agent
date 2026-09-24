@@ -58,6 +58,7 @@ class WorkStore(Protocol):
         *,
         expected_revision: int,
         event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> WorkSnapshot: ...
 
     def append_with_child_create(
@@ -67,6 +68,7 @@ class WorkStore(Protocol):
         expected_revision: int,
         event: WorkEvent,
         child_work: Work,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> tuple[WorkSnapshot, WorkSnapshot]: ...
 
 
@@ -218,6 +220,7 @@ class SqliteWorkStore:
         *,
         expected_revision: int,
         event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> WorkSnapshot:
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
@@ -281,6 +284,11 @@ class SqliteWorkStore:
                     "WorkEvent previous digest does not bind the exact snapshot"
                 )
 
+            self._validate_read_preconditions_in_connection(
+                connection,
+                read_preconditions,
+            )
+
             connection.execute(
                 """
                 INSERT INTO g2_work_event_v1 (
@@ -327,6 +335,7 @@ class SqliteWorkStore:
         expected_revision: int,
         event: WorkEvent,
         child_work: Work,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> tuple[WorkSnapshot, WorkSnapshot]:
         """Atomically append one parent fact and create one new child Work.
 
@@ -425,6 +434,11 @@ class SqliteWorkStore:
                     "WorkEvent previous digest does not bind the exact snapshot"
                 )
 
+            self._validate_read_preconditions_in_connection(
+                connection,
+                read_preconditions,
+            )
+
             ingress_row = connection.execute(
                 """
                 SELECT * FROM g2_work_v1
@@ -515,6 +529,42 @@ class SqliteWorkStore:
             raise
         finally:
             connection.close()
+
+    def _validate_read_preconditions_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        read_preconditions: tuple[WorkSnapshot, ...],
+    ) -> None:
+        if not isinstance(read_preconditions, tuple):
+            raise TypeError("read_preconditions must be tuple[WorkSnapshot, ...]")
+
+        seen_work_ids: set[str] = set()
+        for expected in read_preconditions:
+            if not isinstance(expected, WorkSnapshot):
+                raise TypeError(
+                    "read_preconditions must contain WorkSnapshot values"
+                )
+            work_id = expected.work.work_id
+            if work_id in seen_work_ids:
+                raise WorkIdentityConflictError(
+                    "read_preconditions contains duplicate Work identity"
+                )
+            seen_work_ids.add(work_id)
+
+            current = self._snapshot_in_connection(connection, work_id)
+            if current.work.to_dict() != expected.work.to_dict():
+                raise WorkIdentityConflictError(
+                    "read precondition changed exact Work binding"
+                )
+            if (
+                current.revision != expected.revision
+                or current.last_event_digest != expected.last_event_digest
+                or current.state is not expected.state
+                or current.terminal_event_id != expected.terminal_event_id
+            ):
+                raise WorkConcurrencyError(
+                    f"Stale read precondition for work_id={work_id}"
+                )
 
     def _snapshot_in_connection(
         self,
