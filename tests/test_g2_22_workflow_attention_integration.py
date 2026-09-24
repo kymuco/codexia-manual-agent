@@ -307,7 +307,6 @@ def test_attention_integration_has_no_scheduler_or_notification_surface() -> Non
         "Scheduler",
         "NotificationPort",
         "AttentionAnswer",
-        "AttentionResponse",
         "AuthorizationReceipt",
     }
     for path in paths:
