@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hmac
 
-from codexia_manual_agent.attention_core.models import AttentionNeed, AttentionResponse
+from codexia_manual_agent.attention_core.models import (
+    AttentionNeed,
+    AttentionResponse,
+)
 from codexia_manual_agent.attention_core.projection import (
     project_attention_need,
     project_attention_response,
@@ -17,11 +20,11 @@ from codexia_manual_agent.workflow_core import (
 
 
 class AttentionAdmissionError(RuntimeError):
-    """Base failure for durable Gen2 AttentionNeed admission."""
+    """Base failure for durable Gen2 attention admission."""
 
 
 class AttentionBindingError(AttentionAdmissionError):
-    """AttentionNeed changed exact Work/Workflow binding."""
+    """Attention record changed exact Work/Workflow semantic binding."""
 
 
 class AttentionStateError(AttentionAdmissionError):
