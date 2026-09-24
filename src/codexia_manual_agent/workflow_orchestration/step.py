@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from codexia_manual_agent.attention_core import AttentionNeed, project_attention_needs
+from codexia_manual_agent.attention_core import (
+    AttentionNeed,
+    project_attention_needs,
+)
 from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
     project_capability_needs,
