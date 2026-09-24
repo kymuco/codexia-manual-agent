@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from codexia_manual_agent.capability_core import (
+    CapabilityBinding,
     CapabilityNeed,
     CapabilityNeedState,
 )
@@ -73,9 +74,7 @@ def _role_binding() -> RoleBinding:
     )
 
 
-def _capability_binding():
-    from codexia_manual_agent.capability_core import CapabilityBinding
-
+def _capability_binding() -> CapabilityBinding:
     return CapabilityBinding.create(
         capability_id="codexia:g2.17-read",
         version="1.0.0",
