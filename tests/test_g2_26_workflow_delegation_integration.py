@@ -314,12 +314,12 @@ def test_exact_delegation_step_retry_after_later_parent_event_is_idempotent(
     assert project_delegations(store.events(work.work_id)) == (first,)
 
 
-def test_g2_26_does_not_smuggle_child_state_into_parent_workflow_context() -> None:
+def test_child_read_surface_uses_explicit_owned_children_only() -> None:
     fields = set(WorkflowStepContext.__dataclass_fields__)
+    assert "owned_children" in fields
     assert "delegations" not in fields
     assert "children" not in fields
     assert "child_works" not in fields
-    assert "owned_children" not in fields
 
 
 def test_workflow_delegation_integration_adds_no_scheduler_executor_or_child_result(

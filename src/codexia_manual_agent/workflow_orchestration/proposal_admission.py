@@ -12,6 +12,7 @@ from codexia_manual_agent.capability_core import (
 from codexia_manual_agent.delegation_core import (
     Delegation,
     DelegationAdmission,
+    project_delegations,
 )
 from codexia_manual_agent.pack_core import project_workflow_pack_binding
 from codexia_manual_agent.role_core import (
@@ -19,7 +20,12 @@ from codexia_manual_agent.role_core import (
     RoleRun,
     RoleRunSnapshot,
 )
-from codexia_manual_agent.work_core import WorkStore
+from codexia_manual_agent.work_core import (
+    Work,
+    WorkEvent,
+    WorkSnapshot,
+    WorkStore,
+)
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowCandidate,
@@ -54,6 +60,63 @@ class WorkflowProposalAdmissionPackRequiredError(WorkflowProposalAdmissionError)
     """Proposal admission requires the durable Pack pin used by G2.11."""
 
 
+class _ReadSetBoundWorkStore:
+    """Bind exact optimistic read preconditions to one typed admission call."""
+
+    def __init__(
+        self,
+        store: WorkStore,
+        read_preconditions: tuple[WorkSnapshot, ...],
+    ) -> None:
+        self._store = store
+        self._read_preconditions = read_preconditions
+
+    def create(self, work: Work) -> WorkSnapshot:
+        return self._store.create(work)
+
+    def snapshot(self, work_id: str) -> WorkSnapshot:
+        return self._store.snapshot(work_id)
+
+    def events(self, work_id: str) -> tuple[WorkEvent, ...]:
+        return self._store.events(work_id)
+
+    def append(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        if read_preconditions:
+            raise ValueError("nested read_preconditions are not supported")
+        return self._store.append(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=self._read_preconditions,
+        )
+
+    def append_with_child_create(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        child_work: Work,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> tuple[WorkSnapshot, WorkSnapshot]:
+        if read_preconditions:
+            raise ValueError("nested read_preconditions are not supported")
+        return self._store.append_with_child_create(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            child_work=child_work,
+            read_preconditions=self._read_preconditions,
+        )
+
+
 class WorkflowProposalAdmissionService:
     """Admit at most one proposal from one exact WorkflowStepResult.
 
@@ -68,11 +131,6 @@ class WorkflowProposalAdmissionService:
 
     def __init__(self, store: WorkStore) -> None:
         self._store = store
-        self._workflow = WorkflowAdmission(store)
-        self._role = RoleAdmission(store)
-        self._capability = CapabilityAdmission(store)
-        self._attention = AttentionAdmission(store)
-        self._delegation = DelegationAdmission(store)
 
     def admit(
         self,
@@ -112,23 +170,88 @@ class WorkflowProposalAdmissionService:
                 "WorkflowStepResult changed PackBinding"
             )
 
+        read_preconditions = self._validated_child_read_preconditions(
+            result,
+            events,
+        )
+        guarded_store = _ReadSetBoundWorkStore(
+            self._store,
+            read_preconditions,
+        )
+
         if isinstance(proposal, WorkflowCandidate):
             self._validate_candidate(result, proposal, workflow)
             validate_generic_workflow_candidate_ownership(proposal)
-            return self._workflow.admit_candidate(proposal)
+            return WorkflowAdmission(guarded_store).admit_candidate(proposal)
         if isinstance(proposal, RoleRun):
             self._validate_role(result, proposal, workflow)
-            return self._role.admit_start(proposal)
+            return RoleAdmission(guarded_store).admit_start(proposal)
         if isinstance(proposal, CapabilityNeed):
             self._validate_capability(result, proposal, workflow)
-            return self._capability.admit_need(proposal)
+            return CapabilityAdmission(guarded_store).admit_need(proposal)
         if isinstance(proposal, AttentionNeed):
             self._validate_attention(result, proposal, workflow)
-            return self._attention.admit_need(proposal)
+            return AttentionAdmission(guarded_store).admit_need(proposal)
         if isinstance(proposal, WorkflowDelegationProposal):
             self._validate_delegation(result, proposal, workflow)
-            return self._delegation.admit(proposal.delegation)
+            return DelegationAdmission(guarded_store).admit(
+                proposal.delegation
+            )
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
+
+    @staticmethod
+    def _validated_child_read_preconditions(
+        result: WorkflowStepResult,
+        events: tuple[WorkEvent, ...],
+    ) -> tuple[WorkSnapshot, ...]:
+        if result.work_revision > len(events):
+            raise WorkflowProposalAdmissionBindingError(
+                "WorkflowStepResult revision exceeds durable parent chronology"
+            )
+
+        observed_events = events[: result.work_revision]
+        observed_digest = (
+            None if not observed_events else observed_events[-1].event_digest
+        )
+        if observed_digest != result.work_event_digest:
+            raise WorkflowProposalAdmissionBindingError(
+                "WorkflowStepResult parent read prefix no longer matches chronology"
+            )
+
+        delegations = project_delegations(observed_events)
+        if len(result.child_reads) != len(delegations):
+            raise WorkflowProposalAdmissionBindingError(
+                "WorkflowStepResult child read set is incomplete"
+            )
+
+        snapshots: list[WorkSnapshot] = []
+        for delegation, read in zip(
+            delegations,
+            result.child_reads,
+            strict=True,
+        ):
+            if read.delegation_id != delegation.delegation_id:
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed Delegation read identity"
+                )
+            if not hmac.compare_digest(
+                read.delegation_digest,
+                delegation.delegation_digest,
+            ):
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed Delegation read binding"
+                )
+            if read.child.work.work_id != delegation.child_work.work_id:
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed child Work identity"
+                )
+            if read.child.work.to_dict() != delegation.child_work.to_dict():
+                raise WorkflowProposalAdmissionBindingError(
+                    "WorkflowStepResult changed exact child Work binding"
+                )
+            snapshots.append(read.child)
+
+        return tuple(snapshots)
 
     @staticmethod
     def _validate_common(

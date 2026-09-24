@@ -23,6 +23,7 @@ from codexia_manual_agent.workflow_orchestration.role_cognition import (
     RoleInstructionsMaterialPort,
 )
 from codexia_manual_agent.workflow_orchestration.step import (
+    WorkflowChildReadBinding,
     WorkflowReadStorePort,
     WorkflowStepError,
     WorkflowStepPackRequiredError,
@@ -56,6 +57,7 @@ __all__ = [
     "WorkflowProposalAdmissionService",
     "WorkflowProgressionResult",
     "WorkflowProgressionService",
+    "WorkflowChildReadBinding",
     "WorkflowReadStorePort",
     "WorkflowStepError",
     "WorkflowStepPackRequiredError",

@@ -13,6 +13,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
     project_capability_needs,
 )
+from codexia_manual_agent.delegation_core import project_delegations
 from codexia_manual_agent.invariant_bridge import (
     InvariantWorkflowImplementationBridge,
     ResolvedWorkflowImplementation,
@@ -28,6 +29,7 @@ from codexia_manual_agent.workflow_core import (
     project_workflow_run,
 )
 from codexia_manual_agent.workflow_runtime import (
+    OwnedChildWorkSnapshot,
     WorkflowImplementationBoundary,
     WorkflowProposal,
     WorkflowStepContext,
@@ -93,6 +95,39 @@ class WorkflowReadStorePort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowChildReadBinding:
+    """Exact optimistic read binding for one parent-owned child Work."""
+
+    delegation_id: str
+    delegation_digest: str
+    child: WorkSnapshot
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.delegation_id, str) or not self.delegation_id:
+            raise TypeError("delegation_id must be non-empty text")
+        if (
+            not isinstance(self.delegation_digest, str)
+            or len(self.delegation_digest) != 64
+        ):
+            raise TypeError("delegation_digest must be SHA-256 text")
+        if not isinstance(self.child, WorkSnapshot):
+            raise TypeError("child must be WorkSnapshot")
+
+    @classmethod
+    def from_owned_child(
+        cls,
+        owned: OwnedChildWorkSnapshot,
+    ) -> WorkflowChildReadBinding:
+        if not isinstance(owned, OwnedChildWorkSnapshot):
+            raise TypeError("owned must be OwnedChildWorkSnapshot")
+        return cls(
+            delegation_id=owned.delegation.delegation_id,
+            delegation_digest=owned.delegation.delegation_digest,
+            child=owned.child,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowStepResult:
     """Ephemeral result of one recovered/read-only Workflow computation."""
 
@@ -104,6 +139,7 @@ class WorkflowStepResult:
     workflow_binding_digest: str
     provider_ref: str
     proposal: WorkflowProposal | None
+    child_reads: tuple[WorkflowChildReadBinding, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.work_id, str) or not self.work_id:
@@ -125,6 +161,20 @@ class WorkflowStepResult:
                 raise TypeError(f"{field_name} must be SHA-256 text")
         if not isinstance(self.provider_ref, str) or not self.provider_ref:
             raise TypeError("provider_ref must be non-empty text")
+        delegation_ids: set[str] = set()
+        child_work_ids: set[str] = set()
+        for read in self.child_reads:
+            if not isinstance(read, WorkflowChildReadBinding):
+                raise TypeError(
+                    "child_reads must contain WorkflowChildReadBinding values"
+                )
+            if read.delegation_id in delegation_ids:
+                raise TypeError("child_reads contains duplicate Delegation identity")
+            child_work_id = read.child.work.work_id
+            if child_work_id in child_work_ids:
+                raise TypeError("child_reads contains duplicate child Work identity")
+            delegation_ids.add(read.delegation_id)
+            child_work_ids.add(child_work_id)
 
 
 class WorkflowStepService:
@@ -185,6 +235,7 @@ class WorkflowStepService:
         capabilities = self._workflow_capabilities(events, workflow)
         attentions = self._workflow_attentions(events, workflow)
         attention_responses = self._workflow_attention_responses(events, workflow)
+        owned_children = self._owned_children(events)
 
         context = WorkflowStepContext(
             work=snapshot,
@@ -194,6 +245,7 @@ class WorkflowStepService:
             capabilities=capabilities,
             attentions=attentions,
             attention_responses=attention_responses,
+            owned_children=owned_children,
         )
 
         resolved = self._resolver.resolve(
@@ -221,6 +273,10 @@ class WorkflowStepService:
             workflow_binding_digest=workflow.run.binding.binding_digest,
             provider_ref=resolved.provider_ref,
             proposal=proposal,
+            child_reads=tuple(
+                WorkflowChildReadBinding.from_owned_child(owned)
+                for owned in owned_children
+            ),
         )
 
     @staticmethod
@@ -271,6 +327,18 @@ class WorkflowStepService:
             raise WorkflowStepPreconditionError(
                 "Work chronology no longer matches caller-bound read view"
             )
+
+    def _owned_children(
+        self,
+        events: tuple[WorkEvent, ...],
+    ) -> tuple[OwnedChildWorkSnapshot, ...]:
+        return tuple(
+            OwnedChildWorkSnapshot(
+                delegation=delegation,
+                child=self._store.snapshot(delegation.child_work.work_id),
+            )
+            for delegation in project_delegations(events)
+        )
 
     @staticmethod
     def _workflow_roles(
