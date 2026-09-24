@@ -350,7 +350,7 @@ def test_projection_rejects_raw_workflow_direct_work_completion(tmp_path) -> Non
         },
         previous_event_digest=current.last_event_digest,
     )
-    store.append(
+    store.append_completion(
         run.work_id,
         expected_revision=current.revision,
         event=forged,

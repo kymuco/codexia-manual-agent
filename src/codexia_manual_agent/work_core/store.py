@@ -61,6 +61,15 @@ class WorkStore(Protocol):
         read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> WorkSnapshot: ...
 
+    def append_completion(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot: ...
+
     def append_with_child_create(
         self,
         work_id: str,
@@ -215,6 +224,48 @@ class SqliteWorkStore:
             return self._events_in_connection(connection, work_id)
 
     def append(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        if not isinstance(event, WorkEvent):
+            raise TypeError("event must be WorkEvent")
+        if event.kind == WORK_COMPLETED_EVENT:
+            raise WorkStateError(
+                "work.completed requires the guarded append_completion boundary"
+            )
+        return self._append_event(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
+
+    def append_completion(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        if not isinstance(event, WorkEvent):
+            raise TypeError("event must be WorkEvent")
+        if event.kind != WORK_COMPLETED_EVENT:
+            raise WorkStateError(
+                "append_completion accepts only work.completed"
+            )
+        return self._append_event(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
+
+    def _append_event(
         self,
         work_id: str,
         *,

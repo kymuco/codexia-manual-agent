@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from codexia_manual_agent.delegation_core import Delegation, DelegationAdmission
+from codexia_manual_agent.delegation_core import (
+    Delegation,
+    DelegationAdmission,
+    DelegationCompletionGuard,
+)
 from codexia_manual_agent.invariant_bridge import ResolvedWorkflowImplementation
 from codexia_manual_agent.pack_core import (
     PackAdmission,
@@ -143,13 +147,11 @@ def _complete_child(
     delegation: Delegation,
 ) -> None:
     child = store.snapshot(delegation.child_work.work_id)
-    store.append(
-        child.work.work_id,
-        expected_revision=child.revision,
-        event=child.next_event(
+    DelegationCompletionGuard(store).admit(
+        child.next_event(
             kind=WORK_COMPLETED_EVENT,
             payload={"summary": "child complete"},
-        ),
+        )
     )
 
 
