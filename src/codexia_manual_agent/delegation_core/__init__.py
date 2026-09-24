@@ -1,13 +1,13 @@
+from codexia_manual_agent.delegation_core.admission import (
+    DelegationAdmission,
+    DelegationAdmissionError,
+    DelegationBindingError,
+)
 from codexia_manual_agent.delegation_core.completion import (
     DelegationChildrenLiveError,
     DelegationCompletionBindingError,
     DelegationCompletionError,
     DelegationCompletionGuard,
-)
-from codexia_manual_agent.delegation_core.admission import (
-    DelegationAdmission,
-    DelegationAdmissionError,
-    DelegationBindingError,
 )
 from codexia_manual_agent.delegation_core.models import (
     DELEGATION_CHILD_OWNED_EVENT,
