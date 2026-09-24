@@ -57,7 +57,10 @@ class WorkflowStepReadPrecondition:
         if self.event_digest is None:
             if self.revision != 0:
                 raise TypeError("nonzero revision requires event_digest")
-        elif not isinstance(self.event_digest, str) or len(self.event_digest) != 64:
+        elif (
+            not isinstance(self.event_digest, str)
+            or len(self.event_digest) != 64
+        ):
             raise TypeError("event_digest must be SHA-256 text or None")
         elif self.revision == 0:
             raise TypeError("revision zero cannot have event_digest")
@@ -247,7 +250,9 @@ class WorkflowStepService:
         if precondition is None:
             return
         if not isinstance(precondition, WorkflowStepReadPrecondition):
-            raise TypeError("precondition must be WorkflowStepReadPrecondition or None")
+            raise TypeError(
+                "precondition must be WorkflowStepReadPrecondition or None"
+            )
         if snapshot.revision != precondition.revision:
             raise WorkflowStepPreconditionError(
                 "Work revision no longer matches caller-bound read view"
