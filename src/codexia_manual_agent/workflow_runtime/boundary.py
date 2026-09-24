@@ -40,7 +40,7 @@ class WorkflowImplementationStateError(WorkflowImplementationError):
 
 
 class WorkflowImplementationOwnershipError(WorkflowImplementationError):
-    """Generic WorkflowCandidate attempted to manufacture Core-owned child truth."""
+    """Generic WorkflowCandidate attempted to manufacture Core-owned semantic truth."""
 
 
 class WorkflowImplementationPort(Protocol):
@@ -263,7 +263,8 @@ class WorkflowImplementationBoundary:
     ) -> None:
         if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
             raise WorkflowImplementationOwnershipError(
-                "Generic WorkflowCandidate cannot manufacture role/capability/pack events"
+                "Generic WorkflowCandidate cannot manufacture "
+                "role/capability/pack events"
             )
 
         run = context.workflow.run
