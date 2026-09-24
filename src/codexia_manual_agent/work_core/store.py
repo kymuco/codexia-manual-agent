@@ -226,6 +226,7 @@ class SqliteWorkStore:
             raise ValueError("expected_revision must be a non-negative integer")
         if not isinstance(event, WorkEvent):
             raise TypeError("event must be WorkEvent")
+        self._validate_read_preconditions_shape(read_preconditions)
         if event.work_id != work_id:
             raise WorkIdentityConflictError("WorkEvent is bound to another work_id")
 
@@ -350,6 +351,7 @@ class SqliteWorkStore:
             raise TypeError("event must be WorkEvent")
         if not isinstance(child_work, Work):
             raise TypeError("child_work must be Work")
+        self._validate_read_preconditions_shape(read_preconditions)
         if event.work_id != work_id:
             raise WorkIdentityConflictError(
                 "WorkEvent is bound to another work_id"
@@ -530,14 +532,12 @@ class SqliteWorkStore:
         finally:
             connection.close()
 
-    def _validate_read_preconditions_in_connection(
-        self,
-        connection: sqlite3.Connection,
+    @staticmethod
+    def _validate_read_preconditions_shape(
         read_preconditions: tuple[WorkSnapshot, ...],
     ) -> None:
         if not isinstance(read_preconditions, tuple):
             raise TypeError("read_preconditions must be tuple[WorkSnapshot, ...]")
-
         seen_work_ids: set[str] = set()
         for expected in read_preconditions:
             if not isinstance(expected, WorkSnapshot):
@@ -551,6 +551,13 @@ class SqliteWorkStore:
                 )
             seen_work_ids.add(work_id)
 
+    def _validate_read_preconditions_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        read_preconditions: tuple[WorkSnapshot, ...],
+    ) -> None:
+        for expected in read_preconditions:
+            work_id = expected.work.work_id
             current = self._snapshot_in_connection(connection, work_id)
             if current.work.to_dict() != expected.work.to_dict():
                 raise WorkIdentityConflictError(
