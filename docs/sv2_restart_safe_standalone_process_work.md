@@ -182,4 +182,8 @@ SV2 tests prove:
 5. a reconciled outcome can continue through evidence, claim and completion
    without another effect attempt;
 6. pure recovery succeeds without resolving provider code;
-7. FAILED process outcome remains durable and is never retried automatically.
+7. FAILED process outcome remains durable and is never retried automatically;
+8. UNKNOWN outcome remains durable and never grants retry permission;
+9. COMPLETED / FAILED / UNKNOWN / CANCELLED no-op recovery does not require
+   provider resolution;
+10. production recovery contains no generic Scheduler/Queue/while loop.
