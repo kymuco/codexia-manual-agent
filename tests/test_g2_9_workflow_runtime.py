@@ -188,6 +188,7 @@ def test_context_surface_has_no_store_authority_executor_or_scheduler(tmp_path) 
         "capabilities",
         "attentions",
         "attention_responses",
+        "artifacts",
         "owned_children",
     }
 

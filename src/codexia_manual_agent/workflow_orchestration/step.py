@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from codexia_manual_agent.artifact_core import (
+    ArtifactRef,
+    project_artifact_refs,
+)
 from codexia_manual_agent.attention_core import (
     AttentionNeed,
     AttentionResponse,
@@ -235,6 +239,7 @@ class WorkflowStepService:
         capabilities = self._workflow_capabilities(events, workflow)
         attentions = self._workflow_attentions(events, workflow)
         attention_responses = self._workflow_attention_responses(events, workflow)
+        artifacts = self._artifacts(events)
         owned_children = self._owned_children(events)
 
         context = WorkflowStepContext(
@@ -245,6 +250,7 @@ class WorkflowStepService:
             capabilities=capabilities,
             attentions=attentions,
             attention_responses=attention_responses,
+            artifacts=artifacts,
             owned_children=owned_children,
         )
 
@@ -327,6 +333,12 @@ class WorkflowStepService:
             raise WorkflowStepPreconditionError(
                 "Work chronology no longer matches caller-bound read view"
             )
+
+    @staticmethod
+    def _artifacts(
+        events: tuple[WorkEvent, ...],
+    ) -> tuple[ArtifactRef, ...]:
+        return project_artifact_refs(events)
 
     def _owned_children(
         self,
