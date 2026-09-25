@@ -45,11 +45,13 @@ class DelegationChildrenLiveError(DelegationCompletionError):
         )
 
 
-class DelegationCompletionGuard:
-    """Admit work.completed only after all exact owned children are terminal.
+class _DelegationCompletionGuard:
+    """Private low-level child guard for one prepared work.completed event.
 
-    This boundary owns no completion-quality judgment, evidence interpretation,
-    artifact policy, scheduler, execution, or cleanup semantics. It only enforces
+    The public semantic terminal surface is completion_core.WorkCompletionAdmissionService.
+    This private boundary owns no completion-quality judgment, evidence
+    interpretation, artifact policy, scheduler, execution, or cleanup semantics.
+    It only enforces
     the frozen Delegation invariant:
 
         parent terminal completion

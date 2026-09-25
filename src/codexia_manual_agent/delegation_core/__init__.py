@@ -7,7 +7,6 @@ from codexia_manual_agent.delegation_core.completion import (
     DelegationChildrenLiveError,
     DelegationCompletionBindingError,
     DelegationCompletionError,
-    DelegationCompletionGuard,
 )
 from codexia_manual_agent.delegation_core.models import (
     DELEGATION_CHILD_OWNED_EVENT,
@@ -31,7 +30,6 @@ __all__ = [
     "DelegationChildrenLiveError",
     "DelegationCompletionBindingError",
     "DelegationCompletionError",
-    "DelegationCompletionGuard",
     "DelegationProjectionError",
     "InvalidDelegationRecord",
     "project_delegation",

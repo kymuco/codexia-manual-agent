@@ -10,7 +10,9 @@ from codexia_manual_agent.delegation_core import (
     Delegation,
     DelegationAdmission,
     DelegationChildrenLiveError,
-    DelegationCompletionGuard,
+)
+from codexia_manual_agent.delegation_core.completion import (
+    _DelegationCompletionGuard,
 )
 from codexia_manual_agent.work_core import (
     WORK_CANCELLED_EVENT,
@@ -70,7 +72,7 @@ def _completion_event(store: SqliteWorkStore, work_id: str):
 
 
 def _complete(store: SqliteWorkStore, work_id: str):
-    return DelegationCompletionGuard(store).admit(
+    return _DelegationCompletionGuard(store).admit(
         _completion_event(store, work_id)
     )
 
@@ -165,7 +167,7 @@ def test_parent_completion_fails_while_owned_child_is_active(tmp_path) -> None:
     before = store.events(parent.work_id)
 
     with pytest.raises(DelegationChildrenLiveError) as exc_info:
-        DelegationCompletionGuard(store).admit(completion)
+        _DelegationCompletionGuard(store).admit(completion)
 
     assert exc_info.value.child_work_ids == (
         delegation.child_work.work_id,
@@ -189,7 +191,7 @@ def test_same_parent_completion_can_succeed_after_child_becomes_terminal(
         objective="Child completes later",
     )
     completion = _completion_event(store, parent.work_id)
-    guard = DelegationCompletionGuard(store)
+    guard = _DelegationCompletionGuard(store)
 
     with pytest.raises(DelegationChildrenLiveError):
         guard.admit(completion)
@@ -260,7 +262,7 @@ def test_one_live_child_blocks_parent_even_if_other_children_are_terminal(
     completion = _completion_event(store, parent.work_id)
 
     with pytest.raises(DelegationChildrenLiveError) as exc_info:
-        DelegationCompletionGuard(store).admit(completion)
+        _DelegationCompletionGuard(store).admit(completion)
 
     assert exc_info.value.child_work_ids == (live_child.child_work.work_id,)
     assert store.snapshot(parent.work_id).state is WorkState.ACTIVE
@@ -289,14 +291,14 @@ def test_nested_delegation_blocks_child_then_parent_without_work_graph(
     child_completion = _completion_event(store, child.work_id)
 
     with pytest.raises(DelegationChildrenLiveError) as exc_info:
-        DelegationCompletionGuard(store).admit(child_completion)
+        _DelegationCompletionGuard(store).admit(child_completion)
 
     assert exc_info.value.child_work_ids == (
         grandchild_relation.child_work.work_id,
     )
 
     _cancel(store, grandchild_relation.child_work.work_id)
-    child_done = DelegationCompletionGuard(store).admit(child_completion)
+    child_done = _DelegationCompletionGuard(store).admit(child_completion)
     assert child_done.state is WorkState.COMPLETED
 
     parent_done = _complete(store, parent.work_id)
@@ -317,7 +319,7 @@ def test_exact_parent_completion_retry_is_idempotent(tmp_path) -> None:
     )
     _complete(store, child.child_work.work_id)
     completion = _completion_event(store, parent.work_id)
-    guard = DelegationCompletionGuard(store)
+    guard = _DelegationCompletionGuard(store)
 
     first = guard.admit(completion)
     events_after_first = store.events(parent.work_id)
