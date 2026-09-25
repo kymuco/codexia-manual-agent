@@ -17,6 +17,9 @@ from codexia_manual_agent.standalone_host.process_attempt import (
     SqliteStandaloneProcessAttemptStore,
     StandaloneProcessAttemptState,
 )
+from codexia_manual_agent.standalone_host.process_attempt_ownership import (
+    StandaloneProcessRunnerOwnership,
+)
 
 
 def launch_process_attempt_runner(
@@ -58,47 +61,60 @@ def run_process_attempt(
     journal_path: str | Path,
     attempt_id: str,
 ) -> int:
-    store = SqliteStandaloneProcessAttemptStore(journal_path)
-    snapshot = store.recover(attempt_id)
-    if snapshot.state in {
-        StandaloneProcessAttemptState.DENIED,
-        StandaloneProcessAttemptState.OBSERVED,
-        StandaloneProcessAttemptState.REJECTED_BEFORE_CONSUME,
-        StandaloneProcessAttemptState.ERROR_AFTER_CONSUME,
-    }:
-        return 0
-
-    authority = LocalApprovalAuthority(consumption_registry=store)
-    lifecycle = ActionLifecycle(
-        snapshot.proposal,
-        snapshot.receipt.mode,
+    ownership = StandaloneProcessRunnerOwnership(
+        journal_path=journal_path,
+        attempt_id=attempt_id,
     )
-    phase = lifecycle.apply_receipt(
-        snapshot.receipt,
-        authority=authority,
-    )
-    if phase is ActionPhase.DENIED:
+    if not ownership.try_acquire():
+        # Another live runner owns this exact attempt. The losing runner must
+        # not touch durable authority or execution state.
         return 0
 
     try:
-        observation = ProcessExecutor().execute(
-            lifecycle,
-            authority=authority,
-        )
-    except AuthorizationConsumedError:
-        # Another runner for this exact durable attempt won the one-shot
-        # consumption race. It owns any possible external effect.
-        return 0
-    except BaseException as exc:
-        store.record_runner_error(
-            attempt_id,
-            error_type=type(exc).__name__,
-            detail=f"{type(exc).__name__}: {exc}",
-        )
-        return 2
+        store = SqliteStandaloneProcessAttemptStore(journal_path)
+        snapshot = store.recover(attempt_id)
+        if snapshot.state in {
+            StandaloneProcessAttemptState.DENIED,
+            StandaloneProcessAttemptState.AUTHORITY_CONSUMED,
+            StandaloneProcessAttemptState.OBSERVED,
+            StandaloneProcessAttemptState.REJECTED_BEFORE_CONSUME,
+            StandaloneProcessAttemptState.ERROR_AFTER_CONSUME,
+        }:
+            return 0
 
-    store.record_observation(attempt_id, observation)
-    return 0
+        try:
+            authority = LocalApprovalAuthority(consumption_registry=store)
+            lifecycle = ActionLifecycle(
+                snapshot.proposal,
+                snapshot.receipt.mode,
+            )
+            phase = lifecycle.apply_receipt(
+                snapshot.receipt,
+                authority=authority,
+            )
+            if phase is ActionPhase.DENIED:
+                return 0
+
+            observation = ProcessExecutor().execute(
+                lifecycle,
+                authority=authority,
+            )
+        except AuthorizationConsumedError:
+            # Fail closed. With exact runner ownership this should only be
+            # reachable if durable state changed unexpectedly.
+            return 0
+        except BaseException as exc:
+            store.record_runner_error(
+                attempt_id,
+                error_type=type(exc).__name__,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return 2
+
+        store.record_observation(attempt_id, observation)
+        return 0
+    finally:
+        ownership.release()
 
 
 def _parser() -> argparse.ArgumentParser:
