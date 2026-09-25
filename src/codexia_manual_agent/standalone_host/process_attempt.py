@@ -570,19 +570,19 @@ class SqliteStandaloneProcessAttemptStore:
                     raise StandaloneProcessAttemptIntegrityError(
                         "Process attempt already has another observation"
                     )
-                return self.recover(attempt_id)
-            if row["runner_error_json"] is not None:
-                raise StandaloneProcessAttemptIntegrityError(
-                    "Runner error and terminal observation cannot both be durable"
+            else:
+                if row["runner_error_json"] is not None:
+                    raise StandaloneProcessAttemptIntegrityError(
+                        "Runner error and terminal observation cannot both be durable"
+                    )
+                connection.execute(
+                    """
+                    UPDATE standalone_process_attempts
+                    SET observation_json = ?
+                    WHERE attempt_id = ?
+                    """,
+                    (raw, attempt_id),
                 )
-            connection.execute(
-                """
-                UPDATE standalone_process_attempts
-                SET observation_json = ?
-                WHERE attempt_id = ?
-                """,
-                (raw, attempt_id),
-            )
         return self.recover(attempt_id)
 
     def record_runner_error(
@@ -616,21 +616,20 @@ class SqliteStandaloneProcessAttemptStore:
                 raise StandaloneProcessAttemptIntegrityError(
                     "Runner error has no durable process attempt"
                 )
-            if row["observation_json"] is not None:
-                return self.recover(attempt_id)
-            existing = row["runner_error_json"]
-            if existing is not None:
-                if existing != raw:
-                    raise StandaloneProcessAttemptIntegrityError(
-                        "Process attempt already has another runner error"
+            if row["observation_json"] is None:
+                existing = row["runner_error_json"]
+                if existing is not None:
+                    if existing != raw:
+                        raise StandaloneProcessAttemptIntegrityError(
+                            "Process attempt already has another runner error"
+                        )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE standalone_process_attempts
+                        SET runner_error_json = ?
+                        WHERE attempt_id = ?
+                        """,
+                        (raw, attempt_id),
                     )
-                return self.recover(attempt_id)
-            connection.execute(
-                """
-                UPDATE standalone_process_attempts
-                SET runner_error_json = ?
-                WHERE attempt_id = ?
-                """,
-                (raw, attempt_id),
-            )
         return self.recover(attempt_id)
