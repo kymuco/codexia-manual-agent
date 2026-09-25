@@ -18,6 +18,7 @@ from codexia_manual_agent.capability_core import (
     project_capability_needs,
 )
 from codexia_manual_agent.delegation_core import project_delegations
+from codexia_manual_agent.evidence_core import EvidenceRef, project_evidence_refs
 from codexia_manual_agent.invariant_bridge import (
     InvariantWorkflowImplementationBridge,
     ResolvedWorkflowImplementation,
@@ -240,6 +241,7 @@ class WorkflowStepService:
         attentions = self._workflow_attentions(events, workflow)
         attention_responses = self._workflow_attention_responses(events, workflow)
         artifacts = self._artifacts(events)
+        evidence_refs = self._evidence_refs(events)
         owned_children = self._owned_children(events)
 
         context = WorkflowStepContext(
@@ -251,6 +253,7 @@ class WorkflowStepService:
             attentions=attentions,
             attention_responses=attention_responses,
             artifacts=artifacts,
+            evidence_refs=evidence_refs,
             owned_children=owned_children,
         )
 
@@ -339,6 +342,12 @@ class WorkflowStepService:
         events: tuple[WorkEvent, ...],
     ) -> tuple[ArtifactRef, ...]:
         return project_artifact_refs(events)
+
+    @staticmethod
+    def _evidence_refs(
+        events: tuple[WorkEvent, ...],
+    ) -> tuple[EvidenceRef, ...]:
+        return project_evidence_refs(events)
 
     def _owned_children(
         self,
