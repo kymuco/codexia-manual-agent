@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
