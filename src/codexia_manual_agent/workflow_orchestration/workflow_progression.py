@@ -80,7 +80,10 @@ class WorkflowProgressionService:
             provider_ref=provider_ref,
             precondition=precondition,
         )
-        admitted = self._admission.admit(step)
+        admitted = self._admission.admit(
+            step,
+            completion_provider_ref=provider_ref,
+        )
         return WorkflowProgressionResult(
             step=step,
             admitted=admitted,
