@@ -178,7 +178,6 @@ class CompletionCriterionContext:
                 "CompletionClaim changed PackBinding semantics"
             )
 
-
         capability_ids: set[str] = set()
         for capability in self.capabilities:
             if not isinstance(capability, CapabilityNeedSnapshot):
