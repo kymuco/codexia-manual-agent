@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 EVIDENCE_REF_SCHEMA_VERSION = 1
 MAX_EVIDENCE_KIND_CHARS = 128
@@ -109,8 +109,9 @@ class EvidenceRef:
     reference does not assert that the evidence is currently reachable, true,
     sufficient for a claim, or adequate for Work completion.
 
-    evidence_id is stable reference identity. ref_digest binds that identity to
-    exact evidence integrity, semantic kind and locator.
+    evidence_id is the stable identity of the referenced evidence record.
+    ref_digest binds that identity to exact evidence integrity, semantic kind
+    and locator.
     """
 
     schema_version: int
@@ -124,12 +125,11 @@ class EvidenceRef:
     def create(
         cls,
         *,
+        evidence_id: str,
         evidence_digest: str,
         evidence_kind: str,
         locator: str,
-        evidence_id: str | None = None,
     ) -> EvidenceRef:
-        evidence_id = evidence_id or str(uuid4())
         _validate_uuid(evidence_id, "evidence_id")
         _validate_digest(evidence_digest, "evidence_digest")
         _evidence_kind(evidence_kind)
