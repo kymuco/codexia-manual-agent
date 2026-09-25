@@ -345,3 +345,69 @@ def test_sv2_recovery_source_has_no_generic_scheduler_loop() -> None:
     assert "Scheduler" not in imported_names
     assert "Queue" not in imported_names
     assert not any(isinstance(node, ast.While) for node in ast.walk(tree))
+
+
+def test_sv2_terminal_noop_does_not_require_provider_after_restart(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    path = tmp_path / "sv2-terminal-offline.sqlite"
+
+    completed = None
+    for _ in range(8):
+        completed = _advance(path, plugin, tmp_path)
+    assert completed is not None
+    assert completed.state is StandaloneProcessWorkRecoveryState.COMPLETED
+
+    offline = StandaloneProcessWorkRecoveryService(
+        store=SqliteWorkStore(path),
+        plugin_service=_UnavailablePluginService(),
+        provider_ref=PROVIDER_REF,
+        workspace=tmp_path,
+    )
+    recovered = offline.advance_once(
+        objective="Run the restart-safe standalone process vertical.",
+        source_namespace="standalone.api",
+        source_id="sv2-restart-safe",
+        payload_digest=_sha("sv2-restart-safe-payload"),
+        approved=True,
+        actor="sv2-test-human",
+        reason="provider disappeared after completion",
+    )
+
+    assert recovered.state is StandaloneProcessWorkRecoveryState.COMPLETED
+    assert recovered.work_id == completed.work_id
+
+
+def test_sv2_failed_noop_does_not_require_provider_after_restart(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    path = tmp_path / "sv2-failed-offline.sqlite"
+    kwargs = {
+        "objective": "Keep denied process Work durably incomplete offline.",
+        "source_namespace": "standalone.api",
+        "source_id": "sv2-failed-offline",
+        "payload_digest": _sha("sv2-failed-offline-payload"),
+        "approved": False,
+        "actor": "sv2-test-human",
+        "reason": "deny execution",
+    }
+
+    checkpoint = None
+    for _ in range(5):
+        checkpoint = _service(path, plugin, tmp_path).advance_once(**kwargs)
+    assert checkpoint is not None
+    assert checkpoint.state is StandaloneProcessWorkRecoveryState.CAPABILITY_FAILED
+
+    recovered = StandaloneProcessWorkRecoveryService(
+        store=SqliteWorkStore(path),
+        plugin_service=_UnavailablePluginService(),
+        provider_ref=PROVIDER_REF,
+        workspace=tmp_path,
+    ).advance_once(**kwargs)
+
+    assert recovered.state is StandaloneProcessWorkRecoveryState.CAPABILITY_FAILED
+    assert recovered.work_id == checkpoint.work_id
