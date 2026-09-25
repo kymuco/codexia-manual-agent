@@ -4,6 +4,7 @@ import hmac
 from typing import Protocol
 
 from codexia_manual_agent.artifact_core import project_artifact_refs
+from codexia_manual_agent.capability_core import project_capability_needs
 from codexia_manual_agent.completion_core.boundary import (
     CompletionCriterionBoundary,
     CompletionCriterionContext,
@@ -220,11 +221,17 @@ class CompletionAdmissionService:
 
         self._validate_basis(events, claim)
 
+        capabilities = tuple(
+            capability
+            for capability in project_capability_needs(events)
+            if capability.need.workflow_run_id == run.workflow_run_id
+        )
         context = CompletionCriterionContext(
             claim=claim,
             work=current,
             workflow=workflow,
             pack_binding=pin,
+            capabilities=capabilities,
         )
         resolved = self._resolver.resolve(
             provider_ref=provider_ref,
