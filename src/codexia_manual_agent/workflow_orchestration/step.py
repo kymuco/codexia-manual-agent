@@ -17,6 +17,9 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
     project_capability_needs,
 )
+from codexia_manual_agent.completion_core.work_completion_projection import (
+    project_work_completion,
+)
 from codexia_manual_agent.delegation_core import project_delegations
 from codexia_manual_agent.evidence_core import EvidenceRef, project_evidence_refs
 from codexia_manual_agent.invariant_bridge import (
@@ -354,11 +357,37 @@ class WorkflowStepService:
         events: tuple[WorkEvent, ...],
     ) -> tuple[OwnedChildWorkSnapshot, ...]:
         return tuple(
-            OwnedChildWorkSnapshot(
-                delegation=delegation,
-                child=self._store.snapshot(delegation.child_work.work_id),
-            )
+            self._owned_child(delegation)
             for delegation in project_delegations(events)
+        )
+
+    def _owned_child(self, delegation) -> OwnedChildWorkSnapshot:
+        child_work_id = delegation.child_work.work_id
+        child_events = self._store.events(child_work_id)
+        child = self._store.snapshot(child_work_id)
+        self._validate_read_view(
+            expected_work_id=child_work_id,
+            events=child_events,
+            snapshot=child,
+        )
+
+        completion = None
+        if child.state.value == "completed" and child_events:
+            terminal_payload = child_events[-1].to_dict()["payload"]
+            if (
+                isinstance(terminal_payload, dict)
+                and "work_completion" in terminal_payload
+            ):
+                completion = project_work_completion(child_events)
+                if completion is None:
+                    raise WorkflowStepReadConflictError(
+                        "structured child completion did not project WorkCompletion"
+                    )
+
+        return OwnedChildWorkSnapshot(
+            delegation=delegation,
+            child=child,
+            completion=completion,
         )
 
     @staticmethod
