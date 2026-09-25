@@ -195,7 +195,7 @@ class DurableStandaloneProcessCapabilityPort:
             proposal=proposal,
             receipt=receipt,
         )
-        if receipt.decision is AuthorizationDecision.DENY:
+        if snapshot.state is not StandaloneProcessAttemptState.AUTHORIZED_UNCONSUMED:
             return self._outcome(request, snapshot)
 
         runner = launch_process_attempt_runner(
