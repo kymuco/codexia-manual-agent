@@ -18,10 +18,11 @@ from codexia_manual_agent.completion_core.projection import (
     project_admitted_completion_claims,
 )
 from codexia_manual_agent.delegation_core import project_delegations
-from codexia_manual_agent.evidence_core import project_evidence_refs
 from codexia_manual_agent.completion_core.work_completion_projection import (
+    WorkCompletionProjectionError,
     project_work_completion,
 )
+from codexia_manual_agent.evidence_core import project_evidence_refs
 from codexia_manual_agent.pack_core import (
     PackWorkflowBinding,
     project_workflow_pack_binding,
@@ -78,7 +79,7 @@ class CompletionClaimStateError(CompletionAdmissionError):
 
 
 class CompletionClaimBasisError(CompletionAdmissionError):
-    """CompletionClaim basis is not exact durable Work-level truth."""
+    """CompletionClaim basis is not exact durable semantic truth."""
 
 
 class CompletionClaimIdentityConflictError(CompletionAdmissionError):
@@ -97,9 +98,10 @@ class CompletionAdmissionService:
     membership, and acceptance
     by the criterion implementation resolved from the exact pinned Pack.
 
-    The admitted event is non-terminal. This service does not create
-    work.completed, inspect child completion, grant authority, execute effects,
-    schedule work, or prove cleanup.
+    The admitted event is non-terminal. This service may verify exact owned
+    child WorkCompletion references, but it does not create work.completed,
+    infer parent meaning from child completion, grant authority, execute
+    effects, schedule work, or prove cleanup.
     """
 
     def __init__(
@@ -298,7 +300,6 @@ class CompletionAdmissionService:
                     "CompletionClaim changed durable EvidenceRef semantics"
                 )
 
-
         delegations = {
             delegation.child_work.work_id: delegation
             for delegation in project_delegations(events)
@@ -334,7 +335,12 @@ class CompletionAdmissionService:
                     "CompletionClaim child WorkCompletion is not terminal"
                 )
 
-            completion = project_work_completion(child_events)
+            try:
+                completion = project_work_completion(child_events)
+            except WorkCompletionProjectionError as exc:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim child lacks valid structured WorkCompletion"
+                ) from exc
             if completion is None:
                 raise CompletionClaimBasisError(
                     "CompletionClaim child lacks structured WorkCompletion"
