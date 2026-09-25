@@ -1,3 +1,11 @@
+from codexia_manual_agent.invariant_bridge.completion_criterion import (
+    COMPLETION_CRITERION_EXPORT,
+    InvariantCompletionCriterionBindingError,
+    InvariantCompletionCriterionBridge,
+    InvariantCompletionCriterionError,
+    InvariantCompletionCriterionShapeError,
+    ResolvedCompletionCriterion,
+)
 from codexia_manual_agent.invariant_bridge.pack_distribution import (
     PACK_DISTRIBUTION_SCHEMA_VERSION,
     InvariantPackDistributionBridge,
@@ -15,8 +23,13 @@ from codexia_manual_agent.invariant_bridge.workflow_implementation import (
 )
 
 __all__ = [
+    "COMPLETION_CRITERION_EXPORT",
     "PACK_DISTRIBUTION_SCHEMA_VERSION",
     "WORKFLOW_IMPLEMENTATION_EXPORT",
+    "InvariantCompletionCriterionBindingError",
+    "InvariantCompletionCriterionBridge",
+    "InvariantCompletionCriterionError",
+    "InvariantCompletionCriterionShapeError",
     "InvariantPackDistributionBridge",
     "InvariantPackDistributionError",
     "InvariantWorkflowImplementationBindingError",
@@ -24,6 +37,7 @@ __all__ = [
     "InvariantWorkflowImplementationError",
     "InvariantWorkflowImplementationShapeError",
     "ManagedPluginServicePort",
+    "ResolvedCompletionCriterion",
     "ResolvedPackDistribution",
     "ResolvedWorkflowImplementation",
 ]
