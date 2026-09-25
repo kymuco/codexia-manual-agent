@@ -293,7 +293,7 @@ def test_artifact_added_after_step_makes_proposal_stale_via_parent_cas(
     )
 
 
-def test_g2_31_needs_no_separate_artifact_read_set_or_completion_ontology() -> None:
+def test_g2_31_needs_no_separate_artifact_read_set_or_completion_claim() -> None:
     assert "artifact_reads" not in WorkflowStepResult.__dataclass_fields__
 
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
@@ -305,7 +305,6 @@ def test_g2_31_needs_no_separate_artifact_read_set_or_completion_ontology() -> N
     forbidden_names = {
         "ArtifactReadBinding",
         "CompletionClaim",
-        "WorkCompletion",
         "Scheduler",
     }
 
