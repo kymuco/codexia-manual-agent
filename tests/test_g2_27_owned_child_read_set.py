@@ -10,7 +10,9 @@ import pytest
 from codexia_manual_agent.delegation_core import (
     Delegation,
     DelegationAdmission,
-    DelegationCompletionGuard,
+)
+from codexia_manual_agent.delegation_core.completion import (
+    _DelegationCompletionGuard,
 )
 from codexia_manual_agent.invariant_bridge import ResolvedWorkflowImplementation
 from codexia_manual_agent.pack_core import (
@@ -147,7 +149,7 @@ def _complete_child(
     delegation: Delegation,
 ) -> None:
     child = store.snapshot(delegation.child_work.work_id)
-    DelegationCompletionGuard(store).admit(
+    _DelegationCompletionGuard(store).admit(
         child.next_event(
             kind=WORK_COMPLETED_EVENT,
             payload={"summary": "child complete"},
