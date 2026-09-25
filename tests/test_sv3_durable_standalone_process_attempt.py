@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import subprocess
@@ -550,3 +551,70 @@ def test_sv3_observed_attempt_reconciles_without_runner_replay(
     assert resumed.capability is not None
     assert resumed.capability.outcome is not None
     assert resumed.capability.outcome.attempt_id == prepared.attempt_id
+
+
+def test_sv3_first_durable_authority_identity_wins(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    work_path = tmp_path / "first-authority-work.sqlite"
+    attempts = SqliteStandaloneProcessAttemptStore(
+        tmp_path / "first-authority-attempts.sqlite"
+    )
+    _, request = _pending_handoff(
+        work_path=work_path,
+        plugin=plugin,
+        workspace=tmp_path,
+        source_id="sv3-first-authority",
+    )
+    prepared = _prepare_attempt(
+        attempts=attempts,
+        request=request,
+        workspace=tmp_path,
+    )
+
+    replacement = LocalApprovalAuthority().decide(
+        prepared.proposal,
+        mode=ApprovalMode.RISKY,
+        approved=False,
+        actor="sv3-other-human",
+        reason="late caller cannot replace durable allow receipt",
+    )
+    recovered = attempts.prepare(
+        request,
+        proposal=prepared.proposal,
+        receipt=replacement,
+    )
+
+    assert recovered.receipt == prepared.receipt
+    assert recovered.receipt != replacement
+    assert (
+        recovered.state
+        is StandaloneProcessAttemptState.AUTHORIZED_UNCONSUMED
+    )
+
+
+def test_sv3_production_code_does_not_import_session_or_lab_semantics() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
+    paths = [
+        root / "standalone_host" / "process_attempt.py",
+        root / "standalone_host" / "process_attempt_capability.py",
+        root / "standalone_host" / "process_attempt_runner.py",
+    ]
+
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        assert not any("session_events" in module for module in modules)
+        assert not any(
+            module == "codexia_manual_agent.lab"
+            or module.startswith("codexia_manual_agent.lab.")
+            for module in modules
+        )
+        assert "ExperimentRun" not in source
