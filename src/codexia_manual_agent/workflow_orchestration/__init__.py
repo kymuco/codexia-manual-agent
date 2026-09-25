@@ -6,6 +6,8 @@ from codexia_manual_agent.workflow_orchestration.cognition_progression import (
 )
 from codexia_manual_agent.workflow_orchestration.proposal_admission import (
     WorkflowProposalAdmissionBindingError,
+    WorkflowProposalAdmissionCompletionProviderRequiredError,
+    WorkflowProposalAdmissionCompletionResolverRequiredError,
     WorkflowProposalAdmissionError,
     WorkflowProposalAdmissionPackRequiredError,
     WorkflowProposalAdmissionResult,
@@ -51,6 +53,8 @@ __all__ = [
     "RoleCognitionStateError",
     "RoleInstructionsMaterialPort",
     "WorkflowProposalAdmissionBindingError",
+    "WorkflowProposalAdmissionCompletionProviderRequiredError",
+    "WorkflowProposalAdmissionCompletionResolverRequiredError",
     "WorkflowProposalAdmissionError",
     "WorkflowProposalAdmissionPackRequiredError",
     "WorkflowProposalAdmissionResult",

@@ -456,7 +456,6 @@ def test_g2_27_adds_no_scheduler_child_result_or_completion_authority() -> None:
         "Scheduler",
         "ChildResult",
         "WorkGraph",
-        "CompletionClaim",
         "AuthorizationReceipt",
         "ProcessExecutor",
     }

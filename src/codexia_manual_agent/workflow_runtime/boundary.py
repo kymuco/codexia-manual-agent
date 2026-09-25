@@ -10,6 +10,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
 )
+from codexia_manual_agent.completion_core.models import CompletionClaim
 from codexia_manual_agent.completion_core.work_completion import WorkCompletion
 from codexia_manual_agent.delegation_core import Delegation
 from codexia_manual_agent.evidence_core import EvidenceRef
@@ -175,6 +176,7 @@ WorkflowProposal: TypeAlias = (
     | CapabilityNeed
     | AttentionNeed
     | WorkflowDelegationProposal
+    | CompletionClaim
 )
 
 _RESERVED_CORE_EVENT_PREFIXES = (
@@ -530,9 +532,118 @@ class WorkflowImplementationBoundary:
         if isinstance(proposal, WorkflowDelegationProposal):
             self._validate_delegation(proposal, context)
             return proposal
+        if isinstance(proposal, CompletionClaim):
+            self._validate_completion_claim(proposal, context)
+            return proposal
         raise WorkflowImplementationError(
             "Workflow implementation returned unsupported proposal type"
         )
+
+    @staticmethod
+    def _validate_completion_claim(
+        claim: CompletionClaim,
+        context: WorkflowStepContext,
+    ) -> None:
+        run = context.workflow.run
+        if claim.work_id != run.work_id:
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim crossed Work identity"
+            )
+        if not hmac.compare_digest(
+            claim.work_digest,
+            run.work_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed Work binding"
+            )
+        if claim.work_revision != context.work.revision:
+            raise WorkflowImplementationStateError(
+                "CompletionClaim does not bind current Work revision"
+            )
+        if claim.work_event_digest != context.work.last_event_digest:
+            raise WorkflowImplementationStateError(
+                "CompletionClaim does not bind current Work chronology"
+            )
+        if claim.workflow_run_id != run.workflow_run_id:
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed WorkflowRun identity"
+            )
+        if not hmac.compare_digest(
+            claim.workflow_run_digest,
+            run.run_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed WorkflowRun binding"
+            )
+
+        pin = context.pack_binding
+        if not hmac.compare_digest(
+            claim.pack_binding_digest,
+            pin.pack.binding_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed PackBinding semantics"
+            )
+        if claim.pack_workflow_binding_id != pin.binding_id:
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed PackWorkflowBinding identity"
+            )
+        if not hmac.compare_digest(
+            claim.pack_workflow_binding_digest,
+            pin.pin_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "CompletionClaim changed PackWorkflowBinding digest"
+            )
+
+        artifacts = {
+            artifact.artifact_id: artifact
+            for artifact in context.artifacts
+        }
+        for artifact in claim.artifact_refs:
+            observed = artifacts.get(artifact.artifact_id)
+            if observed is None:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim references ArtifactRef outside Workflow context"
+                )
+            if observed != artifact:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim changed observed ArtifactRef semantics"
+                )
+
+        evidence_refs = {
+            evidence.evidence_id: evidence
+            for evidence in context.evidence_refs
+        }
+        for evidence in claim.evidence_refs:
+            observed = evidence_refs.get(evidence.evidence_id)
+            if observed is None:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim references EvidenceRef outside Workflow context"
+                )
+            if observed != evidence:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim changed observed EvidenceRef semantics"
+                )
+
+        owned_children = {
+            owned.child.work.work_id: owned
+            for owned in context.owned_children
+        }
+        for child_ref in claim.child_completion_refs:
+            owned = owned_children.get(child_ref.work_id)
+            if owned is None:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim references child outside Workflow context"
+                )
+            if owned.completion is None:
+                raise WorkflowImplementationStateError(
+                    "CompletionClaim references child without observed WorkCompletion"
+                )
+            if owned.completion.to_ref() != child_ref:
+                raise WorkflowImplementationBindingError(
+                    "CompletionClaim changed observed child WorkCompletion"
+                )
 
     @staticmethod
     def _validate_candidate(
