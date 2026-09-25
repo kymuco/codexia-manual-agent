@@ -13,6 +13,11 @@ from codexia_manual_agent.standalone_host.process_work import (
     StandaloneProcessWorkResult,
     StandaloneProcessWorkService,
 )
+from codexia_manual_agent.standalone_host.process_work_recovery import (
+    StandaloneProcessWorkCheckpoint,
+    StandaloneProcessWorkRecoveryService,
+    StandaloneProcessWorkRecoveryState,
+)
 
 __all__ = [
     "PROCESS_CAPABILITY_ID",
@@ -22,17 +27,11 @@ __all__ = [
     "StandaloneProcessCapabilityPort",
     "StandaloneProcessHostError",
     "StandaloneProcessWorkBindingError",
+    "StandaloneProcessWorkCheckpoint",
     "StandaloneProcessWorkError",
     "StandaloneProcessWorkIncompleteError",
-    "StandaloneProcessWorkResult",
-    "StandaloneProcessWorkService",
-    "StandaloneProcessWorkCheckpoint",
     "StandaloneProcessWorkRecoveryService",
     "StandaloneProcessWorkRecoveryState",
+    "StandaloneProcessWorkResult",
+    "StandaloneProcessWorkService",
 ]
-from codexia_manual_agent.standalone_host.process_work_recovery import (
-    StandaloneProcessWorkCheckpoint,
-    StandaloneProcessWorkRecoveryService,
-    StandaloneProcessWorkRecoveryState,
-)
-
