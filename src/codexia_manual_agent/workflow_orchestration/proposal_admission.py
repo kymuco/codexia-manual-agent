@@ -97,23 +97,6 @@ class _ReadSetBoundWorkStore:
             read_preconditions=self._read_preconditions,
         )
 
-    def append_completion(
-        self,
-        work_id: str,
-        *,
-        expected_revision: int,
-        event: WorkEvent,
-        read_preconditions: tuple[WorkSnapshot, ...] = (),
-    ) -> WorkSnapshot:
-        if read_preconditions:
-            raise ValueError("nested read_preconditions are not supported")
-        return self._store.append_completion(
-            work_id,
-            expected_revision=expected_revision,
-            event=event,
-            read_preconditions=self._read_preconditions,
-        )
-
     def append_with_child_create(
         self,
         work_id: str,
