@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -157,8 +158,8 @@ def test_completion_claim_binds_exact_work_workflow_and_pack_checkpoint(
     assert claim.workflow_run_id == workflow.run.workflow_run_id
     assert claim.workflow_run_digest == workflow.run.run_digest
     assert claim.pack_binding_digest == pin.pack.binding_digest
-    assert claim.pack_pin_id == pin.binding_id
-    assert claim.pack_pin_digest == pin.pin_digest
+    assert claim.pack_workflow_binding_id == pin.binding_id
+    assert claim.pack_workflow_binding_digest == pin.pin_digest
 
 
 def test_completion_claim_basis_is_explicit_canonical_subset(tmp_path) -> None:
@@ -313,6 +314,38 @@ def test_completion_claim_rejects_duplicate_basis_identity(tmp_path) -> None:
             pin,
             evidence=(evidence, evidence),
         )
+
+
+def test_completion_claim_normalizes_mutable_basis_containers_to_tuples(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "immutable-basis.sqlite")
+    work, workflow, pin = _started(store, source_id="immutable-basis")
+    artifact = _artifact("mutable")
+    evidence = _evidence("mutable")
+    claim = _claim(store, work.work.work_id, workflow, pin)
+
+    replaced = replace(
+        claim,
+        artifact_refs=[artifact],
+        evidence_refs=[evidence],
+        claim_digest=_digest_payload(
+            {
+                **{
+                    key: value
+                    for key, value in claim.to_dict().items()
+                    if key not in {"artifact_refs", "evidence_refs", "claim_digest"}
+                },
+                "artifact_refs": [artifact.to_dict()],
+                "evidence_refs": [evidence.to_dict()],
+            }
+        ),
+    )
+
+    assert type(replaced.artifact_refs) is tuple
+    assert type(replaced.evidence_refs) is tuple
+    assert replaced.artifact_refs == (artifact,)
+    assert replaced.evidence_refs == (evidence,)
 
 
 def test_completion_claim_round_trip_is_exact(tmp_path) -> None:
