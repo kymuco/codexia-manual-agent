@@ -345,7 +345,7 @@ def test_sv3_prepared_unconsumed_attempt_relaunches_same_receipt(
     assert resumed.capability.outcome.attempt_id == prepared.attempt_id
 
 
-def test_sv3_consumed_without_observation_never_relaunches(
+def test_sv4_consumed_without_live_runner_closes_unknown_without_relaunch(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -400,12 +400,23 @@ def test_sv3_consumed_without_observation_never_relaunches(
 
     assert (
         resumed.state
-        is StandaloneProcessWorkRecoveryState.AWAITING_OUTCOME_RECONCILIATION
+        is StandaloneProcessWorkRecoveryState.CAPABILITY_OUTCOME_UNKNOWN
     )
-    assert after == before
+    assert len(after) == len(before) + 1
+    assert after[-1].kind == "capability.outcome-recorded"
+    assert sum(
+        event.kind == "capability.handoff-admitted"
+        for event in after
+    ) == 1
+    assert "work.completed" not in tuple(event.kind for event in after)
+    recovered_attempt = attempts.recover(prepared.attempt_id)
     assert (
-        attempts.recover(prepared.attempt_id).state
-        is StandaloneProcessAttemptState.AUTHORITY_CONSUMED
+        recovered_attempt.state
+        is StandaloneProcessAttemptState.ERROR_AFTER_CONSUME
+    )
+    assert (
+        recovered_attempt.runner_error["error_type"]
+        == "RunnerOwnershipLostAfterConsumption"
     )
 
 

@@ -142,7 +142,15 @@ observation absent
 
 No runner is launched again.
 
-The state remains AWAITING_OUTCOME_RECONCILIATION at the SV2 layer.
+At the SV3 milestone itself, the state remained
+AWAITING_OUTCOME_RECONCILIATION because SV3 had no independent proof of runner
+liveness or death.
+
+SV4 adds exact OS-released runner ownership. With SV4 present:
+
+- live exact runner ownership preserves AWAITING_OUTCOME_RECONCILIATION;
+- released ownership after durable consumption and without an observation is
+  recorded as ERROR_AFTER_CONSUME and reconciled to CapabilityOutcome.UNKNOWN.
 
 This is intentionally ambiguous:
 
