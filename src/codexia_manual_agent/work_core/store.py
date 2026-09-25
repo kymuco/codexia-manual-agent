@@ -226,7 +226,7 @@ class SqliteWorkStore:
             raise TypeError("event must be WorkEvent")
         if event.kind == WORK_COMPLETED_EVENT:
             raise WorkStateError(
-                "work.completed requires the guarded append_completion boundary"
+                "work.completed requires the guarded completion admission boundary"
             )
         return self._append_event(
             work_id,
@@ -393,7 +393,7 @@ class SqliteWorkStore:
             raise TypeError("event must be WorkEvent")
         if event.kind == WORK_COMPLETED_EVENT:
             raise WorkStateError(
-                "work.completed requires the guarded append_completion boundary"
+                "work.completed requires the guarded completion admission boundary"
             )
         if not isinstance(child_work, Work):
             raise TypeError("child_work must be Work")
