@@ -309,15 +309,15 @@ class SqliteStandaloneProcessAttemptStore:
                     "need_digest": need.need_digest,
                     "work_id": need.work_id,
                     "work_digest": need.work_digest,
-                    "proposal_json": proposal_json,
-                    "receipt_json": receipt_json,
-                    "receipt_id": receipt.receipt_id,
-                    "receipt_digest": receipt.receipt_digest,
                 }
                 if any(existing[key] != value for key, value in expected.items()):
                     raise StandaloneProcessAttemptIntegrityError(
                         "Existing process attempt changed exact binding"
                     )
+                # The first durable local proposal/receipt pair owns this
+                # handoff. A concurrent or restarted caller may have created a
+                # fresh in-memory pair, but it cannot replace durable authority
+                # identity once the attempt exists.
         return self.recover(attempt_id)
 
     def recover(self, attempt_id: str) -> StandaloneProcessAttemptSnapshot:
