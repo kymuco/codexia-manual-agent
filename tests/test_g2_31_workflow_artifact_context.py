@@ -280,7 +280,7 @@ def test_artifact_added_after_step_makes_proposal_stale_via_parent_cas(
     )
 
     assert isinstance(result.proposal, WorkflowCandidate)
-    assert result.proposal.event.payload["artifact_count"] == 0
+    assert result.proposal.event.payload["payload"]["artifact_count"] == 0
 
     _record(store, work, _artifact("late"))
 
