@@ -10,6 +10,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
 )
+from codexia_manual_agent.completion_core.work_completion import WorkCompletion
 from codexia_manual_agent.delegation_core import Delegation
 from codexia_manual_agent.evidence_core import EvidenceRef
 from codexia_manual_agent.pack_core import (
@@ -45,10 +46,17 @@ class WorkflowImplementationOwnershipError(WorkflowImplementationError):
 
 @dataclass(frozen=True, slots=True)
 class OwnedChildWorkSnapshot:
-    """Ephemeral exact read view of one durable parent-owned child Work."""
+    """Ephemeral exact read view of one durable parent-owned child Work.
+
+    completion is the semantic WorkCompletion record when the child terminated
+    through the post-G2.37 structured completion path. Historical/raw completed
+    children may have completion=None; that absence must not be interpreted as
+    a synthetic ChildResult or as proof of semantic completion quality.
+    """
 
     delegation: Delegation
     child: WorkSnapshot
+    completion: WorkCompletion | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.delegation, Delegation):
@@ -69,6 +77,40 @@ class OwnedChildWorkSnapshot:
         if self.child.work.to_dict() != self.delegation.child_work.to_dict():
             raise WorkflowImplementationBindingError(
                 "owned child snapshot changed exact child Work bytes"
+            )
+
+        completion = self.completion
+        if completion is None:
+            return
+        if not isinstance(completion, WorkCompletion):
+            raise TypeError("completion must be WorkCompletion or None")
+        if self.child.state is not WorkState.COMPLETED:
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion requires COMPLETED child state"
+            )
+        if completion.work_id != self.child.work.work_id:
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion crossed child Work identity"
+            )
+        if not hmac.compare_digest(
+            completion.work_digest,
+            self.child.work.work_digest,
+        ):
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion changed child Work binding"
+            )
+        if self.child.terminal_event_id != completion.completion_id:
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion changed terminal event identity"
+            )
+        terminal_event = completion.to_event()
+        if terminal_event.sequence != self.child.revision:
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion changed child terminal revision"
+            )
+        if terminal_event.event_digest != self.child.last_event_digest:
+            raise WorkflowImplementationBindingError(
+                "owned child WorkCompletion changed child terminal chronology"
             )
 
 
