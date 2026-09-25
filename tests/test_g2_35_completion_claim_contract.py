@@ -351,10 +351,11 @@ def test_completion_claim_rejects_schema_type_drift_even_with_valid_digest(
     tmp_path,
     schema_version,
 ) -> None:
-    store = SqliteWorkStore(tmp_path / f"schema-{schema_version!r}.sqlite")
+    label = "bool" if schema_version is True else "float"
+    store = SqliteWorkStore(tmp_path / f"schema-{label}.sqlite")
     work, workflow, pin = _started(
         store,
-        source_id=f"schema-{schema_version!r}",
+        source_id=f"schema-{label}",
     )
     claim = _claim(store, work.work.work_id, workflow, pin)
     payload = claim.to_dict()
