@@ -98,7 +98,7 @@ def test_plain_append_cannot_publish_work_completed(tmp_path) -> None:
 
     with pytest.raises(
         WorkStateError,
-        match="guarded append_completion boundary",
+        match="guarded completion admission boundary",
     ):
         store.append(
             work.work_id,
@@ -134,7 +134,7 @@ def test_child_create_append_cannot_publish_work_completed(tmp_path) -> None:
 
     with pytest.raises(
         WorkStateError,
-        match="guarded append_completion boundary",
+        match="guarded completion admission boundary",
     ):
         store.append_with_child_create(
             parent.work_id,
