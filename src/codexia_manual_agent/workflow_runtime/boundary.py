@@ -11,6 +11,7 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeedSnapshot,
 )
 from codexia_manual_agent.delegation_core import Delegation
+from codexia_manual_agent.evidence_core import EvidenceRef
 from codexia_manual_agent.pack_core import (
     PackMemberBinding,
     PackMemberKind,
@@ -187,6 +188,7 @@ class WorkflowStepContext:
     attentions: tuple[AttentionNeed, ...] = ()
     attention_responses: tuple[AttentionResponse, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
+    evidence_refs: tuple[EvidenceRef, ...] = ()
     owned_children: tuple[OwnedChildWorkSnapshot, ...] = ()
 
     def __post_init__(self) -> None:
@@ -372,6 +374,16 @@ class WorkflowStepContext:
                     "artifacts contains duplicate ArtifactRef identity"
                 )
             artifact_ids.add(artifact.artifact_id)
+
+        evidence_ids: set[str] = set()
+        for evidence in self.evidence_refs:
+            if not isinstance(evidence, EvidenceRef):
+                raise TypeError("evidence_refs must contain EvidenceRef values")
+            if evidence.evidence_id in evidence_ids:
+                raise WorkflowImplementationStateError(
+                    "evidence_refs contains duplicate EvidenceRef identity"
+                )
+            evidence_ids.add(evidence.evidence_id)
 
         delegation_ids: set[str] = set()
         child_work_ids: set[str] = set()
