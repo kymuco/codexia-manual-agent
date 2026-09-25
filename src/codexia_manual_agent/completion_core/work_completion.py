@@ -7,13 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
-
-if TYPE_CHECKING:
-    from codexia_manual_agent.completion_core.work_completion_ref import (
-        WorkCompletionRef,
-    )
 
 from codexia_manual_agent.completion_core.models import (
     COMPLETION_CLAIM_ADMITTED_EVENT,
@@ -274,7 +269,7 @@ class WorkCompletion:
             "completion_digest": self.completion_digest,
         }
 
-    def to_ref(self) -> WorkCompletionRef:
+    def to_ref(self) -> "WorkCompletionRef":
         from codexia_manual_agent.completion_core.work_completion_ref import (
             WorkCompletionRef,
         )
