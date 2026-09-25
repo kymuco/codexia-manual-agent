@@ -33,9 +33,9 @@ class EvidenceAdmission:
     """Record EvidenceRef relevance in canonical Work chronology.
 
     This boundary does not dereference or verify evidence, grant authority,
-    interpret domain validity, decide sufficiency, or decide completion.
-    The host/product chooses when an already-formed immutable EvidenceRef is
-    semantically relevant enough to record for one Work.
+    interpret domain validity, decide relevance, sufficiency, or completion.
+    Its caller supplies the already-formed immutable EvidenceRef whose
+    Work-level relevance is being made canonical.
     """
 
     def __init__(self, store: WorkStore) -> None:
