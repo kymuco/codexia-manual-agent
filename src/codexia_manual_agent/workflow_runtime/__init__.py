@@ -20,6 +20,18 @@ from codexia_manual_agent.workflow_runtime.standalone_process import (
     standalone_process_capability_binding,
     standalone_process_workflow_binding,
 )
+from codexia_manual_agent.workflow_runtime.standalone_process_v2 import (
+    COMPLETION_SUMMARY,
+    PACK_ID,
+    PACK_VERSION,
+    PROCESS_OUTCOME_EVIDENCE_KIND,
+    StandaloneProcessCompletionCriterionV2,
+    StandaloneProcessWorkflowImplementationV2,
+    process_outcome_evidence_locator,
+    standalone_process_v2_capability_binding,
+    standalone_process_v2_pack_binding,
+    standalone_process_v2_workflow_binding,
+)
 
 __all__ = [
     "CAPABILITY_ID",
@@ -51,16 +63,3 @@ __all__ = [
     "standalone_process_capability_binding",
     "standalone_process_workflow_binding",
 ]
-
-from codexia_manual_agent.workflow_runtime.standalone_process_v2 import (
-    COMPLETION_SUMMARY,
-    PACK_ID,
-    PACK_VERSION,
-    PROCESS_OUTCOME_EVIDENCE_KIND,
-    StandaloneProcessCompletionCriterionV2,
-    StandaloneProcessWorkflowImplementationV2,
-    process_outcome_evidence_locator,
-    standalone_process_v2_capability_binding,
-    standalone_process_v2_pack_binding,
-    standalone_process_v2_workflow_binding,
-)
