@@ -6,7 +6,6 @@ from typing import Any
 
 from codexia_manual_agent.authority import (
     ApprovalMode,
-    AuthorizationDecision,
     LocalApprovalAuthority,
 )
 from codexia_manual_agent.capability_core import (
