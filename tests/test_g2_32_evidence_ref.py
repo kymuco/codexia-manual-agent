@@ -26,6 +26,15 @@ def _digest_payload(value: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def test_evidence_ref_requires_existing_evidence_identity() -> None:
+    with pytest.raises(TypeError):
+        EvidenceRef.create(
+            evidence_digest=_sha("payload"),
+            evidence_kind="attention.response.v1",
+            locator="work-event://response/example",
+        )
+
+
 def test_evidence_ref_binds_identity_to_exact_evidence_kind_and_locator() -> None:
     evidence_id = str(uuid4())
     first = EvidenceRef.create(
@@ -59,6 +68,7 @@ def test_evidence_ref_is_domain_neutral(
     locator: str,
 ) -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha(kind),
         evidence_kind=kind,
         locator=locator,
@@ -70,6 +80,7 @@ def test_evidence_ref_is_domain_neutral(
 
 def test_evidence_ref_locator_is_opaque_and_does_not_require_reachability() -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha("detached evidence"),
         evidence_kind="external.observation.v1",
         locator="provider+opaque://not-present/evidence",
@@ -80,6 +91,7 @@ def test_evidence_ref_locator_is_opaque_and_does_not_require_reachability() -> N
 
 def test_evidence_ref_round_trip_is_exact() -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha("payload"),
         evidence_kind="capability.outcome.v1",
         locator="work-event://outcome/example",
@@ -90,6 +102,7 @@ def test_evidence_ref_round_trip_is_exact() -> None:
 
 def test_evidence_ref_rejects_tampered_payload_with_stale_digest() -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha("payload"),
         evidence_kind="attention.response.v1",
         locator="work-event://response/example",
@@ -106,6 +119,7 @@ def test_evidence_ref_strict_decoder_rejects_schema_type_drift(
     schema_version: object,
 ) -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha("payload"),
         evidence_kind="attention.response.v1",
         locator="work-event://response/example",
@@ -140,6 +154,7 @@ def test_evidence_ref_rejects_noncanonical_fields(
     value: object,
 ) -> None:
     kwargs: dict[str, object] = {
+        "evidence_id": str(uuid4()),
         "evidence_digest": _sha("payload"),
         "evidence_kind": "attention.response.v1",
         "locator": "work-event://response/example",
@@ -152,6 +167,7 @@ def test_evidence_ref_rejects_noncanonical_fields(
 
 def test_evidence_ref_strict_decoder_rejects_shape_drift() -> None:
     ref = EvidenceRef.create(
+        evidence_id=str(uuid4()),
         evidence_digest=_sha("payload"),
         evidence_kind="attention.response.v1",
         locator="work-event://response/example",
