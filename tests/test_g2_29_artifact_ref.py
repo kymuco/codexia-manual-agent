@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +13,17 @@ from codexia_manual_agent.artifact_core import ArtifactRef, InvalidArtifactRef
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _digest_payload(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def test_artifact_ref_binds_identity_to_exact_content_locator_and_type() -> None:
@@ -94,6 +106,29 @@ def test_artifact_ref_rejects_noncanonical_fields(field: str, value: object) -> 
 
     with pytest.raises(InvalidArtifactRef):
         ArtifactRef.create(**kwargs)
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0])
+def test_artifact_ref_strict_decoder_rejects_schema_type_drift(
+    schema_version: object,
+) -> None:
+    ref = ArtifactRef.create(
+        content_sha256=_sha("payload"),
+        size_bytes=7,
+        locator="sandbox:/mnt/data/output.bin",
+    )
+    payload = ref.to_dict()
+    payload["schema_version"] = schema_version
+    payload["ref_digest"] = _digest_payload(
+        {
+            key: value
+            for key, value in payload.items()
+            if key != "ref_digest"
+        }
+    )
+
+    with pytest.raises(InvalidArtifactRef, match="Unsupported ArtifactRef schema"):
+        ArtifactRef.from_dict(payload)
 
 
 def test_artifact_ref_strict_decoder_rejects_shape_drift() -> None:
