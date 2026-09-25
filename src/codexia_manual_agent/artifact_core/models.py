@@ -152,7 +152,10 @@ class ArtifactRef:
         return cls(**base, ref_digest=_digest(base))
 
     def __post_init__(self) -> None:
-        if self.schema_version != ARTIFACT_REF_SCHEMA_VERSION:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != ARTIFACT_REF_SCHEMA_VERSION
+        ):
             raise InvalidArtifactRef("Unsupported ArtifactRef schema")
         _validate_uuid(self.artifact_id, "artifact_id")
         _validate_digest(self.content_sha256, "content_sha256")
