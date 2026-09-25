@@ -26,7 +26,7 @@ class ArtifactStateError(ArtifactAdmissionError):
 
 
 class ArtifactIdentityConflictError(ArtifactAdmissionError):
-    """One ArtifactRef identity was reused for different exact bytes."""
+    """One ArtifactRef identity was reused for different exact semantics."""
 
 
 class ArtifactAdmission:
@@ -51,20 +51,6 @@ class ArtifactAdmission:
             raise TypeError("artifact must be ArtifactRef")
 
         events = self._store.events(snapshot.work.work_id)
-        for existing in project_artifact_refs(events):
-            if existing.artifact_id != artifact.artifact_id:
-                continue
-            if existing == artifact:
-                return existing
-            raise ArtifactIdentityConflictError(
-                "ArtifactRef identity is already bound to different exact bytes"
-            )
-
-        if snapshot.state is not WorkState.ACTIVE:
-            raise ArtifactStateError(
-                "ArtifactRef cannot be recorded on terminal Work"
-            )
-
         current = self._store.snapshot(snapshot.work.work_id)
         if current.work.work_id != snapshot.work.work_id:
             raise ArtifactBindingError("ArtifactRef crossed Work identity")
@@ -73,6 +59,20 @@ class ArtifactAdmission:
             snapshot.work.work_digest,
         ):
             raise ArtifactBindingError("ArtifactRef changed Work binding")
+
+        for existing in project_artifact_refs(events):
+            if existing.artifact_id != artifact.artifact_id:
+                continue
+            if existing == artifact:
+                return existing
+            raise ArtifactIdentityConflictError(
+                "ArtifactRef identity is already bound to different exact semantics"
+            )
+
+        if snapshot.state is not WorkState.ACTIVE:
+            raise ArtifactStateError(
+                "ArtifactRef cannot be recorded on terminal Work"
+            )
 
         event = snapshot.next_event(
             kind=ARTIFACT_REF_RECORDED_EVENT,
