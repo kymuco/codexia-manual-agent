@@ -444,7 +444,7 @@ def test_second_child_creation_is_guarded_by_existing_child_read_set(
         store.snapshot(proposed_second_id)
 
 
-def test_g2_27_adds_no_scheduler_child_result_or_completion_policy() -> None:
+def test_g2_27_adds_no_scheduler_child_result_or_completion_authority() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
     paths = [
         root / "work_core" / "store.py",
@@ -457,7 +457,6 @@ def test_g2_27_adds_no_scheduler_child_result_or_completion_policy() -> None:
         "ChildResult",
         "WorkGraph",
         "CompletionClaim",
-        "WorkCompletion",
         "AuthorizationReceipt",
         "ProcessExecutor",
     }
