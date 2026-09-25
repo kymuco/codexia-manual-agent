@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from codexia_manual_agent.completion_core import CompletionCriterionResolverPort
 from codexia_manual_agent.invariant_bridge import (
     InvariantWorkflowImplementationBridge,
 )
@@ -51,12 +52,16 @@ class WorkflowProgressionService:
         *,
         store: WorkStore,
         resolver: InvariantWorkflowImplementationBridge,
+        completion_resolver: CompletionCriterionResolverPort | None = None,
     ) -> None:
         self._step = WorkflowStepService(
             store=store,
             resolver=resolver,
         )
-        self._admission = WorkflowProposalAdmissionService(store)
+        self._admission = WorkflowProposalAdmissionService(
+            store,
+            completion_resolver=completion_resolver,
+        )
 
     def progress_once(
         self,
