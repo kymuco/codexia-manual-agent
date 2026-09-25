@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -47,6 +47,7 @@ from codexia_manual_agent.workflow_core import (
 )
 from codexia_manual_agent.workflow_orchestration import (
     WorkflowProgressionService,
+    WorkflowProposalAdmissionCompletionProviderRequiredError,
     WorkflowProposalAdmissionCompletionResolverRequiredError,
     WorkflowProposalAdmissionService,
     WorkflowStepReadPrecondition,
@@ -510,7 +511,10 @@ def test_completion_claim_routes_to_existing_completion_admission_owner(
     admitted = WorkflowProposalAdmissionService(
         store,
         completion_resolver=resolver,
-    ).admit(result)
+    ).admit(
+        result,
+        completion_provider_ref=PROVIDER_REF,
+    )
 
     assert admitted == result.proposal
     assert isinstance(admitted, CompletionClaim)
@@ -521,6 +525,76 @@ def test_completion_claim_routes_to_existing_completion_admission_owner(
     assert resolver.calls == 1
     assert resolver.provider_refs == [PROVIDER_REF]
     assert resolver.criterion.calls == 1
+
+
+def test_completion_claim_requires_explicit_completion_provider(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "missing-provider.sqlite")
+    parent, workflow, pin, _, _, _ = _parent_setup(
+        store,
+        label="missing-provider",
+    )
+    result = _step(
+        store,
+        parent,
+        workflow,
+        _CompletionClaimImplementation(workflow.run.binding),
+    )
+    resolver = _CompletionResolver(
+        workflow.run.binding,
+        pin.pack.binding_digest,
+    )
+    before = store.events(parent.work_id)
+
+    with pytest.raises(
+        WorkflowProposalAdmissionCompletionProviderRequiredError,
+        match="requires explicit completion provider",
+    ):
+        WorkflowProposalAdmissionService(
+            store,
+            completion_resolver=resolver,
+        ).admit(result)
+
+    assert store.events(parent.work_id) == before
+    assert resolver.calls == 0
+
+
+def test_step_provider_provenance_does_not_select_completion_criterion(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "provider-separation.sqlite")
+    parent, workflow, pin, _, _, _ = _parent_setup(
+        store,
+        label="provider-separation",
+    )
+    result = _step(
+        store,
+        parent,
+        workflow,
+        _CompletionClaimImplementation(workflow.run.binding),
+    )
+    rebound = replace(
+        result,
+        provider_ref="codexia:tampered-step-provenance@9.9.9",
+    )
+    resolver = _CompletionResolver(
+        workflow.run.binding,
+        pin.pack.binding_digest,
+    )
+
+    admitted = WorkflowProposalAdmissionService(
+        store,
+        completion_resolver=resolver,
+    ).admit(
+        rebound,
+        completion_provider_ref="codexia:explicit-completion-provider@1.0.0",
+    )
+
+    assert admitted == result.proposal
+    assert resolver.provider_refs == [
+        "codexia:explicit-completion-provider@1.0.0"
+    ]
 
 
 def test_completion_criterion_rejection_does_not_mutate_parent(
@@ -552,7 +626,10 @@ def test_completion_criterion_rejection_does_not_mutate_parent(
         WorkflowProposalAdmissionService(
             store,
             completion_resolver=resolver,
-        ).admit(result)
+        ).admit(
+            result,
+            completion_provider_ref=PROVIDER_REF,
+        )
 
     assert store.events(parent.work_id) == before
     assert resolver.criterion.calls == 1
@@ -581,7 +658,10 @@ def test_exact_retry_does_not_re_evaluate_completion_criterion(
         completion_resolver=resolver,
     )
 
-    first = service.admit(result)
+    first = service.admit(
+        result,
+        completion_provider_ref=PROVIDER_REF,
+    )
     current = store.snapshot(parent.work_id)
     store.append(
         parent.work_id,
@@ -592,7 +672,10 @@ def test_exact_retry_does_not_re_evaluate_completion_criterion(
         ),
     )
     before_retry = store.events(parent.work_id)
-    second = service.admit(result)
+    second = service.admit(
+        result,
+        completion_provider_ref=PROVIDER_REF,
+    )
 
     assert second == first
     assert store.events(parent.work_id) == before_retry
@@ -642,7 +725,10 @@ def test_unreferenced_child_change_after_step_stales_claim_admission(
         WorkflowProposalAdmissionService(
             store,
             completion_resolver=resolver,
-        ).admit(result)
+        ).admit(
+            result,
+            completion_provider_ref=PROVIDER_REF,
+        )
 
     assert store.events(parent.work_id) == before_parent
     assert resolver.criterion.calls == 1
