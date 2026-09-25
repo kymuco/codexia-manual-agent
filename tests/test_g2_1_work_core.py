@@ -76,7 +76,7 @@ def test_compare_and_append_binds_exact_snapshot(tmp_path) -> None:
         kind=WORK_COMPLETED_EVENT,
         payload={"summary": "done"},
     )
-    result = store.append_completion(
+    result = store._append_completion(
         initial.work.work_id,
         expected_revision=initial.revision,
         event=completed,
@@ -103,7 +103,7 @@ def test_stale_parallel_candidate_is_rejected(tmp_path) -> None:
     assert after_first.revision == 1
 
     with pytest.raises(WorkConcurrencyError):
-        store.append_completion(
+        store._append_completion(
             initial.work.work_id,
             expected_revision=0,
             event=stale,
@@ -161,7 +161,7 @@ def test_store_rejects_event_after_terminal_work(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "work.sqlite")
     initial = store.create(_work())
     terminal_event = initial.next_event(kind=WORK_COMPLETED_EVENT)
-    store.append_completion(
+    store._append_completion(
         initial.work.work_id,
         expected_revision=0,
         event=terminal_event,
