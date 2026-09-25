@@ -172,10 +172,11 @@ class CompletionClaim:
     A CompletionClaim is not a Work state transition, completion admission,
     evidence verdict, execution authority, cleanup proof, or child-terminal
     judgment. It records the exact Work/Workflow/Pack checkpoint and the exact
-    ArtifactRef/EvidenceRef subset presented as the claim basis.
+    ArtifactRef/EvidenceRef subset and exact child WorkCompletion references
+    presented as the claim basis.
 
     Canonical admission must later prove that the referenced
-    PackWorkflowBinding and basis records are admitted in the same Work
+    PackWorkflowBinding and basis records are admitted/owned by the exact Work
     chronology and that Pack/domain completion criteria accept them. Creating
     this detached record grants none of those semantics.
     """
