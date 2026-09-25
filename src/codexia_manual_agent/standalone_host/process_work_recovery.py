@@ -6,6 +6,8 @@ from pathlib import Path
 
 from codexia_manual_agent.capability_core import (
     CapabilityHandoff,
+    CapabilityHostBridge,
+    CapabilityHostRequest,
     CapabilityNeedSnapshot,
     CapabilityNeedState,
     project_capability_handoffs,
@@ -34,6 +36,12 @@ from codexia_manual_agent.pack_core import (
     PackAdmission,
     PackWorkflowBinding,
     project_workflow_pack_binding,
+)
+from codexia_manual_agent.standalone_host.process_attempt import (
+    SqliteStandaloneProcessAttemptStore,
+)
+from codexia_manual_agent.standalone_host.process_attempt_capability import (
+    DurableStandaloneProcessCapabilityPort,
 )
 from codexia_manual_agent.standalone_host.process_capability import (
     STANDALONE_PROCESS_HOST_ID,
@@ -130,6 +138,7 @@ class StandaloneProcessWorkRecoveryService:
         plugin_service: ManagedPluginServicePort,
         provider_ref: str,
         workspace: str | Path,
+        process_attempt_store: SqliteStandaloneProcessAttemptStore | None = None,
     ) -> None:
         if not isinstance(provider_ref, str) or not provider_ref:
             raise TypeError("provider_ref must be non-empty text")
@@ -137,6 +146,18 @@ class StandaloneProcessWorkRecoveryService:
         self._plugin_service = plugin_service
         self._provider_ref = provider_ref
         self._workspace = Path(workspace)
+        if (
+            process_attempt_store is not None
+            and not isinstance(
+                process_attempt_store,
+                SqliteStandaloneProcessAttemptStore,
+            )
+        ):
+            raise TypeError(
+                "process_attempt_store must be "
+                "SqliteStandaloneProcessAttemptStore or None"
+            )
+        self._process_attempt_store = process_attempt_store
 
     def recover(self, work_id: str) -> StandaloneProcessWorkCheckpoint:
         snapshot = self._store.snapshot(work_id)
@@ -506,17 +527,57 @@ class StandaloneProcessWorkRecoveryService:
 
         if state is StandaloneProcessWorkRecoveryState.DISPATCH_CAPABILITY:
             capability = self._require_capability(checkpoint)
+            port = self._process_port(
+                approved=approved,
+                actor=actor,
+                reason=reason,
+            )
             CapabilityProgressionService(self._store).progress_once(
                 work_id=checkpoint.work_id,
                 need_id=capability.need.need_id,
-                port=StandaloneProcessCapabilityPort(
-                    workspace=self._workspace,
-                    binding=standalone_process_v2_capability_binding(),
-                    approved=approved,
-                    actor=actor,
-                    reason=reason,
-                ),
+                port=port,
             )
+            return self.recover(checkpoint.work_id)
+
+        if (
+            state
+            is StandaloneProcessWorkRecoveryState
+            .AWAITING_OUTCOME_RECONCILIATION
+            and self._process_attempt_store is not None
+        ):
+            capability = self._require_capability(checkpoint)
+            if checkpoint.handoff is None:
+                raise StandaloneProcessWorkBindingError(
+                    "Outcome reconciliation requires durable CapabilityHandoff"
+                )
+            request = CapabilityHostRequest(
+                handoff=checkpoint.handoff,
+                need=capability,
+            )
+            port = DurableStandaloneProcessCapabilityPort(
+                workspace=self._workspace,
+                binding=standalone_process_v2_capability_binding(),
+                approved=approved,
+                attempt_store=self._process_attempt_store,
+                actor=actor,
+                reason=reason,
+            )
+            attempt = self._process_attempt_store.recover_for_handoff(
+                checkpoint.handoff.handoff_id
+            )
+            outcome = (
+                port.submit(request)
+                if attempt is None
+                else port.reconcile(
+                    request,
+                    resume_unconsumed=True,
+                )
+            )
+            if outcome is not None:
+                CapabilityHostBridge(self._store).record_outcome(
+                    outcome,
+                    host_id=STANDALONE_PROCESS_HOST_ID,
+                )
             return self.recover(checkpoint.work_id)
 
         if state is StandaloneProcessWorkRecoveryState.RECORD_OUTCOME_EVIDENCE:
@@ -589,6 +650,31 @@ class StandaloneProcessWorkRecoveryService:
             evidence=checkpoint.evidence,
             claim=checkpoint.claim,
             completion=checkpoint.completion,
+        )
+
+    def _process_port(
+        self,
+        *,
+        approved: bool,
+        actor: str,
+        reason: str | None,
+    ):
+        binding = standalone_process_v2_capability_binding()
+        if self._process_attempt_store is None:
+            return StandaloneProcessCapabilityPort(
+                workspace=self._workspace,
+                binding=binding,
+                approved=approved,
+                actor=actor,
+                reason=reason,
+            )
+        return DurableStandaloneProcessCapabilityPort(
+            workspace=self._workspace,
+            binding=binding,
+            approved=approved,
+            attempt_store=self._process_attempt_store,
+            actor=actor,
+            reason=reason,
         )
 
     def _require_exact_distribution(self) -> None:
