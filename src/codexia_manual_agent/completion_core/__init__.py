@@ -1,13 +1,8 @@
-from codexia_manual_agent.completion_core.admission import (
-    CompletionAdmissionError,
-    CompletionAdmissionService,
-    CompletionClaimBasisError,
-    CompletionClaimBindingError,
-    CompletionClaimIdentityConflictError,
-    CompletionClaimStateError,
-    CompletionCriteriaRejected,
-    CompletionCriterionResolverPort,
-    ResolvedCompletionCriterionPort,
+from codexia_manual_agent.completion_core.models import (
+    COMPLETION_CLAIM_ADMITTED_EVENT,
+    COMPLETION_CLAIM_SCHEMA_VERSION,
+    CompletionClaim,
+    InvalidCompletionClaim,
 )
 from codexia_manual_agent.completion_core.boundary import (
     MAX_COMPLETION_CRITERION_REASON_CHARS,
@@ -20,16 +15,21 @@ from codexia_manual_agent.completion_core.boundary import (
     CompletionCriterionResultError,
     CompletionCriterionStateError,
 )
-from codexia_manual_agent.completion_core.models import (
-    COMPLETION_CLAIM_ADMITTED_EVENT,
-    COMPLETION_CLAIM_SCHEMA_VERSION,
-    CompletionClaim,
-    InvalidCompletionClaim,
-)
 from codexia_manual_agent.completion_core.projection import (
     CompletionProjectionError,
     project_admitted_completion_claim,
     project_admitted_completion_claims,
+)
+from codexia_manual_agent.completion_core.admission import (
+    CompletionAdmissionError,
+    CompletionAdmissionService,
+    CompletionClaimBasisError,
+    CompletionClaimBindingError,
+    CompletionClaimIdentityConflictError,
+    CompletionClaimStateError,
+    CompletionCriteriaRejected,
+    CompletionCriterionResolverPort,
+    ResolvedCompletionCriterionPort,
 )
 
 __all__ = [
