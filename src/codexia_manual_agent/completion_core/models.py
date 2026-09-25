@@ -11,11 +11,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from codexia_manual_agent.artifact_core import ArtifactRef
-from codexia_manual_agent.evidence_core import EvidenceRef
 from codexia_manual_agent.completion_core.work_completion_ref import (
     InvalidWorkCompletionRef,
     WorkCompletionRef,
 )
+from codexia_manual_agent.evidence_core import EvidenceRef
 from codexia_manual_agent.pack_core import PackWorkflowBinding
 from codexia_manual_agent.work_core import WorkSnapshot, WorkState
 from codexia_manual_agent.workflow_core import WorkflowRunSnapshot, WorkflowRunState
