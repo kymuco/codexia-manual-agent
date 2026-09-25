@@ -18,6 +18,7 @@ from codexia_manual_agent.work_core import (
     SqliteWorkStore,
     Work,
     WorkIngressBinding,
+    WorkNotFoundError,
     WorkState,
     WorkStateError,
 )
@@ -105,6 +106,41 @@ def test_plain_append_cannot_publish_work_completed(tmp_path) -> None:
         )
 
     assert store.snapshot(work.work_id).state is WorkState.ACTIVE
+
+
+def test_child_create_append_cannot_publish_work_completed(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "child-create-bypass.sqlite")
+    parent = _work(
+        store,
+        source_id="child-create-bypass",
+        objective="Parent must not complete while creating a live child",
+    )
+    child = Work.create(
+        objective="New child must not be committed through completion",
+        ingress=WorkIngressBinding.create(
+            source_namespace="standalone.api",
+            source_id="child-create-bypass-child",
+            payload_digest=_sha("payload:child-create-bypass-child"),
+        ),
+    )
+    completion = _completion_event(store, parent.work_id)
+    before = store.events(parent.work_id)
+
+    with pytest.raises(
+        WorkStateError,
+        match="guarded append_completion boundary",
+    ):
+        store.append_with_child_create(
+            parent.work_id,
+            expected_revision=0,
+            event=completion,
+            child_work=child,
+        )
+
+    assert store.events(parent.work_id) == before
+    assert store.snapshot(parent.work_id).state is WorkState.ACTIVE
+    with pytest.raises(WorkNotFoundError):
+        store.snapshot(child.work_id)
 
 
 def test_parent_completion_fails_while_owned_child_is_active(tmp_path) -> None:

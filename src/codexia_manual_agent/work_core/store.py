@@ -400,6 +400,10 @@ class SqliteWorkStore:
             raise ValueError("expected_revision must be a non-negative integer")
         if not isinstance(event, WorkEvent):
             raise TypeError("event must be WorkEvent")
+        if event.kind == WORK_COMPLETED_EVENT:
+            raise WorkStateError(
+                "work.completed requires the guarded append_completion boundary"
+            )
         if not isinstance(child_work, Work):
             raise TypeError("child_work must be Work")
         self._validate_read_preconditions_shape(read_preconditions)
