@@ -41,8 +41,8 @@ class WorkCompletionAdmissionService:
 
     The service requires the selected completion.claim-admitted event to be the
     exact current Work head. Therefore any intervening Work event invalidates
-    terminal completion. The existing DelegationCompletionGuard remains the
-    only component that can publish work.completed through the private store
+    terminal completion. The private owned-child guard remains the only
+    component that can publish work.completed through the private store
     primitive.
 
     This boundary owns no Pack completion criterion, artifact/evidence meaning,
