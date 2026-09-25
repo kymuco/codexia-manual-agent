@@ -47,6 +47,17 @@ _PROCESS_PARAMETERS = {
 }
 
 
+def standalone_process_v2_parameters() -> dict[str, object]:
+    """Return the exact standalone process v2 semantic parameters."""
+
+    return {
+        "argv": list(_PROCESS_PARAMETERS["argv"]),
+        "cwd_ref": _PROCESS_PARAMETERS["cwd_ref"],
+        "cwd": _PROCESS_PARAMETERS["cwd"],
+        "limits": dict(_PROCESS_PARAMETERS["limits"]),
+    }
+
+
 def standalone_process_v2_workflow_binding() -> WorkflowBinding:
     return WorkflowBinding.create(
         workflow_id=WORKFLOW_ID,
