@@ -157,8 +157,9 @@ def test_completion_claim_binds_exact_work_workflow_and_pack_checkpoint(
     assert claim.work_event_digest == snapshot.last_event_digest
     assert claim.workflow_run_id == workflow.run.workflow_run_id
     assert claim.workflow_run_digest == workflow.run.run_digest
-    assert claim.pack_binding_id == pin.binding_id
-    assert claim.pack_binding_digest == pin.pin_digest
+    assert claim.pack_binding_digest == pin.pack.binding_digest
+    assert claim.pack_pin_id == pin.binding_id
+    assert claim.pack_pin_digest == pin.pin_digest
 
 
 def test_completion_claim_basis_is_explicit_canonical_subset(tmp_path) -> None:
