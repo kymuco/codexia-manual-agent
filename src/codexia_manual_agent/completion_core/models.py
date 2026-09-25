@@ -76,27 +76,27 @@ def _timestamp(value: Any) -> str:
     if (
         not isinstance(value, str)
         or not value
-        or value != value.strip()
         or len(value) > MAX_TIMESTAMP_CHARS
+        or "\x00" in value
     ):
         raise InvalidCompletionClaim(
-            "created_at must be canonical bounded timestamp text"
+            "created_at must be bounded canonical ISO-8601"
         )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
         raise InvalidCompletionClaim(
-            "created_at must be ISO-8601 timestamp text"
+            "created_at must be canonical ISO-8601"
         ) from exc
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None or parsed.isoformat() != value:
         raise InvalidCompletionClaim(
-            "created_at must include timezone"
+            "created_at must be canonical ISO-8601"
         )
     return value
 
 
 def _new_timestamp() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat()
 
 
 def _summary(value: Any) -> str:
