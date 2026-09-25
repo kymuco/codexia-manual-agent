@@ -31,6 +31,10 @@ from codexia_manual_agent.completion_core.admission import (
     CompletionCriterionResolverPort,
     ResolvedCompletionCriterionPort,
 )
+from codexia_manual_agent.completion_core.work_completion_ref import (
+    InvalidWorkCompletionRef,
+    WorkCompletionRef,
+)
 from codexia_manual_agent.completion_core.work_completion import (
     WORK_COMPLETION_SCHEMA_VERSION,
     InvalidWorkCompletion,
@@ -73,8 +77,10 @@ __all__ = [
     "CompletionProjectionError",
     "InvalidCompletionClaim",
     "InvalidWorkCompletion",
+    "InvalidWorkCompletionRef",
     "ResolvedCompletionCriterionPort",
     "WorkCompletion",
+    "WorkCompletionRef",
     "WorkCompletionAdmissionError",
     "WorkCompletionAdmissionService",
     "WorkCompletionBindingError",
