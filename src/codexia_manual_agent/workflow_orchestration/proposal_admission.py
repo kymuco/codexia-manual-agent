@@ -9,12 +9,20 @@ from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
 )
+from codexia_manual_agent.completion_core.admission import (
+    CompletionAdmissionService,
+    CompletionCriterionResolverPort,
+)
+from codexia_manual_agent.completion_core.models import CompletionClaim
 from codexia_manual_agent.delegation_core import (
     Delegation,
     DelegationAdmission,
     project_delegations,
 )
-from codexia_manual_agent.pack_core import project_workflow_pack_binding
+from codexia_manual_agent.pack_core import (
+    PackWorkflowBinding,
+    project_workflow_pack_binding,
+)
 from codexia_manual_agent.role_core import (
     RoleAdmission,
     RoleRun,
@@ -44,6 +52,7 @@ WorkflowProposalAdmissionResult: TypeAlias = (
     | CapabilityNeedSnapshot
     | AttentionNeed
     | Delegation
+    | CompletionClaim
     | None
 )
 
@@ -58,6 +67,12 @@ class WorkflowProposalAdmissionBindingError(WorkflowProposalAdmissionError):
 
 class WorkflowProposalAdmissionPackRequiredError(WorkflowProposalAdmissionError):
     """Proposal admission requires the durable Pack pin used by G2.11."""
+
+
+class WorkflowProposalAdmissionCompletionResolverRequiredError(
+    WorkflowProposalAdmissionError
+):
+    """CompletionClaim admission requires an injected completion resolver."""
 
 
 class _ReadSetBoundWorkStore:
@@ -125,12 +140,19 @@ class WorkflowProposalAdmissionService:
     retry policy. It only validates the G2.11 result/proposal binding and
     routes the typed proposal to its existing admission owner.
 
-    provider_ref remains computation provenance only. It is deliberately not
-    interpreted as admission authority.
+    provider_ref remains computation provenance, not authority. CompletionClaim
+    routing may use it as a technical criterion-provider locator; the completion
+    owner still validates the exact pinned Pack and Workflow semantics.
     """
 
-    def __init__(self, store: WorkStore) -> None:
+    def __init__(
+        self,
+        store: WorkStore,
+        *,
+        completion_resolver: CompletionCriterionResolverPort | None = None,
+    ) -> None:
         self._store = store
+        self._completion_resolver = completion_resolver
 
     def admit(
         self,
@@ -196,6 +218,24 @@ class WorkflowProposalAdmissionService:
             self._validate_delegation(result, proposal, workflow)
             return DelegationAdmission(guarded_store).admit(
                 proposal.delegation
+            )
+        if isinstance(proposal, CompletionClaim):
+            self._validate_completion_claim(
+                result,
+                proposal,
+                workflow,
+                pin,
+            )
+            if self._completion_resolver is None:
+                raise WorkflowProposalAdmissionCompletionResolverRequiredError(
+                    "CompletionClaim proposal requires completion resolver"
+                )
+            return CompletionAdmissionService(
+                store=guarded_store,
+                resolver=self._completion_resolver,
+            ).admit(
+                proposal,
+                provider_ref=result.provider_ref,
             )
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
 
@@ -286,6 +326,49 @@ class WorkflowProposalAdmissionService:
         if proposal_event_digest != result.work_event_digest:
             raise WorkflowProposalAdmissionBindingError(
                 "proposal does not bind WorkflowStepResult chronology"
+            )
+
+    @classmethod
+    def _validate_completion_claim(
+        cls,
+        result: WorkflowStepResult,
+        proposal: CompletionClaim,
+        workflow: WorkflowRunSnapshot,
+        pin: PackWorkflowBinding,
+    ) -> None:
+        cls._validate_common(
+            result,
+            proposal_work_id=proposal.work_id,
+            proposal_workflow_run_id=proposal.workflow_run_id,
+            proposal_workflow_run_digest=proposal.workflow_run_digest,
+            proposal_revision=proposal.work_revision,
+            proposal_event_digest=proposal.work_event_digest,
+            workflow=workflow,
+        )
+        if not hmac.compare_digest(
+            proposal.work_digest,
+            workflow.run.work_digest,
+        ):
+            raise WorkflowProposalAdmissionBindingError(
+                "CompletionClaim changed canonical Work binding"
+            )
+        if not hmac.compare_digest(
+            proposal.pack_binding_digest,
+            pin.pack.binding_digest,
+        ):
+            raise WorkflowProposalAdmissionBindingError(
+                "CompletionClaim changed canonical PackBinding"
+            )
+        if proposal.pack_workflow_binding_id != pin.binding_id:
+            raise WorkflowProposalAdmissionBindingError(
+                "CompletionClaim changed canonical PackWorkflowBinding identity"
+            )
+        if not hmac.compare_digest(
+            proposal.pack_workflow_binding_digest,
+            pin.pin_digest,
+        ):
+            raise WorkflowProposalAdmissionBindingError(
+                "CompletionClaim changed canonical PackWorkflowBinding digest"
             )
 
     @classmethod
