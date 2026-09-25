@@ -17,11 +17,11 @@ from codexia_manual_agent.completion_core.projection import (
     project_admitted_completion_claim,
     project_admitted_completion_claims,
 )
-from codexia_manual_agent.delegation_core import project_delegations
 from codexia_manual_agent.completion_core.work_completion_projection import (
     WorkCompletionProjectionError,
     project_work_completion,
 )
+from codexia_manual_agent.delegation_core import project_delegations
 from codexia_manual_agent.evidence_core import project_evidence_refs
 from codexia_manual_agent.pack_core import (
     PackWorkflowBinding,
