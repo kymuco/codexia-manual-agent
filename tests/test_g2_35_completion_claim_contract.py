@@ -223,6 +223,65 @@ def test_completion_claim_contract_does_not_assert_basis_work_membership(
     assert claim.evidence_refs == (detached,)
 
 
+def test_completion_claim_does_not_assert_pack_binding_was_admitted(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "detached-pack-binding.sqlite")
+    work = _work(store, source_id="detached-pack-binding")
+    workflow_binding = WorkflowBinding.create(
+        workflow_id="codexia:g2.35-detached-pack-binding",
+        version="1.0.0",
+        definition_digest=_sha("workflow:detached-pack-binding"),
+    )
+    workflow = WorkflowAdmission(store).admit_start(
+        WorkflowRun.create(
+            snapshot=work,
+            binding=workflow_binding,
+        )
+    )
+    pack = PackBinding.create(
+        pack_id="codexia:g2.35-pack-detached-pack-binding",
+        version="1.0.0",
+        definition_digest=_sha("pack:detached-pack-binding"),
+        members=(
+            PackMemberBinding.create(
+                kind=PackMemberKind.WORKFLOW,
+                semantic_id=workflow_binding.workflow_id,
+                version=workflow_binding.version,
+                binding_digest=workflow_binding.binding_digest,
+            ),
+        ),
+    )
+    after_workflow_start = store.snapshot(work.work.work_id)
+    detached_binding = PackWorkflowBinding.create(
+        workflow=workflow,
+        snapshot=after_workflow_start,
+        pack=pack,
+    )
+    progressed = store.append(
+        work.work.work_id,
+        expected_revision=after_workflow_start.revision,
+        event=after_workflow_start.next_event(
+            kind="work.progress",
+            payload={"reason": "advance detached claim checkpoint"},
+        ),
+    )
+
+    claim = CompletionClaim.create(
+        snapshot=progressed,
+        workflow=workflow,
+        pack_binding=detached_binding,
+        summary="Detached claim record does not prove Pack binding admission.",
+    )
+
+    assert claim.pack_workflow_binding_id == detached_binding.binding_id
+    assert claim.pack_workflow_binding_digest == detached_binding.pin_digest
+    assert all(
+        event.event_id != detached_binding.binding_id
+        for event in store.events(work.work.work_id)
+    )
+
+
 def test_completion_claim_rejects_cross_work_workflow_binding(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "cross.sqlite")
     first, first_workflow, first_pin = _started(store, source_id="first")
