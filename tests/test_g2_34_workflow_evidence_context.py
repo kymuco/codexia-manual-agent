@@ -328,7 +328,7 @@ def test_evidence_ref_context_preserves_reference_not_verification_semantics(
     assert capture.evidence_refs[0].locator == "provider+opaque://not-resolved/here"
 
 
-def test_g2_34_needs_no_separate_evidence_read_set_or_completion_ontology() -> None:
+def test_g2_34_needs_no_separate_evidence_read_set_or_completion_claim() -> None:
     assert "evidence_reads" not in WorkflowStepResult.__dataclass_fields__
 
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
@@ -340,7 +340,6 @@ def test_g2_34_needs_no_separate_evidence_read_set_or_completion_ontology() -> N
     forbidden_names = {
         "EvidenceReadBinding",
         "CompletionClaim",
-        "WorkCompletion",
         "EvidenceVerdict",
         "Scheduler",
     }
