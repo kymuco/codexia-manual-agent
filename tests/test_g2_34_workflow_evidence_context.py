@@ -215,6 +215,12 @@ def test_evidence_refs_are_work_level_context_not_workflow_scoped(tmp_path) -> N
     assert capture.evidence_refs == (evidence,)
 
 
+def test_evidence_refs_append_after_existing_owned_children_positional_slot() -> None:
+    fields = tuple(WorkflowStepContext.__dataclass_fields__)
+    assert fields[8] == "owned_children"
+    assert fields[9] == "evidence_refs"
+
+
 def test_context_rejects_duplicate_evidence_ref_identity(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "duplicate.sqlite")
     work = _start_work(store, source_id="duplicate")
