@@ -17,7 +17,11 @@ from codexia_manual_agent.completion_core.projection import (
     project_admitted_completion_claim,
     project_admitted_completion_claims,
 )
+from codexia_manual_agent.delegation_core import project_delegations
 from codexia_manual_agent.evidence_core import project_evidence_refs
+from codexia_manual_agent.completion_core.work_completion_projection import (
+    project_work_completion,
+)
 from codexia_manual_agent.pack_core import (
     PackWorkflowBinding,
     project_workflow_pack_binding,
@@ -89,7 +93,8 @@ class CompletionAdmissionService:
     """Admit one exact CompletionClaim without completing Work.
 
     Admission proves exact current Work chronology, durable Workflow/Pack
-    provenance, exact ArtifactRef/EvidenceRef basis membership, and acceptance
+    provenance, exact ArtifactRef/EvidenceRef/child-WorkCompletion basis
+    membership, and acceptance
     by the criterion implementation resolved from the exact pinned Pack.
 
     The admitted event is non-terminal. This service does not create
@@ -258,8 +263,8 @@ class CompletionAdmissionService:
             claim.claim_id,
         )
 
-    @staticmethod
     def _validate_basis(
+        self,
         events: tuple[WorkEvent, ...],
         claim: CompletionClaim,
     ) -> None:
@@ -291,4 +296,61 @@ class CompletionAdmissionService:
             if durable != evidence:
                 raise CompletionClaimBasisError(
                     "CompletionClaim changed durable EvidenceRef semantics"
+                )
+
+
+        delegations = {
+            delegation.child_work.work_id: delegation
+            for delegation in project_delegations(events)
+        }
+        for child_ref in claim.child_completion_refs:
+            delegation = delegations.get(child_ref.work_id)
+            if delegation is None:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim references WorkCompletion outside owned children"
+                )
+
+            child_events = self._store.events(child_ref.work_id)
+            child = self._store.snapshot(child_ref.work_id)
+            if child.work.to_dict() != delegation.child_work.to_dict():
+                raise CompletionClaimBasisError(
+                    "CompletionClaim child Work changed exact Delegation binding"
+                )
+            if child.revision != len(child_events):
+                raise WorkConcurrencyError(
+                    "CompletionClaim child Work changed while recovering completion"
+                )
+            observed_digest = (
+                None
+                if not child_events
+                else child_events[-1].event_digest
+            )
+            if child.last_event_digest != observed_digest:
+                raise WorkConcurrencyError(
+                    "CompletionClaim child Work chronology changed during read"
+                )
+            if child.state is not WorkState.COMPLETED:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim child WorkCompletion is not terminal"
+                )
+
+            completion = project_work_completion(child_events)
+            if completion is None:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim child lacks structured WorkCompletion"
+                )
+            if child.terminal_event_id != child_ref.completion_event_id:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim changed child completion event identity"
+                )
+            if completion.completion_id != child_ref.completion_event_id:
+                raise CompletionClaimBasisError(
+                    "CompletionClaim changed child WorkCompletion identity"
+                )
+            if not hmac.compare_digest(
+                completion.completion_digest,
+                child_ref.completion_digest,
+            ):
+                raise CompletionClaimBasisError(
+                    "CompletionClaim changed child WorkCompletion digest"
                 )
