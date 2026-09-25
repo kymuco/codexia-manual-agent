@@ -4,8 +4,13 @@ import hmac
 from dataclasses import dataclass
 from typing import Protocol
 
+from codexia_manual_agent.capability_core import CapabilityNeedSnapshot
 from codexia_manual_agent.completion_core.models import CompletionClaim
-from codexia_manual_agent.pack_core import PackWorkflowBinding
+from codexia_manual_agent.pack_core import (
+    PackMemberBinding,
+    PackMemberKind,
+    PackWorkflowBinding,
+)
 from codexia_manual_agent.work_core import WorkSnapshot, WorkState
 from codexia_manual_agent.workflow_core import (
     WorkflowBinding,
@@ -60,6 +65,7 @@ class CompletionCriterionContext:
     work: WorkSnapshot
     workflow: WorkflowRunSnapshot
     pack_binding: PackWorkflowBinding
+    capabilities: tuple[CapabilityNeedSnapshot, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.claim, CompletionClaim):
@@ -70,6 +76,10 @@ class CompletionCriterionContext:
             raise TypeError("workflow must be WorkflowRunSnapshot")
         if not isinstance(self.pack_binding, PackWorkflowBinding):
             raise TypeError("pack_binding must be PackWorkflowBinding")
+        if not isinstance(self.capabilities, tuple):
+            raise TypeError(
+                "capabilities must be tuple[CapabilityNeedSnapshot, ...]"
+            )
         if self.work.state is not WorkState.ACTIVE:
             raise CompletionCriterionStateError(
                 "Completion criterion requires active Work"
@@ -167,6 +177,53 @@ class CompletionCriterionContext:
             raise CompletionCriterionBindingError(
                 "CompletionClaim changed PackBinding semantics"
             )
+
+        capability_ids: set[str] = set()
+        for capability in self.capabilities:
+            if not isinstance(capability, CapabilityNeedSnapshot):
+                raise TypeError(
+                    "capabilities must contain CapabilityNeedSnapshot values"
+                )
+            need = capability.need
+            if need.need_id in capability_ids:
+                raise CompletionCriterionStateError(
+                    "capabilities contains duplicate CapabilityNeed identity"
+                )
+            capability_ids.add(need.need_id)
+
+            if need.work_id != snapshot.work.work_id:
+                raise CompletionCriterionBindingError(
+                    "CapabilityNeed crossed Work identity"
+                )
+            if not hmac.compare_digest(
+                need.work_digest,
+                snapshot.work.work_digest,
+            ):
+                raise CompletionCriterionBindingError(
+                    "CapabilityNeed changed Work binding"
+                )
+            if need.workflow_run_id != run.workflow_run_id:
+                raise CompletionCriterionBindingError(
+                    "CapabilityNeed changed WorkflowRun identity"
+                )
+            if not hmac.compare_digest(
+                need.workflow_run_digest,
+                run.run_digest,
+            ):
+                raise CompletionCriterionBindingError(
+                    "CapabilityNeed changed WorkflowRun binding"
+                )
+
+            member = PackMemberBinding.create(
+                kind=PackMemberKind.CAPABILITY,
+                semantic_id=need.binding.capability_id,
+                version=need.binding.version,
+                binding_digest=need.binding.binding_digest,
+            )
+            if not pin.pack.contains(member):
+                raise CompletionCriterionBindingError(
+                    "CapabilityNeed is outside pinned Pack"
+                )
 
 
 @dataclass(frozen=True, slots=True)
