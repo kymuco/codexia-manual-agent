@@ -11,12 +11,18 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from codexia_manual_agent.artifact_core import ArtifactRef
+from codexia_manual_agent.completion_core.work_completion_ref import (
+    InvalidWorkCompletionRef,
+    WorkCompletionRef,
+)
 from codexia_manual_agent.evidence_core import EvidenceRef
 from codexia_manual_agent.pack_core import PackWorkflowBinding
 from codexia_manual_agent.work_core import WorkSnapshot, WorkState
 from codexia_manual_agent.workflow_core import WorkflowRunSnapshot, WorkflowRunState
 
-COMPLETION_CLAIM_SCHEMA_VERSION = 1
+COMPLETION_CLAIM_SCHEMA_VERSION = 2
+COMPLETION_CLAIM_LEGACY_SCHEMA_VERSION = 1
+_COMPLETION_CLAIM_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 COMPLETION_CLAIM_ADMITTED_EVENT = "completion.claim-admitted"
 MAX_COMPLETION_SUMMARY_CHARS = 16_384
 MAX_TIMESTAMP_CHARS = 64
@@ -142,6 +148,23 @@ def _evidence_basis(values: Iterable[EvidenceRef]) -> tuple[EvidenceRef, ...]:
     return ordered
 
 
+def _child_completion_basis(
+    values: Iterable[WorkCompletionRef],
+) -> tuple[WorkCompletionRef, ...]:
+    items = tuple(values)
+    if any(not isinstance(item, WorkCompletionRef) for item in items):
+        raise TypeError(
+            "child_completion_refs must contain WorkCompletionRef values"
+        )
+    ordered = tuple(sorted(items, key=lambda item: item.work_id))
+    work_ids = [item.work_id for item in ordered]
+    if len(set(work_ids)) != len(work_ids):
+        raise InvalidCompletionClaim(
+            "child_completion_refs cannot repeat child Work identity"
+        )
+    return ordered
+
+
 @dataclass(frozen=True, slots=True)
 class CompletionClaim:
     """Immutable Codexia semantic assertion that one Work objective is satisfied.
@@ -149,10 +172,11 @@ class CompletionClaim:
     A CompletionClaim is not a Work state transition, completion admission,
     evidence verdict, execution authority, cleanup proof, or child-terminal
     judgment. It records the exact Work/Workflow/Pack checkpoint and the exact
-    ArtifactRef/EvidenceRef subset presented as the claim basis.
+    ArtifactRef/EvidenceRef subset and exact child WorkCompletion references
+    presented as the claim basis.
 
     Canonical admission must later prove that the referenced
-    PackWorkflowBinding and basis records are admitted in the same Work
+    PackWorkflowBinding and basis records are admitted/owned by the exact Work
     chronology and that Pack/domain completion criteria accept them. Creating
     this detached record grants none of those semantics.
     """
@@ -172,6 +196,7 @@ class CompletionClaim:
     summary: str
     artifact_refs: tuple[ArtifactRef, ...]
     evidence_refs: tuple[EvidenceRef, ...]
+    child_completion_refs: tuple[WorkCompletionRef, ...]
     claim_digest: str
 
     @classmethod
@@ -184,6 +209,7 @@ class CompletionClaim:
         summary: str,
         artifact_refs: Iterable[ArtifactRef] = (),
         evidence_refs: Iterable[EvidenceRef] = (),
+        child_completion_refs: Iterable[WorkCompletionRef] = (),
         claim_id: str | None = None,
         created_at: str | None = None,
     ) -> CompletionClaim:
@@ -247,6 +273,9 @@ class CompletionClaim:
 
         artifacts = _artifact_basis(artifact_refs)
         evidence = _evidence_basis(evidence_refs)
+        child_completions = _child_completion_basis(
+            child_completion_refs
+        )
         summary = _summary(summary)
         claim_id = claim_id or str(uuid4())
         created_at = created_at or _new_timestamp()
@@ -269,6 +298,9 @@ class CompletionClaim:
             "summary": summary,
             "artifact_refs": [item.to_dict() for item in artifacts],
             "evidence_refs": [item.to_dict() for item in evidence],
+            "child_completion_refs": [
+                item.to_dict() for item in child_completions
+            ],
         }
         return cls(
             schema_version=COMPLETION_CLAIM_SCHEMA_VERSION,
@@ -286,13 +318,15 @@ class CompletionClaim:
             summary=summary,
             artifact_refs=artifacts,
             evidence_refs=evidence,
+            child_completion_refs=child_completions,
             claim_digest=_digest(base),
         )
 
     def __post_init__(self) -> None:
         if (
             type(self.schema_version) is not int
-            or self.schema_version != COMPLETION_CLAIM_SCHEMA_VERSION
+            or self.schema_version
+            not in _COMPLETION_CLAIM_SUPPORTED_SCHEMA_VERSIONS
         ):
             raise InvalidCompletionClaim(
                 "Unsupported CompletionClaim schema"
@@ -327,6 +361,9 @@ class CompletionClaim:
 
         artifacts = _artifact_basis(self.artifact_refs)
         evidence = _evidence_basis(self.evidence_refs)
+        child_completions = _child_completion_basis(
+            self.child_completion_refs
+        )
         if artifacts != tuple(self.artifact_refs):
             raise InvalidCompletionClaim(
                 "artifact_refs must be canonical sorted"
@@ -335,8 +372,24 @@ class CompletionClaim:
             raise InvalidCompletionClaim(
                 "evidence_refs must be canonical sorted"
             )
+        if child_completions != tuple(self.child_completion_refs):
+            raise InvalidCompletionClaim(
+                "child_completion_refs must be canonical sorted"
+            )
+        if (
+            self.schema_version == COMPLETION_CLAIM_LEGACY_SCHEMA_VERSION
+            and child_completions
+        ):
+            raise InvalidCompletionClaim(
+                "CompletionClaim v1 cannot contain child_completion_refs"
+            )
         object.__setattr__(self, "artifact_refs", artifacts)
         object.__setattr__(self, "evidence_refs", evidence)
+        object.__setattr__(
+            self,
+            "child_completion_refs",
+            child_completions,
+        )
 
         _validate_digest(self.claim_digest, "claim_digest")
         if not hmac.compare_digest(
@@ -348,7 +401,7 @@ class CompletionClaim:
             )
 
     def _base_dict(self) -> dict[str, Any]:
-        return {
+        base = {
             "schema_version": self.schema_version,
             "claim_id": self.claim_id,
             "created_at": self.created_at,
@@ -365,13 +418,28 @@ class CompletionClaim:
             "artifact_refs": [item.to_dict() for item in self.artifact_refs],
             "evidence_refs": [item.to_dict() for item in self.evidence_refs],
         }
+        if self.schema_version >= COMPLETION_CLAIM_SCHEMA_VERSION:
+            base["child_completion_refs"] = [
+                item.to_dict() for item in self.child_completion_refs
+            ]
+        return base
 
     def to_dict(self) -> dict[str, Any]:
         return {**self._base_dict(), "claim_digest": self.claim_digest}
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> CompletionClaim:
-        expected = {
+        if not isinstance(value, Mapping):
+            raise InvalidCompletionClaim(
+                "CompletionClaim must be a mapping"
+            )
+        schema_version = value.get("schema_version")
+        if type(schema_version) is not int:
+            raise InvalidCompletionClaim(
+                "Unsupported CompletionClaim schema"
+            )
+
+        common = {
             "schema_version",
             "claim_id",
             "created_at",
@@ -389,12 +457,26 @@ class CompletionClaim:
             "evidence_refs",
             "claim_digest",
         }
-        if not isinstance(value, Mapping) or set(value) != expected:
+        if schema_version == COMPLETION_CLAIM_LEGACY_SCHEMA_VERSION:
+            expected = common
+        elif schema_version == COMPLETION_CLAIM_SCHEMA_VERSION:
+            expected = common | {"child_completion_refs"}
+        else:
+            raise InvalidCompletionClaim(
+                "Unsupported CompletionClaim schema"
+            )
+        if set(value) != expected:
             raise InvalidCompletionClaim(
                 "CompletionClaim keys are not exact"
             )
+
         raw_artifacts = value["artifact_refs"]
         raw_evidence = value["evidence_refs"]
+        raw_child_completions = (
+            []
+            if schema_version == COMPLETION_CLAIM_LEGACY_SCHEMA_VERSION
+            else value["child_completion_refs"]
+        )
         if not isinstance(raw_artifacts, list):
             raise InvalidCompletionClaim(
                 "artifact_refs must be a list"
@@ -403,8 +485,27 @@ class CompletionClaim:
             raise InvalidCompletionClaim(
                 "evidence_refs must be a list"
             )
+        if not isinstance(raw_child_completions, list):
+            raise InvalidCompletionClaim(
+                "child_completion_refs must be a list"
+            )
+        try:
+            child_completion_refs = tuple(
+                WorkCompletionRef.from_dict(item)
+                for item in raw_child_completions
+            )
+        except (
+            InvalidWorkCompletionRef,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise InvalidCompletionClaim(
+                "child_completion_refs contains invalid WorkCompletionRef"
+            ) from exc
+
         return cls(
-            schema_version=value["schema_version"],
+            schema_version=schema_version,
             claim_id=value["claim_id"],
             created_at=value["created_at"],
             work_id=value["work_id"],
@@ -425,5 +526,6 @@ class CompletionClaim:
                 EvidenceRef.from_dict(item)
                 for item in raw_evidence
             ),
+            child_completion_refs=child_completion_refs,
             claim_digest=value["claim_digest"],
         )

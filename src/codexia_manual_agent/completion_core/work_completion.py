@@ -269,6 +269,17 @@ class WorkCompletion:
             "completion_digest": self.completion_digest,
         }
 
+    def to_ref(self) -> "WorkCompletionRef":
+        from codexia_manual_agent.completion_core.work_completion_ref import (
+            WorkCompletionRef,
+        )
+
+        return WorkCompletionRef.create(
+            work_id=self.work_id,
+            completion_event_id=self.completion_id,
+            completion_digest=self.completion_digest,
+        )
+
     def to_event(self) -> WorkEvent:
         return WorkEvent.create(
             work_id=self.work_id,
