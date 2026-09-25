@@ -164,8 +164,9 @@ class CompletionClaim:
     work_event_digest: str
     workflow_run_id: str
     workflow_run_digest: str
-    pack_binding_id: str
     pack_binding_digest: str
+    pack_pin_id: str
+    pack_pin_digest: str
     summary: str
     artifact_refs: tuple[ArtifactRef, ...]
     evidence_refs: tuple[EvidenceRef, ...]
@@ -260,8 +261,9 @@ class CompletionClaim:
             "work_event_digest": snapshot.last_event_digest,
             "workflow_run_id": run.workflow_run_id,
             "workflow_run_digest": run.run_digest,
-            "pack_binding_id": pack_binding.binding_id,
-            "pack_binding_digest": pack_binding.pin_digest,
+            "pack_binding_digest": pack_binding.pack.binding_digest,
+            "pack_pin_id": pack_binding.binding_id,
+            "pack_pin_digest": pack_binding.pin_digest,
             "summary": summary,
             "artifact_refs": [item.to_dict() for item in artifacts],
             "evidence_refs": [item.to_dict() for item in evidence],
@@ -276,8 +278,9 @@ class CompletionClaim:
             work_event_digest=snapshot.last_event_digest,
             workflow_run_id=run.workflow_run_id,
             workflow_run_digest=run.run_digest,
-            pack_binding_id=pack_binding.binding_id,
-            pack_binding_digest=pack_binding.pin_digest,
+            pack_binding_digest=pack_binding.pack.binding_digest,
+            pack_pin_id=pack_binding.binding_id,
+            pack_pin_digest=pack_binding.pin_digest,
             summary=summary,
             artifact_refs=artifacts,
             evidence_refs=evidence,
@@ -306,11 +309,12 @@ class CompletionClaim:
             self.workflow_run_digest,
             "workflow_run_digest",
         )
-        _validate_uuid(self.pack_binding_id, "pack_binding_id")
         _validate_digest(
             self.pack_binding_digest,
             "pack_binding_digest",
         )
+        _validate_uuid(self.pack_pin_id, "pack_pin_id")
+        _validate_digest(self.pack_pin_digest, "pack_pin_digest")
         _summary(self.summary)
 
         artifacts = _artifact_basis(self.artifact_refs)
@@ -344,8 +348,9 @@ class CompletionClaim:
             "work_event_digest": self.work_event_digest,
             "workflow_run_id": self.workflow_run_id,
             "workflow_run_digest": self.workflow_run_digest,
-            "pack_binding_id": self.pack_binding_id,
             "pack_binding_digest": self.pack_binding_digest,
+            "pack_pin_id": self.pack_pin_id,
+            "pack_pin_digest": self.pack_pin_digest,
             "summary": self.summary,
             "artifact_refs": [item.to_dict() for item in self.artifact_refs],
             "evidence_refs": [item.to_dict() for item in self.evidence_refs],
@@ -366,8 +371,9 @@ class CompletionClaim:
             "work_event_digest",
             "workflow_run_id",
             "workflow_run_digest",
-            "pack_binding_id",
             "pack_binding_digest",
+            "pack_pin_id",
+            "pack_pin_digest",
             "summary",
             "artifact_refs",
             "evidence_refs",
@@ -397,8 +403,9 @@ class CompletionClaim:
             work_event_digest=value["work_event_digest"],
             workflow_run_id=value["workflow_run_id"],
             workflow_run_digest=value["workflow_run_digest"],
-            pack_binding_id=value["pack_binding_id"],
             pack_binding_digest=value["pack_binding_digest"],
+            pack_pin_id=value["pack_pin_id"],
+            pack_pin_digest=value["pack_pin_digest"],
             summary=value["summary"],
             artifact_refs=tuple(
                 ArtifactRef.from_dict(item)
