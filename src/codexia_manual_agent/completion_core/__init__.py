@@ -31,11 +31,28 @@ from codexia_manual_agent.completion_core.admission import (
     CompletionCriterionResolverPort,
     ResolvedCompletionCriterionPort,
 )
+from codexia_manual_agent.completion_core.work_completion import (
+    WORK_COMPLETION_SCHEMA_VERSION,
+    InvalidWorkCompletion,
+    WorkCompletion,
+)
+from codexia_manual_agent.completion_core.work_completion_projection import (
+    WorkCompletionProjectionError,
+    project_work_completion,
+)
+from codexia_manual_agent.completion_core.terminal import (
+    WorkCompletionAdmissionError,
+    WorkCompletionAdmissionService,
+    WorkCompletionBindingError,
+    WorkCompletionIdentityConflictError,
+    WorkCompletionStateError,
+)
 
 __all__ = [
     "COMPLETION_CLAIM_ADMITTED_EVENT",
     "COMPLETION_CLAIM_SCHEMA_VERSION",
     "MAX_COMPLETION_CRITERION_REASON_CHARS",
+    "WORK_COMPLETION_SCHEMA_VERSION",
     "CompletionAdmissionError",
     "CompletionAdmissionService",
     "CompletionClaim",
@@ -55,7 +72,16 @@ __all__ = [
     "CompletionCriterionStateError",
     "CompletionProjectionError",
     "InvalidCompletionClaim",
+    "InvalidWorkCompletion",
     "ResolvedCompletionCriterionPort",
+    "WorkCompletion",
+    "WorkCompletionAdmissionError",
+    "WorkCompletionAdmissionService",
+    "WorkCompletionBindingError",
+    "WorkCompletionIdentityConflictError",
+    "WorkCompletionProjectionError",
+    "WorkCompletionStateError",
     "project_admitted_completion_claim",
     "project_admitted_completion_claims",
+    "project_work_completion",
 ]
