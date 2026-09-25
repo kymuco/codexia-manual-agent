@@ -61,15 +61,6 @@ class WorkStore(Protocol):
         read_preconditions: tuple[WorkSnapshot, ...] = (),
     ) -> WorkSnapshot: ...
 
-    def append_completion(
-        self,
-        work_id: str,
-        *,
-        expected_revision: int,
-        event: WorkEvent,
-        read_preconditions: tuple[WorkSnapshot, ...] = (),
-    ) -> WorkSnapshot: ...
-
     def append_with_child_create(
         self,
         work_id: str,
@@ -244,7 +235,7 @@ class SqliteWorkStore:
             read_preconditions=read_preconditions,
         )
 
-    def append_completion(
+    def _append_completion(
         self,
         work_id: str,
         *,
@@ -256,7 +247,7 @@ class SqliteWorkStore:
             raise TypeError("event must be WorkEvent")
         if event.kind != WORK_COMPLETED_EVENT:
             raise WorkStateError(
-                "append_completion accepts only work.completed"
+                "_append_completion accepts only work.completed"
             )
         return self._append_event(
             work_id,
