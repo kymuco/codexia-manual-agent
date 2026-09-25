@@ -21,6 +21,9 @@ from codexia_manual_agent.invariant_bridge import (
     ManagedPluginServicePort,
 )
 from codexia_manual_agent.pack_core import PackAdmission, PackWorkflowBinding
+from codexia_manual_agent.standalone_host.process_capability import (
+    StandaloneProcessCapabilityPort,
+)
 from codexia_manual_agent.work_core import (
     Work,
     WorkIngressBinding,
@@ -42,9 +45,6 @@ from codexia_manual_agent.workflow_runtime import (
     process_outcome_evidence_locator,
     standalone_process_v2_capability_binding,
     standalone_process_v2_workflow_binding,
-)
-from codexia_manual_agent.standalone_host.process_capability import (
-    StandaloneProcessCapabilityPort,
 )
 
 
@@ -92,14 +92,19 @@ class StandaloneProcessWorkResult:
             raise ValueError("succeeded capability must contain outcome")
         if self.evidence.evidence_id != self.capability.outcome.outcome_id:
             raise ValueError("evidence must reference exact CapabilityOutcome")
-        if self.evidence.evidence_digest != self.capability.outcome.outcome_digest:
+        if (
+            self.evidence.evidence_digest
+            != self.capability.outcome.outcome_digest
+        ):
             raise ValueError("evidence changed CapabilityOutcome integrity")
         if self.claim.evidence_refs != (self.evidence,):
             raise ValueError("claim must use exact process outcome evidence")
         if self.completion.claim_id != self.claim.claim_id:
             raise ValueError("completion must bind admitted claim")
         if self.snapshot.terminal_event_id != self.completion.completion_id:
-            raise ValueError("snapshot terminal identity must match WorkCompletion")
+            raise ValueError(
+                "snapshot terminal identity must match WorkCompletion"
+            )
 
 
 class StandaloneProcessWorkService:
@@ -210,7 +215,8 @@ class StandaloneProcessWorkService:
         pending = first.admitted
         if not isinstance(pending, CapabilityNeedSnapshot):
             raise StandaloneProcessWorkBindingError(
-                "First standalone process v2 Workflow step must admit CapabilityNeed"
+                "First standalone process v2 Workflow step "
+                "must admit CapabilityNeed"
             )
 
         capability = CapabilityProgressionService(self._store).progress_once(
@@ -260,7 +266,8 @@ class StandaloneProcessWorkService:
         claim = second.admitted
         if not isinstance(claim, CompletionClaim):
             raise StandaloneProcessWorkBindingError(
-                "Second standalone process v2 Workflow step must admit CompletionClaim"
+                "Second standalone process v2 Workflow step "
+                "must admit CompletionClaim"
             )
 
         events = self._store.events(work.work_id)
