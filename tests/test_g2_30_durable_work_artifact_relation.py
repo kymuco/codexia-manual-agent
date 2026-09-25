@@ -10,6 +10,7 @@ import pytest
 from codexia_manual_agent.artifact_core import (
     ARTIFACT_REF_RECORDED_EVENT,
     ArtifactAdmission,
+    ArtifactBindingError,
     ArtifactIdentityConflictError,
     ArtifactProjectionError,
     ArtifactRef,
@@ -146,8 +147,6 @@ def test_idempotent_retry_still_requires_exact_work_binding(tmp_path) -> None:
         last_event_digest=initial.last_event_digest,
         terminal_event_id=None,
     )
-
-    from codexia_manual_agent.artifact_core import ArtifactBindingError
 
     with pytest.raises(ArtifactBindingError, match="changed Work binding"):
         ArtifactAdmission(store).record(forged_snapshot, artifact)
