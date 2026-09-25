@@ -10,6 +10,12 @@ from codexia_manual_agent.standalone_host.process_attempt import (
 from codexia_manual_agent.standalone_host.process_attempt_capability import (
     DurableStandaloneProcessCapabilityPort,
 )
+from codexia_manual_agent.standalone_host.process_attempt_ownership import (
+    StandaloneProcessRunnerOwnership,
+    StandaloneProcessRunnerOwnershipError,
+    process_attempt_runner_is_active,
+    process_attempt_runner_lock_path,
+)
 from codexia_manual_agent.standalone_host.process_attempt_runner import (
     launch_process_attempt_runner,
     run_process_attempt,
@@ -50,6 +56,8 @@ __all__ = [
     "StandaloneProcessAttemptState",
     "StandaloneProcessCapabilityPort",
     "StandaloneProcessHostError",
+    "StandaloneProcessRunnerOwnership",
+    "StandaloneProcessRunnerOwnershipError",
     "StandaloneProcessWorkBindingError",
     "StandaloneProcessWorkCheckpoint",
     "StandaloneProcessWorkError",
@@ -60,6 +68,8 @@ __all__ = [
     "StandaloneProcessWorkService",
     "launch_process_attempt_runner",
     "process_attempt_identity",
+    "process_attempt_runner_is_active",
+    "process_attempt_runner_lock_path",
     "run_process_attempt",
     "translate_standalone_process_request",
 ]
