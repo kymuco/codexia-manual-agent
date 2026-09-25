@@ -20,13 +20,26 @@ from codexia_manual_agent.workflow_runtime.standalone_process import (
     standalone_process_capability_binding,
     standalone_process_workflow_binding,
 )
+from codexia_manual_agent.workflow_runtime.standalone_process_v2 import (
+    COMPLETION_SUMMARY,
+    PROCESS_OUTCOME_EVIDENCE_KIND,
+    StandaloneProcessCompletionCriterionV2,
+    StandaloneProcessWorkflowImplementationV2,
+    process_outcome_evidence_locator,
+    standalone_process_v2_capability_binding,
+    standalone_process_v2_workflow_binding,
+)
 
 __all__ = [
     "CAPABILITY_ID",
     "CAPABILITY_VERSION",
+    "COMPLETION_SUMMARY",
+    "PROCESS_OUTCOME_EVIDENCE_KIND",
     "WORKFLOW_ID",
     "WORKFLOW_VERSION",
+    "StandaloneProcessCompletionCriterionV2",
     "StandaloneProcessWorkflowImplementation",
+    "StandaloneProcessWorkflowImplementationV2",
     "OwnedChildWorkSnapshot",
     "WorkflowImplementationBindingError",
     "WorkflowImplementationBoundary",
@@ -37,7 +50,10 @@ __all__ = [
     "WorkflowDelegationProposal",
     "WorkflowProposal",
     "WorkflowStepContext",
+    "process_outcome_evidence_locator",
     "validate_generic_workflow_candidate_ownership",
     "standalone_process_capability_binding",
+    "standalone_process_v2_capability_binding",
+    "standalone_process_v2_workflow_binding",
     "standalone_process_workflow_binding",
 ]
