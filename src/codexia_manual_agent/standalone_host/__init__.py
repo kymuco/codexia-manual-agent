@@ -26,4 +26,13 @@ __all__ = [
     "StandaloneProcessWorkIncompleteError",
     "StandaloneProcessWorkResult",
     "StandaloneProcessWorkService",
+    "StandaloneProcessWorkCheckpoint",
+    "StandaloneProcessWorkRecoveryService",
+    "StandaloneProcessWorkRecoveryState",
 ]
+from codexia_manual_agent.standalone_host.process_work_recovery import (
+    StandaloneProcessWorkCheckpoint,
+    StandaloneProcessWorkRecoveryService,
+    StandaloneProcessWorkRecoveryState,
+)
+
