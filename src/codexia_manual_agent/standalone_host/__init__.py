@@ -6,6 +6,13 @@ from codexia_manual_agent.standalone_host.process_capability import (
     StandaloneProcessCapabilityPort,
     StandaloneProcessHostError,
 )
+from codexia_manual_agent.standalone_host.process_work import (
+    StandaloneProcessWorkBindingError,
+    StandaloneProcessWorkError,
+    StandaloneProcessWorkIncompleteError,
+    StandaloneProcessWorkResult,
+    StandaloneProcessWorkService,
+)
 
 __all__ = [
     "PROCESS_CAPABILITY_ID",
@@ -20,11 +27,3 @@ __all__ = [
     "StandaloneProcessWorkResult",
     "StandaloneProcessWorkService",
 ]
-
-from codexia_manual_agent.standalone_host.process_work import (
-    StandaloneProcessWorkBindingError,
-    StandaloneProcessWorkError,
-    StandaloneProcessWorkIncompleteError,
-    StandaloneProcessWorkResult,
-    StandaloneProcessWorkService,
-)
