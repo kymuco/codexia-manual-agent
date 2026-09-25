@@ -24,6 +24,9 @@ from codexia_manual_agent.standalone_host.process_attempt import (
     StandaloneProcessAttemptSnapshot,
     StandaloneProcessAttemptState,
 )
+from codexia_manual_agent.standalone_host.process_attempt_ownership import (
+    process_attempt_runner_is_active,
+)
 from codexia_manual_agent.standalone_host.process_attempt_runner import (
     launch_process_attempt_runner,
 )
@@ -226,7 +229,13 @@ class DurableStandaloneProcessCapabilityPort:
             snapshot.state
             is StandaloneProcessAttemptState.AUTHORIZED_UNCONSUMED
         ):
-            if resume_unconsumed:
+            if (
+                resume_unconsumed
+                and not process_attempt_runner_is_active(
+                    journal_path=self._attempt_store.path,
+                    attempt_id=snapshot.attempt_id,
+                )
+            ):
                 launch_process_attempt_runner(
                     journal_path=self._attempt_store.path,
                     attempt_id=snapshot.attempt_id,
@@ -234,7 +243,21 @@ class DurableStandaloneProcessCapabilityPort:
             return None
 
         if snapshot.state is StandaloneProcessAttemptState.AUTHORITY_CONSUMED:
-            return None
+            if process_attempt_runner_is_active(
+                journal_path=self._attempt_store.path,
+                attempt_id=snapshot.attempt_id,
+            ):
+                return None
+
+            snapshot = self._attempt_store.record_runner_error(
+                snapshot.attempt_id,
+                error_type="RunnerOwnershipLostAfterConsumption",
+                detail=(
+                    "Durable authority was consumed, but no live exact runner "
+                    "owns the attempt and no terminal observation is durable."
+                ),
+            )
+            return self._outcome(request, snapshot)
 
         return self._outcome(request, snapshot)
 
