@@ -21,6 +21,7 @@ from codexia_manual_agent.work_core import (
     WorkNotFoundError,
     WorkState,
     WorkStateError,
+    WorkStore,
 )
 
 
@@ -97,7 +98,7 @@ def test_plain_append_cannot_publish_work_completed(tmp_path) -> None:
 
     with pytest.raises(
         WorkStateError,
-        match="guarded append_completion boundary",
+        match="guarded completion admission boundary",
     ):
         store.append(
             work.work_id,
@@ -106,6 +107,11 @@ def test_plain_append_cannot_publish_work_completed(tmp_path) -> None:
         )
 
     assert store.snapshot(work.work_id).state is WorkState.ACTIVE
+
+
+def test_completion_storage_primitive_is_not_public_work_store_surface() -> None:
+    assert "append_completion" not in WorkStore.__dict__
+    assert not hasattr(SqliteWorkStore, "append_completion")
 
 
 def test_child_create_append_cannot_publish_work_completed(tmp_path) -> None:
@@ -128,7 +134,7 @@ def test_child_create_append_cannot_publish_work_completed(tmp_path) -> None:
 
     with pytest.raises(
         WorkStateError,
-        match="guarded append_completion boundary",
+        match="guarded completion admission boundary",
     ):
         store.append_with_child_create(
             parent.work_id,

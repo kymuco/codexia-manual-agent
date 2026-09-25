@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from codexia_manual_agent.delegation_core.projection import project_delegations
 from codexia_manual_agent.work_core import (
     WORK_COMPLETED_EVENT,
@@ -9,6 +11,19 @@ from codexia_manual_agent.work_core import (
     WorkState,
     WorkStore,
 )
+
+
+class _CompletionStorePort(WorkStore, Protocol):
+    """Private WorkStore extension owned by semantic completion admission."""
+
+    def _append_completion(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot: ...
 
 
 class DelegationCompletionError(RuntimeError):
@@ -41,7 +56,7 @@ class DelegationCompletionGuard:
         requires every owned child Work to be COMPLETED or CANCELLED.
     """
 
-    def __init__(self, store: WorkStore) -> None:
+    def __init__(self, store: _CompletionStorePort) -> None:
         self._store = store
 
     def admit(self, event: WorkEvent) -> WorkSnapshot:
@@ -87,7 +102,7 @@ class DelegationCompletionGuard:
         if live_children:
             raise DelegationChildrenLiveError(tuple(live_children))
 
-        admitted = self._store.append_completion(
+        admitted = self._store._append_completion(
             event.work_id,
             expected_revision=expected_revision,
             event=event,
