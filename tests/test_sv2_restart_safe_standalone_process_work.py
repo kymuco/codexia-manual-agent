@@ -17,7 +17,10 @@ from codexia_manual_agent.standalone_host import (
     StandaloneProcessWorkRecoveryService,
     StandaloneProcessWorkRecoveryState,
 )
-from codexia_manual_agent.work_core import SqliteWorkStore
+from codexia_manual_agent.work_core import (
+    WORK_CANCELLED_EVENT,
+    SqliteWorkStore,
+)
 
 
 PROVIDER_REF = "codexia:process-pack-provider@8.0.0"
@@ -329,6 +332,26 @@ def test_sv2_unknown_outcome_is_stable_and_never_redispatched(
     assert async_host.calls == 1
     assert "work.completed" not in tuple(event.kind for event in after)
 
+    offline = StandaloneProcessWorkRecoveryService(
+        store=SqliteWorkStore(path),
+        plugin_service=_UnavailablePluginService(),
+        provider_ref=PROVIDER_REF,
+        workspace=tmp_path,
+    ).advance_once(
+        objective="Run the restart-safe standalone process vertical.",
+        source_namespace="standalone.api",
+        source_id="sv2-restart-safe",
+        payload_digest=_sha("sv2-restart-safe-payload"),
+        approved=True,
+        actor="sv2-test-human",
+        reason="provider disappeared after unknown outcome",
+    )
+    assert (
+        offline.state
+        is StandaloneProcessWorkRecoveryState.CAPABILITY_OUTCOME_UNKNOWN
+    )
+    assert offline.work_id == checkpoint.work_id
+
 
 def test_sv2_recovery_source_has_no_generic_scheduler_loop() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
@@ -411,3 +434,45 @@ def test_sv2_failed_noop_does_not_require_provider_after_restart(
 
     assert recovered.state is StandaloneProcessWorkRecoveryState.CAPABILITY_FAILED
     assert recovered.work_id == checkpoint.work_id
+
+
+def test_sv2_cancelled_noop_does_not_require_provider_after_restart(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    path = tmp_path / "sv2-cancelled-offline.sqlite"
+
+    checkpoint = _advance(path, plugin, tmp_path)
+    assert checkpoint.state is StandaloneProcessWorkRecoveryState.START_WORKFLOW
+
+    store = SqliteWorkStore(path)
+    current = store.snapshot(checkpoint.work_id)
+    store.append(
+        checkpoint.work_id,
+        expected_revision=current.revision,
+        event=current.next_event(
+            kind=WORK_CANCELLED_EVENT,
+            payload={"reason": "cancel before workflow start"},
+        ),
+    )
+
+    before = store.events(checkpoint.work_id)
+    recovered = StandaloneProcessWorkRecoveryService(
+        store=SqliteWorkStore(path),
+        plugin_service=_UnavailablePluginService(),
+        provider_ref=PROVIDER_REF,
+        workspace=tmp_path,
+    ).advance_once(
+        objective="Run the restart-safe standalone process vertical.",
+        source_namespace="standalone.api",
+        source_id="sv2-restart-safe",
+        payload_digest=_sha("sv2-restart-safe-payload"),
+        approved=True,
+        actor="sv2-test-human",
+        reason="provider disappeared after cancellation",
+    )
+    after = SqliteWorkStore(path).events(checkpoint.work_id)
+
+    assert recovered.state is StandaloneProcessWorkRecoveryState.CANCELLED
+    assert after == before
