@@ -17,6 +17,7 @@ from codexia_manual_agent.work_core import WorkSnapshot, WorkState
 from codexia_manual_agent.workflow_core import WorkflowRunSnapshot, WorkflowRunState
 
 COMPLETION_CLAIM_SCHEMA_VERSION = 1
+COMPLETION_CLAIM_ADMITTED_EVENT = "completion.claim-admitted"
 MAX_COMPLETION_SUMMARY_CHARS = 16_384
 MAX_TIMESTAMP_CHARS = 64
 
