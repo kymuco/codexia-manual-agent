@@ -84,6 +84,76 @@ def _stream_summary(stream) -> dict[str, Any]:
     }
 
 
+def translate_standalone_process_request(
+    request: CapabilityHostRequest,
+    binding: CapabilityBinding,
+) -> tuple[list[str], str, ProcessLimits]:
+    """Validate and translate the exact process/run v1 host request."""
+
+    if not isinstance(request, CapabilityHostRequest):
+        raise TypeError("request must be CapabilityHostRequest")
+    if not isinstance(binding, CapabilityBinding):
+        raise TypeError("binding must be CapabilityBinding")
+
+    need = request.need.need
+    if need.binding != binding:
+        raise StandaloneProcessHostError(
+            "CapabilityNeed binding is not supported by this host"
+        )
+    if need.operation != PROCESS_OPERATION:
+        raise StandaloneProcessHostError(
+            "Standalone process host supports only operation='run'"
+        )
+
+    parameters = need.to_dict()["parameters"]
+    if (
+        not isinstance(parameters, Mapping)
+        or set(parameters) != _REQUIRED_PARAMETER_KEYS
+    ):
+        raise StandaloneProcessHostError(
+            "process/run parameters do not match the exact v1 schema"
+        )
+
+    if parameters["cwd_ref"] != "workspace":
+        raise StandaloneProcessHostError(
+            "process/run cwd_ref must be exactly 'workspace'"
+        )
+
+    argv = parameters["argv"]
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(type(item) is not str or not item for item in argv)
+    ):
+        raise StandaloneProcessHostError(
+            "process/run argv must be a non-empty string list"
+        )
+
+    cwd = parameters["cwd"]
+    if not isinstance(cwd, str) or not cwd:
+        raise StandaloneProcessHostError(
+            "process/run cwd must be non-empty workspace-relative text"
+        )
+
+    limits_data = parameters["limits"]
+    if not isinstance(limits_data, dict):
+        raise StandaloneProcessHostError(
+            "process/run limits must be an object"
+        )
+    try:
+        limits = ProcessLimits(**limits_data)
+    except (TypeError, ValueError) as exc:
+        raise StandaloneProcessHostError(
+            "process/run limits are invalid"
+        ) from exc
+    if limits.to_dict() != limits_data:
+        raise StandaloneProcessHostError(
+            "process/run limits are not canonical"
+        )
+
+    return list(argv), cwd, limits
+
+
 class StandaloneProcessCapabilityPort:
     """Concrete standalone host for one exact process/run capability binding.
 
@@ -240,60 +310,10 @@ class StandaloneProcessCapabilityPort:
         self,
         request: CapabilityHostRequest,
     ) -> tuple[list[str], str, ProcessLimits]:
-        need = request.need.need
-        if need.binding != self._binding:
-            raise StandaloneProcessHostError(
-                "CapabilityNeed binding is not supported by this host"
-            )
-        if need.operation != PROCESS_OPERATION:
-            raise StandaloneProcessHostError(
-                "Standalone process host supports only operation='run'"
-            )
-
-        parameters = need.to_dict()["parameters"]
-        if not isinstance(parameters, Mapping) or set(parameters) != _REQUIRED_PARAMETER_KEYS:
-            raise StandaloneProcessHostError(
-                "process/run parameters do not match the exact v1 schema"
-            )
-
-        if parameters["cwd_ref"] != "workspace":
-            raise StandaloneProcessHostError(
-                "process/run cwd_ref must be exactly 'workspace'"
-            )
-
-        argv = parameters["argv"]
-        if (
-            not isinstance(argv, list)
-            or not argv
-            or any(type(item) is not str or not item for item in argv)
-        ):
-            raise StandaloneProcessHostError(
-                "process/run argv must be a non-empty string list"
-            )
-
-        cwd = parameters["cwd"]
-        if not isinstance(cwd, str) or not cwd:
-            raise StandaloneProcessHostError(
-                "process/run cwd must be non-empty workspace-relative text"
-            )
-
-        limits_data = parameters["limits"]
-        if not isinstance(limits_data, dict):
-            raise StandaloneProcessHostError(
-                "process/run limits must be an object"
-            )
-        try:
-            limits = ProcessLimits(**limits_data)
-        except (TypeError, ValueError) as exc:
-            raise StandaloneProcessHostError(
-                "process/run limits are invalid"
-            ) from exc
-        if limits.to_dict() != limits_data:
-            raise StandaloneProcessHostError(
-                "process/run limits are not canonical"
-            )
-
-        return list(argv), cwd, limits
+        return translate_standalone_process_request(
+            request,
+            self._binding,
+        )
 
     @staticmethod
     def _observation(result: ProcessExecutionResult) -> dict[str, Any]:
