@@ -23,6 +23,8 @@ from codexia_manual_agent.work_core import (
     Work,
     WorkConcurrencyError,
     WorkIngressBinding,
+    WorkSnapshot,
+    WorkState,
 )
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
@@ -114,12 +116,41 @@ def test_artifact_identity_drift_fails_closed_without_new_event(tmp_path) -> Non
 
     with pytest.raises(
         ArtifactIdentityConflictError,
-        match="different exact bytes",
+        match="different exact semantics",
     ):
         ArtifactAdmission(store).record(initial, drifted)
 
     assert project_artifact_refs(store.events(initial.work.work_id)) == (original,)
     assert store.snapshot(initial.work.work_id).revision == 1
+
+
+def test_idempotent_retry_still_requires_exact_work_binding(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "binding.sqlite")
+    initial = _work(store, source_id="binding")
+    artifact = _artifact()
+    ArtifactAdmission(store).record(initial, artifact)
+
+    foreign = Work.create(
+        objective="Different immutable Work semantics",
+        ingress=WorkIngressBinding.create(
+            source_namespace="standalone.api",
+            source_id="foreign-binding",
+            payload_digest=_sha("foreign-binding"),
+        ),
+        work_id=initial.work.work_id,
+    )
+    forged_snapshot = WorkSnapshot(
+        work=foreign,
+        state=WorkState.ACTIVE,
+        revision=initial.revision,
+        last_event_digest=initial.last_event_digest,
+        terminal_event_id=None,
+    )
+
+    from codexia_manual_agent.artifact_core import ArtifactBindingError
+
+    with pytest.raises(ArtifactBindingError, match="changed Work binding"):
+        ArtifactAdmission(store).record(forged_snapshot, artifact)
 
 
 def test_same_artifact_ref_may_be_related_to_independent_works(tmp_path) -> None:
