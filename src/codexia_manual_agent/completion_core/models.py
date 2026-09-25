@@ -150,9 +150,10 @@ class CompletionClaim:
     judgment. It records the exact Work/Workflow/Pack checkpoint and the exact
     ArtifactRef/EvidenceRef subset presented as the claim basis.
 
-    Canonical admission must later prove that referenced basis records belong to
-    the same Work chronology and that Pack/domain completion criteria accept
-    them. Creating this detached record grants none of those semantics.
+    Canonical admission must later prove that the referenced
+    PackWorkflowBinding and basis records are admitted in the same Work
+    chronology and that Pack/domain completion criteria accept them. Creating
+    this detached record grants none of those semantics.
     """
 
     schema_version: int
@@ -165,8 +166,8 @@ class CompletionClaim:
     workflow_run_id: str
     workflow_run_digest: str
     pack_binding_digest: str
-    pack_pin_id: str
-    pack_pin_digest: str
+    pack_workflow_binding_id: str
+    pack_workflow_binding_digest: str
     summary: str
     artifact_refs: tuple[ArtifactRef, ...]
     evidence_refs: tuple[EvidenceRef, ...]
@@ -262,8 +263,8 @@ class CompletionClaim:
             "workflow_run_id": run.workflow_run_id,
             "workflow_run_digest": run.run_digest,
             "pack_binding_digest": pack_binding.pack.binding_digest,
-            "pack_pin_id": pack_binding.binding_id,
-            "pack_pin_digest": pack_binding.pin_digest,
+            "pack_workflow_binding_id": pack_binding.binding_id,
+            "pack_workflow_binding_digest": pack_binding.pin_digest,
             "summary": summary,
             "artifact_refs": [item.to_dict() for item in artifacts],
             "evidence_refs": [item.to_dict() for item in evidence],
@@ -279,8 +280,8 @@ class CompletionClaim:
             workflow_run_id=run.workflow_run_id,
             workflow_run_digest=run.run_digest,
             pack_binding_digest=pack_binding.pack.binding_digest,
-            pack_pin_id=pack_binding.binding_id,
-            pack_pin_digest=pack_binding.pin_digest,
+            pack_workflow_binding_id=pack_binding.binding_id,
+            pack_workflow_binding_digest=pack_binding.pin_digest,
             summary=summary,
             artifact_refs=artifacts,
             evidence_refs=evidence,
@@ -313,8 +314,14 @@ class CompletionClaim:
             self.pack_binding_digest,
             "pack_binding_digest",
         )
-        _validate_uuid(self.pack_pin_id, "pack_pin_id")
-        _validate_digest(self.pack_pin_digest, "pack_pin_digest")
+        _validate_uuid(
+            self.pack_workflow_binding_id,
+            "pack_workflow_binding_id",
+        )
+        _validate_digest(
+            self.pack_workflow_binding_digest,
+            "pack_workflow_binding_digest",
+        )
         _summary(self.summary)
 
         artifacts = _artifact_basis(self.artifact_refs)
@@ -327,6 +334,8 @@ class CompletionClaim:
             raise InvalidCompletionClaim(
                 "evidence_refs must be canonical sorted"
             )
+        object.__setattr__(self, "artifact_refs", artifacts)
+        object.__setattr__(self, "evidence_refs", evidence)
 
         _validate_digest(self.claim_digest, "claim_digest")
         if not hmac.compare_digest(
@@ -349,8 +358,8 @@ class CompletionClaim:
             "workflow_run_id": self.workflow_run_id,
             "workflow_run_digest": self.workflow_run_digest,
             "pack_binding_digest": self.pack_binding_digest,
-            "pack_pin_id": self.pack_pin_id,
-            "pack_pin_digest": self.pack_pin_digest,
+            "pack_workflow_binding_id": self.pack_workflow_binding_id,
+            "pack_workflow_binding_digest": self.pack_workflow_binding_digest,
             "summary": self.summary,
             "artifact_refs": [item.to_dict() for item in self.artifact_refs],
             "evidence_refs": [item.to_dict() for item in self.evidence_refs],
@@ -372,8 +381,8 @@ class CompletionClaim:
             "workflow_run_id",
             "workflow_run_digest",
             "pack_binding_digest",
-            "pack_pin_id",
-            "pack_pin_digest",
+            "pack_workflow_binding_id",
+            "pack_workflow_binding_digest",
             "summary",
             "artifact_refs",
             "evidence_refs",
@@ -404,8 +413,8 @@ class CompletionClaim:
             workflow_run_id=value["workflow_run_id"],
             workflow_run_digest=value["workflow_run_digest"],
             pack_binding_digest=value["pack_binding_digest"],
-            pack_pin_id=value["pack_pin_id"],
-            pack_pin_digest=value["pack_pin_digest"],
+            pack_workflow_binding_id=value["pack_workflow_binding_id"],
+            pack_workflow_binding_digest=value["pack_workflow_binding_digest"],
             summary=value["summary"],
             artifact_refs=tuple(
                 ArtifactRef.from_dict(item)
