@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 ARTIFACT_REF_SCHEMA_VERSION = 1
+ARTIFACT_REF_RECORDED_EVENT = "artifact.ref-recorded"
 MAX_LOCATOR_CHARS = 4_096
 MAX_MEDIA_TYPE_CHARS = 255
 MAX_SIGNED_64 = (1 << 63) - 1
