@@ -141,6 +141,7 @@ _RESERVED_CORE_EVENT_PREFIXES = (
     "attention.",
     "delegation.",
     "artifact.",
+    "evidence.",
 )
 
 
@@ -154,7 +155,7 @@ def validate_generic_workflow_candidate_ownership(
     if candidate.event.kind.startswith(_RESERVED_CORE_EVENT_PREFIXES):
         raise WorkflowImplementationOwnershipError(
             "Generic WorkflowCandidate cannot manufacture "
-            "role/capability/pack/attention/delegation/artifact events"
+            "role/capability/pack/attention/delegation/artifact/evidence events"
         )
 
 

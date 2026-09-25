@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 EVIDENCE_REF_SCHEMA_VERSION = 1
+EVIDENCE_REF_RECORDED_EVENT = "evidence.ref-recorded"
 MAX_EVIDENCE_KIND_CHARS = 128
 MAX_LOCATOR_CHARS = 4_096
 
