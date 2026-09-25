@@ -14,4 +14,17 @@ __all__ = [
     "STANDALONE_PROCESS_HOST_ID",
     "StandaloneProcessCapabilityPort",
     "StandaloneProcessHostError",
+    "StandaloneProcessWorkBindingError",
+    "StandaloneProcessWorkError",
+    "StandaloneProcessWorkIncompleteError",
+    "StandaloneProcessWorkResult",
+    "StandaloneProcessWorkService",
 ]
+
+from codexia_manual_agent.standalone_host.process_work import (
+    StandaloneProcessWorkBindingError,
+    StandaloneProcessWorkError,
+    StandaloneProcessWorkIncompleteError,
+    StandaloneProcessWorkResult,
+    StandaloneProcessWorkService,
+)
