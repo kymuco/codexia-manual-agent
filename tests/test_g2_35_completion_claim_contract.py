@@ -467,6 +467,35 @@ def test_completion_claim_rejects_schema_type_drift_even_with_valid_digest(
         CompletionClaim.from_dict(payload)
 
 
+@pytest.mark.parametrize(
+    "created_at",
+    [
+        "2026-01-01T00:00:00Z",
+        "20260101T000000+0000",
+        "2026-01-01 00:00:00+00:00",
+        "2026-W01-4T00:00:00+00:00",
+    ],
+)
+def test_completion_claim_rejects_noncanonical_timestamp_spellings(
+    tmp_path,
+    created_at: str,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "timestamp.sqlite")
+    work, workflow, pin = _started(store, source_id="timestamp")
+
+    with pytest.raises(
+        InvalidCompletionClaim,
+        match="canonical ISO-8601",
+    ):
+        CompletionClaim.create(
+            snapshot=store.snapshot(work.work.work_id),
+            workflow=workflow,
+            pack_binding=pin,
+            summary="Timestamp spelling must be canonical.",
+            created_at=created_at,
+        )
+
+
 def test_completion_claim_rejects_noncanonical_basis_order_on_decode(
     tmp_path,
 ) -> None:
