@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
 from codexia_manual_agent.attention_core import AttentionNeed, AttentionResponse
+from codexia_manual_agent.artifact_core import ArtifactRef
 from codexia_manual_agent.capability_core import (
     CapabilityNeed,
     CapabilityNeedSnapshot,
@@ -184,6 +185,7 @@ class WorkflowStepContext:
     capabilities: tuple[CapabilityNeedSnapshot, ...] = ()
     attentions: tuple[AttentionNeed, ...] = ()
     attention_responses: tuple[AttentionResponse, ...] = ()
+    artifacts: tuple[ArtifactRef, ...] = ()
     owned_children: tuple[OwnedChildWorkSnapshot, ...] = ()
 
     def __post_init__(self) -> None:
@@ -359,6 +361,16 @@ class WorkflowStepContext:
                 raise WorkflowImplementationBindingError(
                     "AttentionResponse changed AttentionNeed binding"
                 )
+
+        artifact_ids: set[str] = set()
+        for artifact in self.artifacts:
+            if not isinstance(artifact, ArtifactRef):
+                raise TypeError("artifacts must contain ArtifactRef values")
+            if artifact.artifact_id in artifact_ids:
+                raise WorkflowImplementationStateError(
+                    "artifacts contains duplicate ArtifactRef identity"
+                )
+            artifact_ids.add(artifact.artifact_id)
 
         delegation_ids: set[str] = set()
         child_work_ids: set[str] = set()
