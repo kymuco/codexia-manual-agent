@@ -438,8 +438,6 @@ class StandaloneProcessWorkRecoveryService:
     ) -> StandaloneProcessWorkCheckpoint:
         """Start or resume one Work and perform at most one safe transition."""
 
-        self._require_exact_distribution()
-
         candidate = Work.create(
             objective=objective,
             ingress=WorkIngressBinding.create(
@@ -455,6 +453,14 @@ class StandaloneProcessWorkRecoveryService:
             return checkpoint
 
         state = checkpoint.state
+        if state in {
+            StandaloneProcessWorkRecoveryState.START_WORKFLOW,
+            StandaloneProcessWorkRecoveryState.PIN_PACK,
+            StandaloneProcessWorkRecoveryState.PROGRESS_CAPABILITY_NEED,
+            StandaloneProcessWorkRecoveryState.PROGRESS_COMPLETION_CLAIM,
+        }:
+            self._require_exact_distribution()
+
         if state is StandaloneProcessWorkRecoveryState.START_WORKFLOW:
             WorkflowAdmission(self._store).admit_start(
                 WorkflowRun.create(
