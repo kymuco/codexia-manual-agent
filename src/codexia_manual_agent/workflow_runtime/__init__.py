@@ -30,6 +30,7 @@ from codexia_manual_agent.workflow_runtime.standalone_process_v2 import (
     process_outcome_evidence_locator,
     standalone_process_v2_capability_binding,
     standalone_process_v2_pack_binding,
+    standalone_process_v2_parameters,
     standalone_process_v2_workflow_binding,
 )
 
@@ -58,6 +59,7 @@ __all__ = [
     "process_outcome_evidence_locator",
     "standalone_process_v2_capability_binding",
     "standalone_process_v2_pack_binding",
+    "standalone_process_v2_parameters",
     "standalone_process_v2_workflow_binding",
     "validate_generic_workflow_candidate_ownership",
     "standalone_process_capability_binding",
