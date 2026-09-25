@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hmac
+from typing import Protocol
 
 from codexia_manual_agent.artifact_core import project_artifact_refs
 from codexia_manual_agent.completion_core.boundary import (
     CompletionCriterionBoundary,
     CompletionCriterionContext,
+    CompletionCriterionPort,
 )
 from codexia_manual_agent.completion_core.models import (
     COMPLETION_CLAIM_ADMITTED_EVENT,
@@ -16,19 +18,47 @@ from codexia_manual_agent.completion_core.projection import (
     project_admitted_completion_claims,
 )
 from codexia_manual_agent.evidence_core import project_evidence_refs
-from codexia_manual_agent.invariant_bridge.completion_criterion import (
-    InvariantCompletionCriterionBridge,
+from codexia_manual_agent.pack_core import (
+    PackWorkflowBinding,
+    project_workflow_pack_binding,
 )
-from codexia_manual_agent.pack_core import project_workflow_pack_binding
 from codexia_manual_agent.work_core import (
     WorkConcurrencyError,
+    WorkEvent,
     WorkState,
     WorkStore,
 )
 from codexia_manual_agent.workflow_core import (
+    WorkflowBinding,
+    WorkflowRunSnapshot,
     WorkflowRunState,
     project_workflow_run,
 )
+
+
+class ResolvedCompletionCriterionPort(Protocol):
+    """Resolved criterion semantics required by CompletionAdmissionService."""
+
+    @property
+    def workflow_binding(self) -> WorkflowBinding: ...
+
+    @property
+    def pack_binding_digest(self) -> str: ...
+
+    @property
+    def criterion(self) -> CompletionCriterionPort: ...
+
+
+class CompletionCriterionResolverPort(Protocol):
+    """Technical resolution surface consumed by completion admission."""
+
+    def resolve(
+        self,
+        *,
+        provider_ref: str,
+        workflow: WorkflowRunSnapshot,
+        pack_binding: PackWorkflowBinding,
+    ) -> ResolvedCompletionCriterionPort: ...
 
 
 class CompletionAdmissionError(RuntimeError):
@@ -71,7 +101,7 @@ class CompletionAdmissionService:
         self,
         *,
         store: WorkStore,
-        resolver: InvariantCompletionCriterionBridge,
+        resolver: CompletionCriterionResolverPort,
         boundary: CompletionCriterionBoundary | None = None,
     ) -> None:
         self._store = store
@@ -230,7 +260,7 @@ class CompletionAdmissionService:
 
     @staticmethod
     def _validate_basis(
-        events,
+        events: tuple[WorkEvent, ...],
         claim: CompletionClaim,
     ) -> None:
         artifacts = {
