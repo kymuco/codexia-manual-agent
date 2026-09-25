@@ -75,6 +75,12 @@ class WorkflowProposalAdmissionCompletionResolverRequiredError(
     """CompletionClaim admission requires an injected completion resolver."""
 
 
+class WorkflowProposalAdmissionCompletionProviderRequiredError(
+    WorkflowProposalAdmissionError
+):
+    """CompletionClaim admission requires explicit technical provider locator."""
+
+
 class _ReadSetBoundWorkStore:
     """Bind exact optimistic read preconditions to one typed admission call."""
 
@@ -140,9 +146,11 @@ class WorkflowProposalAdmissionService:
     retry policy. It only validates the G2.11 result/proposal binding and
     routes the typed proposal to its existing admission owner.
 
-    provider_ref remains computation provenance, not authority. CompletionClaim
-    routing may use it as a technical criterion-provider locator; the completion
-    owner still validates the exact pinned Pack and Workflow semantics.
+    WorkflowStepResult.provider_ref remains computation provenance only and is
+    never interpreted as criterion selection or admission authority. A
+    CompletionClaim caller must separately supply an explicit technical
+    completion-provider locator; the completion owner still validates the exact
+    pinned Pack and Workflow semantics.
     """
 
     def __init__(
@@ -157,6 +165,8 @@ class WorkflowProposalAdmissionService:
     def admit(
         self,
         result: WorkflowStepResult,
+        *,
+        completion_provider_ref: str | None = None,
     ) -> WorkflowProposalAdmissionResult:
         if not isinstance(result, WorkflowStepResult):
             raise TypeError("result must be WorkflowStepResult")
@@ -230,12 +240,19 @@ class WorkflowProposalAdmissionService:
                 raise WorkflowProposalAdmissionCompletionResolverRequiredError(
                     "CompletionClaim proposal requires completion resolver"
                 )
+            if (
+                not isinstance(completion_provider_ref, str)
+                or not completion_provider_ref
+            ):
+                raise WorkflowProposalAdmissionCompletionProviderRequiredError(
+                    "CompletionClaim proposal requires explicit completion provider"
+                )
             return CompletionAdmissionService(
                 store=guarded_store,
                 resolver=self._completion_resolver,
             ).admit(
                 proposal,
-                provider_ref=result.provider_ref,
+                provider_ref=completion_provider_ref,
             )
         raise TypeError("WorkflowStepResult contains unsupported proposal type")
 
