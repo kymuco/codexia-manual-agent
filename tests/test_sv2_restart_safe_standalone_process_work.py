@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import sys
@@ -278,3 +279,69 @@ def test_sv2_failed_capability_is_stable_and_does_not_retry(
     assert again.state is StandaloneProcessWorkRecoveryState.CAPABILITY_FAILED
     assert after == before
     assert "work.completed" not in tuple(event.kind for event in after)
+
+
+def test_sv2_unknown_outcome_is_stable_and_never_redispatched(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plugin = _load_plugin(monkeypatch)
+    path = tmp_path / "sv2-unknown.sqlite"
+
+    checkpoint = None
+    for _ in range(4):
+        checkpoint = _advance(path, plugin, tmp_path)
+    assert checkpoint is not None
+    assert checkpoint.state is StandaloneProcessWorkRecoveryState.DISPATCH_CAPABILITY
+    assert checkpoint.capability is not None
+
+    store = SqliteWorkStore(path)
+    async_host = _AsyncStandaloneHost()
+    CapabilityHostBridge(store).dispatch_once(
+        checkpoint.capability,
+        async_host,
+    )
+    assert async_host.calls == 1
+    assert async_host.request is not None
+
+    request = async_host.request
+    outcome = CapabilityOutcome.unknown(
+        request.need,
+        attempt_id="sv2-unknown-attempt",
+        attempt_digest=_sha("sv2-unknown-attempt"),
+        detail="external effect state cannot be proven",
+        observation={"source": "ambiguous-test-host"},
+    )
+    CapabilityHostBridge(store).record_outcome(
+        outcome,
+        host_id=STANDALONE_PROCESS_HOST_ID,
+    )
+
+    before = store.events(checkpoint.work_id)
+    recovered = _advance(path, plugin, tmp_path)
+    after = store.events(checkpoint.work_id)
+
+    assert (
+        recovered.state
+        is StandaloneProcessWorkRecoveryState.CAPABILITY_OUTCOME_UNKNOWN
+    )
+    assert after == before
+    assert async_host.calls == 1
+    assert "work.completed" not in tuple(event.kind for event in after)
+
+
+def test_sv2_recovery_source_has_no_generic_scheduler_loop() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "codexia_manual_agent"
+    path = root / "standalone_host" / "process_work_recovery.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    imported_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported_names.update(alias.name for alias in node.names)
+
+    assert "Scheduler" not in imported_names
+    assert "Queue" not in imported_names
+    assert not any(isinstance(node, ast.While) for node in ast.walk(tree))
