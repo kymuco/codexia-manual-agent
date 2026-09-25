@@ -10,9 +10,11 @@ from codexia_manual_agent.delegation_core import (
     DELEGATION_CHILD_OWNED_EVENT,
     Delegation,
     DelegationAdmission,
-    DelegationCompletionGuard,
     project_delegation,
     project_delegations,
+)
+from codexia_manual_agent.delegation_core.completion import (
+    _DelegationCompletionGuard,
 )
 from codexia_manual_agent.work_core import (
     WORK_COMPLETED_EVENT,
@@ -152,7 +154,7 @@ def test_child_work_has_independent_lifecycle_and_does_not_complete_parent(
         kind=WORK_COMPLETED_EVENT,
         payload={"summary": "child complete"},
     )
-    DelegationCompletionGuard(store).admit(completed)
+    _DelegationCompletionGuard(store).admit(completed)
 
     assert store.snapshot(child.work.work_id).state is WorkState.COMPLETED
     assert store.snapshot(parent.work_id).state is WorkState.ACTIVE
