@@ -188,8 +188,8 @@ class WorkflowStepContext:
     attentions: tuple[AttentionNeed, ...] = ()
     attention_responses: tuple[AttentionResponse, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
-    evidence_refs: tuple[EvidenceRef, ...] = ()
     owned_children: tuple[OwnedChildWorkSnapshot, ...] = ()
+    evidence_refs: tuple[EvidenceRef, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.work, WorkSnapshot):
