@@ -10,7 +10,7 @@ from codexia_manual_agent.completion_core.work_completion_projection import (
     project_work_completion,
 )
 from codexia_manual_agent.delegation_core.completion import (
-    DelegationCompletionGuard,
+    _DelegationCompletionGuard,
 )
 from codexia_manual_agent.work_core import (
     WorkConcurrencyError,
@@ -51,7 +51,7 @@ class WorkCompletionAdmissionService:
 
     def __init__(self, store: WorkStore) -> None:
         self._store = store
-        self._guard = DelegationCompletionGuard(store)  # type: ignore[arg-type]
+        self._guard = _DelegationCompletionGuard(store)  # type: ignore[arg-type]
 
     def admit(self, completion: WorkCompletion) -> WorkSnapshot:
         if not isinstance(completion, WorkCompletion):
