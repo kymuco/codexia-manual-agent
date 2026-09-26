@@ -34,7 +34,7 @@ from codexia_manual_agent.role_core import (
     project_cognition_handoffs,
     project_role_runs,
 )
-from codexia_manual_agent.work_core import WorkSnapshot, WorkState, WorkStore
+from codexia_manual_agent.work_core import WorkEvent, WorkSnapshot, WorkState, WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowBinding,
@@ -274,7 +274,7 @@ class BoundedExistingWorkProgressionService:
         )
 
     def _advance_one(self, work_id: str) -> bool:
-        events = self._store.events(work_id)
+        snapshot, events = self._read_exact_work(work_id)
         workflows = project_workflow_runs(events)
 
         if not workflows:
@@ -283,7 +283,6 @@ class BoundedExistingWorkProgressionService:
                     "unconfigured Work already has durable chronology"
                 )
             _, binding = self._resolve_activation_target()
-            snapshot = self._store.snapshot(work_id)
             if snapshot.state is not WorkState.ACTIVE:
                 return False
             WorkflowAdmission(self._store).admit_start(
@@ -311,7 +310,6 @@ class BoundedExistingWorkProgressionService:
                 raise BoundedExistingWorkProgressionBindingError(
                     "existing WorkflowRun differs from exact provider distribution"
                 )
-            snapshot = self._store.snapshot(work_id)
             if (
                 not events
                 or events[-1].event_id != workflow.run.workflow_run_id
@@ -333,7 +331,6 @@ class BoundedExistingWorkProgressionService:
         if workflow.state is not WorkflowRunState.ACTIVE:
             return False
 
-        snapshot = self._store.snapshot(work_id)
         if pin.work_id != work_id or pin.work_digest != snapshot.work.work_digest:
             raise BoundedExistingWorkProgressionBindingError(
                 "Pack pin changed exact Work binding"
@@ -438,11 +435,49 @@ class BoundedExistingWorkProgressionService:
             work_id=work_id,
             workflow_run_id=workflow.run.workflow_run_id,
             provider_ref=self._provider_ref,
-            precondition=WorkflowStepReadPrecondition.from_snapshot(
-                self._store.snapshot(work_id)
-            ),
+            precondition=WorkflowStepReadPrecondition.from_snapshot(snapshot),
         )
         return True
+
+    def _read_exact_work(
+        self,
+        work_id: str,
+    ) -> tuple[WorkSnapshot, tuple[WorkEvent, ...]]:
+        snapshot = self._store.snapshot(work_id)
+        events = self._store.events(work_id)
+
+        if snapshot.work.work_id != work_id:
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work snapshot crossed requested Work identity"
+            )
+        if any(event.work_id != work_id for event in events):
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work chronology crossed requested Work identity"
+            )
+        if snapshot.revision != len(events):
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work snapshot revision differs from durable chronology"
+            )
+        if snapshot.revision == 0:
+            if events or snapshot.last_event_digest is not None:
+                raise BoundedExistingWorkProgressionBindingError(
+                    "revision-zero Work has inconsistent durable chronology"
+                )
+            return snapshot, events
+
+        if not events:
+            raise BoundedExistingWorkProgressionBindingError(
+                "nonzero Work revision has no durable chronology"
+            )
+        head = events[-1]
+        if (
+            head.sequence != snapshot.revision
+            or head.event_digest != snapshot.last_event_digest
+        ):
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work snapshot does not bind exact durable chronology head"
+            )
+        return snapshot, events
 
     def _resolve_activation_target(
         self,
