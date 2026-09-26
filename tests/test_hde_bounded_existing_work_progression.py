@@ -25,6 +25,13 @@ from codexia_manual_agent.completion_core import (
     CompletionCriterionResult,
 )
 from codexia_manual_agent.delegation_core import project_delegations
+from codexia_manual_agent.role_core import (
+    COGNITION_HANDOFF_ADMITTED_EVENT,
+    CognitionPortRequest,
+    ContextProjection,
+    RoleBinding,
+    RoleRun,
+)
 from codexia_manual_agent.pack_core import (
     PACK_WORKFLOW_BOUND_EVENT,
     PackBinding,
@@ -54,6 +61,8 @@ from codexia_manual_agent.workflow_runtime import WorkflowDelegationProposal
 
 
 PROVIDER_REF = "codexia:hde-bounded-provider@1.0.0"
+ROLE_INSTRUCTIONS = "Review the exact bounded delegated material."
+ROLE_CONTEXT = "delegated-context=v1"
 
 
 def _sha(text: str) -> str:
@@ -76,6 +85,14 @@ def _capability_binding(label: str) -> CapabilityBinding:
     )
 
 
+def _role_binding(label: str) -> RoleBinding:
+    return RoleBinding.create(
+        role_id=f"codexia:hde-{label}-reviewer",
+        version="1.0.0",
+        instructions_digest=_sha(ROLE_INSTRUCTIONS),
+    )
+
+
 def _member_workflow(binding: WorkflowBinding) -> PackMemberBinding:
     return PackMemberBinding.create(
         kind=PackMemberKind.WORKFLOW,
@@ -89,6 +106,15 @@ def _member_capability(binding: CapabilityBinding) -> PackMemberBinding:
     return PackMemberBinding.create(
         kind=PackMemberKind.CAPABILITY,
         semantic_id=binding.capability_id,
+        version=binding.version,
+        binding_digest=binding.binding_digest,
+    )
+
+
+def _member_role(binding: RoleBinding) -> PackMemberBinding:
+    return PackMemberBinding.create(
+        kind=PackMemberKind.ROLE,
+        semantic_id=binding.role_id,
         version=binding.version,
         binding_digest=binding.binding_digest,
     )
@@ -117,12 +143,16 @@ class _Provider:
         label: str,
         implementation,
         capability: CapabilityBinding | None = None,
+        role: RoleBinding | None = None,
     ) -> None:
         self.workflow = _workflow_binding(label)
         self.capability = capability
+        self.role = role
         members = [_member_workflow(self.workflow)]
         if capability is not None:
             members.append(_member_capability(capability))
+        if role is not None:
+            members.append(_member_role(role))
         self.pack = PackBinding.create(
             pack_id=f"codexia:hde-pack-{label}",
             version="1.0.0",
@@ -142,7 +172,7 @@ class _Provider:
             "schema_version": 1,
             "pack": self.pack.to_dict(),
             "workflows": [self.workflow.to_dict()],
-            "roles": [],
+            "roles": [] if self.role is None else [self.role.to_dict()],
             "capabilities": (
                 [] if self.capability is None else [self.capability.to_dict()]
             ),
@@ -225,6 +255,25 @@ class _CapabilityImplementation:
         )
 
 
+class _RoleImplementation:
+    binding: WorkflowBinding
+
+    def __init__(self, role: RoleBinding) -> None:
+        self.role = role
+
+    def propose(self, context):
+        if context.roles:
+            return None
+        return RoleRun.create(
+            workflow=context.workflow,
+            snapshot=context.work,
+            binding=self.role,
+            context=ContextProjection.create(
+                content_digest=_sha(ROLE_CONTEXT),
+            ),
+        )
+
+
 class _DelegationThenCompletionImplementation:
     binding: WorkflowBinding
 
@@ -261,6 +310,34 @@ class _ForbiddenHost:
         raise AssertionError("existing durable handoff must suppress redispatch")
 
 
+class _Instructions:
+    def resolve(self, _binding: RoleBinding) -> str:
+        return ROLE_INSTRUCTIONS
+
+
+class _Context:
+    def resolve(self, _projection: ContextProjection) -> str:
+        return ROLE_CONTEXT
+
+
+class _AsyncCognitionPort:
+    port_id = "cognition.hde-bounded.async"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, _request: CognitionPortRequest):
+        self.calls += 1
+        return None
+
+
+class _ForbiddenCognitionPort:
+    port_id = "cognition.hde-bounded.async"
+
+    def complete(self, _request: CognitionPortRequest):
+        raise AssertionError("existing cognition handoff must suppress redispatch")
+
+
 def _work(store: SqliteWorkStore, *, label: str) -> Work:
     work = Work.create(
         objective=f"Progress existing delegated Work for {label}.",
@@ -280,6 +357,9 @@ def _service(
     *,
     plugin_service=None,
     capability_port=None,
+    cognition_port=None,
+    instructions=None,
+    context=None,
 ) -> BoundedExistingWorkProgressionService:
     return BoundedExistingWorkProgressionService(
         store=store,
@@ -288,6 +368,9 @@ def _service(
         workflow_id=provider.workflow.workflow_id,
         workflow_version=provider.workflow.version,
         capability_port=capability_port,
+        cognition_port=cognition_port,
+        instructions=instructions,
+        context=context,
     )
 
 
@@ -476,6 +559,54 @@ def test_async_capability_handoff_is_never_redispatched_after_restart(
         provider,
         plugin_service=_ExplodingPluginService(),
         capability_port=_ForbiddenHost(),
+    ).progress(
+        work.work_id,
+        max_steps=2,
+    )
+
+    assert recovered.status is BoundedExistingWorkProgressionStatus.QUIESCENT
+    assert recovered.steps_used == 0
+    assert recovered.frontier.kind is DurableWorkYieldKind.NONE
+    assert restarted.events(work.work_id) == store.events(work.work_id)
+
+
+def test_async_cognition_handoff_is_never_redispatched_after_restart(
+    tmp_path,
+) -> None:
+    path = tmp_path / "async-cognition.sqlite"
+    store = SqliteWorkStore(path)
+    work = _work(store, label="async-cognition")
+    role = _role_binding("async-cognition")
+    provider = _Provider(
+        label="async-cognition",
+        implementation=_RoleImplementation(role),
+        role=role,
+    )
+    port = _AsyncCognitionPort()
+
+    first = _service(
+        store,
+        provider,
+        cognition_port=port,
+        instructions=_Instructions(),
+        context=_Context(),
+    ).progress(
+        work.work_id,
+        max_steps=4,
+    )
+
+    assert first.status is BoundedExistingWorkProgressionStatus.BOUND_EXHAUSTED
+    assert first.steps_used == 4
+    assert first.frontier.kind is DurableWorkYieldKind.NONE
+    assert port.calls == 1
+    assert _kinds(store, work.work_id).count(COGNITION_HANDOFF_ADMITTED_EVENT) == 1
+
+    restarted = SqliteWorkStore(path)
+    recovered = _service(
+        restarted,
+        provider,
+        plugin_service=_ExplodingPluginService(),
+        cognition_port=_ForbiddenCognitionPort(),
     ).progress(
         work.work_id,
         max_steps=2,
