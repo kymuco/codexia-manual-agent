@@ -14,6 +14,7 @@ from codexia_manual_agent.completion_core import (
 )
 from codexia_manual_agent.work_core import (
     WORK_COMPLETED_EVENT,
+    WorkEvent,
     WorkSnapshot,
     WorkState,
     WorkStore,
@@ -136,7 +137,7 @@ def project_durable_work_yield(
 
 def _validate_exact_observation(
     snapshot: WorkSnapshot,
-    events: tuple,
+    events: tuple[WorkEvent, ...],
 ) -> None:
     if snapshot.revision != len(events):
         raise DurableWorkYieldProjectionError(
