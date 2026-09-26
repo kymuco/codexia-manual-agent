@@ -9,6 +9,7 @@ import pytest
 
 from codexia_manual_agent.attention_core import (
     ATTENTION_NEED_DECLARED_EVENT,
+    AttentionAdmission,
     AttentionNeed,
 )
 from codexia_manual_agent.capability_core import (
@@ -44,7 +45,9 @@ from codexia_manual_agent.work_core import (
     WORK_COMPLETED_EVENT,
     SqliteWorkStore,
     Work,
+    WorkEvent,
     WorkIngressBinding,
+    WorkSnapshot,
     WorkState,
 )
 from codexia_manual_agent.workflow_core import (
@@ -378,6 +381,87 @@ def _service(
 
 def _kinds(store: SqliteWorkStore, work_id: str) -> tuple[str, ...]:
     return tuple(event.kind for event in store.events(work_id))
+
+
+class _InjectOnSnapshotStore:
+    def __init__(
+        self,
+        store: SqliteWorkStore,
+        *,
+        work_id: str,
+        snapshot_call: int,
+        action,
+    ) -> None:
+        self._store = store
+        self._work_id = work_id
+        self._snapshot_call = snapshot_call
+        self._action = action
+        self._calls = 0
+        self._fired = False
+
+    def create(self, work: Work) -> WorkSnapshot:
+        return self._store.create(work)
+
+    def snapshot(self, work_id: str) -> WorkSnapshot:
+        if work_id == self._work_id:
+            self._calls += 1
+            if (
+                not self._fired
+                and self._calls == self._snapshot_call
+            ):
+                self._fired = True
+                self._action()
+        return self._store.snapshot(work_id)
+
+    def events(self, work_id: str) -> tuple[WorkEvent, ...]:
+        return self._store.events(work_id)
+
+    def append(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        return self._store.append(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
+
+    def append_with_child_create(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        child_work: Work,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> tuple[WorkSnapshot, WorkSnapshot]:
+        return self._store.append_with_child_create(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            child_work=child_work,
+            read_preconditions=read_preconditions,
+        )
+
+    def _append_completion(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        return self._store._append_completion(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
 
 
 def test_attention_yields_in_three_bounded_steps_and_restart_is_zero_execution(
@@ -904,3 +988,120 @@ def test_bounded_progression_has_no_hde_irr_scheduler_or_work_creation() -> None
     assert "Work.create(" not in source
     assert ".create(child" not in source
     assert "progress(child" not in source
+
+
+def test_concurrent_attention_frontier_preempts_next_semantic_step(
+    tmp_path,
+) -> None:
+    base = SqliteWorkStore(tmp_path / "concurrent-attention.sqlite")
+    work = _work(base, label="concurrent-attention")
+    provider = _Provider(
+        label="concurrent-attention",
+        implementation=_NoProposalImplementation(),
+    )
+
+    activated = _service(base, provider).progress(
+        work.work_id,
+        max_steps=2,
+    )
+    assert (
+        activated.status
+        is BoundedExistingWorkProgressionStatus.BOUND_EXHAUSTED
+    )
+    workflow = project_workflow_runs(base.events(work.work_id))[0]
+
+    provider.implementation_calls = 0
+    provider.distribution_calls = 0
+
+    def _append_attention() -> None:
+        AttentionAdmission(base).admit_need(
+            AttentionNeed.create(
+                workflow=workflow,
+                snapshot=base.snapshot(work.work_id),
+                question="Concurrent human judgment boundary?",
+                reason="A concurrent writer established an exact attention frontier.",
+            )
+        )
+
+    raced = _InjectOnSnapshotStore(
+        base,
+        work_id=work.work_id,
+        snapshot_call=2,
+        action=_append_attention,
+    )
+    result = _service(raced, provider).progress(
+        work.work_id,
+        max_steps=4,
+    )
+
+    assert result.status is BoundedExistingWorkProgressionStatus.YIELDED
+    assert result.steps_used == 0
+    assert result.frontier.kind is DurableWorkYieldKind.ATTENTION
+    assert provider.implementation_calls == 0
+    assert provider.distribution_calls == 0
+    assert _kinds(base, work.work_id)[-1] == ATTENTION_NEED_DECLARED_EVENT
+
+
+def test_concurrent_terminal_frontier_reclassifies_after_quiescent_noop(
+    tmp_path,
+) -> None:
+    base = SqliteWorkStore(tmp_path / "concurrent-terminal.sqlite")
+    work = _work(base, label="concurrent-terminal")
+    capability = _capability_binding("concurrent-terminal")
+    provider = _Provider(
+        label="concurrent-terminal",
+        implementation=_CapabilityImplementation(capability),
+        capability=capability,
+    )
+    host = _AsyncHost()
+
+    prepared = _service(
+        base,
+        provider,
+        capability_port=host,
+    ).progress(
+        work.work_id,
+        max_steps=4,
+    )
+    assert (
+        prepared.status
+        is BoundedExistingWorkProgressionStatus.BOUND_EXHAUSTED
+    )
+    assert host.calls == 1
+    assert _kinds(base, work.work_id)[-1] == CAPABILITY_HANDOFF_ADMITTED_EVENT
+
+    def _cancel_after_noop() -> None:
+        current = base.snapshot(work.work_id)
+        base.append(
+            work.work_id,
+            expected_revision=current.revision,
+            event=current.next_event(
+                kind=WORK_CANCELLED_EVENT,
+                payload={"reason": "concurrent terminal frontier"},
+            ),
+        )
+
+    raced = _InjectOnSnapshotStore(
+        base,
+        work_id=work.work_id,
+        snapshot_call=3,
+        action=_cancel_after_noop,
+    )
+    result = _service(
+        raced,
+        provider,
+        plugin_service=_ExplodingPluginService(),
+        capability_port=_ForbiddenHost(),
+    ).progress(
+        work.work_id,
+        max_steps=2,
+    )
+
+    assert (
+        result.status
+        is BoundedExistingWorkProgressionStatus.TERMINAL_NON_YIELD
+    )
+    assert result.steps_used == 0
+    assert result.frontier.kind is DurableWorkYieldKind.NONE
+    assert result.frontier.snapshot.state is WorkState.CANCELLED
+    assert _kinds(base, work.work_id)[-1] == WORK_CANCELLED_EVENT
