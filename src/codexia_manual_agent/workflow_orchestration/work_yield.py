@@ -81,7 +81,7 @@ def project_durable_work_yield(
 
     snapshot = store.snapshot(work_id)
     events = store.events(work_id)
-    _validate_exact_observation(snapshot, events)
+    _validate_exact_observation(work_id, snapshot, events)
 
     if snapshot.state is WorkState.COMPLETED:
         completion = project_work_completion(events)
@@ -136,9 +136,18 @@ def project_durable_work_yield(
 
 
 def _validate_exact_observation(
+    expected_work_id: str,
     snapshot: WorkSnapshot,
     events: tuple[WorkEvent, ...],
 ) -> None:
+    if snapshot.work.work_id != expected_work_id:
+        raise DurableWorkYieldProjectionError(
+            "Work snapshot crossed requested Work identity"
+        )
+    if any(event.work_id != expected_work_id for event in events):
+        raise DurableWorkYieldProjectionError(
+            "durable chronology crossed requested Work identity"
+        )
     if snapshot.revision != len(events):
         raise DurableWorkYieldProjectionError(
             "Work snapshot revision does not match durable chronology length"
