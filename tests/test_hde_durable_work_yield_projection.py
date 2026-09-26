@@ -344,6 +344,28 @@ class _InconsistentStore:
         return self._events
 
 
+def test_projection_rejects_store_adapter_crossing_requested_work(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "cross-work.sqlite")
+    requested = _work(store, label="requested")
+    returned = _work(store, label="returned")
+
+    inconsistent = _InconsistentStore(
+        snapshot=returned,
+        events=(),
+    )
+
+    with pytest.raises(
+        DurableWorkYieldProjectionError,
+        match="requested Work identity",
+    ):
+        project_durable_work_yield(
+            requested.work.work_id,
+            store=inconsistent,
+        )
+
+
 def test_projection_fails_closed_if_snapshot_and_chronology_disagree(
     tmp_path,
 ) -> None:
