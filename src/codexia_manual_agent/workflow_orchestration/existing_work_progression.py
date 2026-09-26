@@ -278,6 +278,10 @@ class BoundedExistingWorkProgressionService:
         workflows = project_workflow_runs(events)
 
         if not workflows:
+            if events:
+                raise BoundedExistingWorkProgressionBindingError(
+                    "unconfigured Work already has durable chronology"
+                )
             _, binding = self._resolve_activation_target()
             snapshot = self._store.snapshot(work_id)
             if snapshot.state is not WorkState.ACTIVE:
