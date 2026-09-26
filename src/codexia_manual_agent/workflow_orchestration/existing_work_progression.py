@@ -21,6 +21,7 @@ from codexia_manual_agent.invariant_bridge import (
     InvariantPackDistributionBridge,
     InvariantWorkflowImplementationBridge,
     ManagedPluginServicePort,
+    ResolvedPackDistribution,
 )
 from codexia_manual_agent.pack_core import (
     PackAdmission,
@@ -36,6 +37,7 @@ from codexia_manual_agent.role_core import (
 from codexia_manual_agent.work_core import WorkSnapshot, WorkState, WorkStore
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
+    WorkflowBinding,
     WorkflowRun,
     WorkflowRunState,
     project_workflow_runs,
@@ -276,7 +278,7 @@ class BoundedExistingWorkProgressionService:
         workflows = project_workflow_runs(events)
 
         if not workflows:
-            distribution, binding = self._resolve_activation_target()
+            _, binding = self._resolve_activation_target()
             snapshot = self._store.snapshot(work_id)
             if snapshot.state is not WorkState.ACTIVE:
                 return False
@@ -414,7 +416,9 @@ class BoundedExistingWorkProgressionService:
         )
         return True
 
-    def _resolve_activation_target(self):
+    def _resolve_activation_target(
+        self,
+    ) -> tuple[ResolvedPackDistribution, WorkflowBinding]:
         distribution = InvariantPackDistributionBridge(
             self._plugin_service
         ).resolve(self._provider_ref)
@@ -430,7 +434,11 @@ class BoundedExistingWorkProgressionService:
             )
         return distribution, matches[0]
 
-    def _validate_workflow_target(self, work_id: str, binding) -> None:
+    def _validate_workflow_target(
+        self,
+        work_id: str,
+        binding: WorkflowBinding,
+    ) -> None:
         if (
             binding.workflow_id != self._workflow_id
             or binding.version != self._workflow_version
