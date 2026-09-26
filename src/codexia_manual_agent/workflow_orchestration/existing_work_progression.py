@@ -298,7 +298,11 @@ class BoundedExistingWorkProgressionService:
                 "bounded existing-Work progression requires exactly one WorkflowRun"
             )
         workflow = workflows[0]
-        self._validate_workflow_target(work_id, workflow.run.binding)
+        self._validate_workflow_target(
+            work_id,
+            snapshot,
+            workflow.run.binding,
+        )
 
         pin = project_workflow_pack_binding(
             events,
@@ -500,19 +504,19 @@ class BoundedExistingWorkProgressionService:
     def _validate_workflow_target(
         self,
         work_id: str,
+        snapshot: WorkSnapshot,
         binding: WorkflowBinding,
     ) -> None:
+        if snapshot.work.work_id != work_id:
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work snapshot crossed requested Work identity"
+            )
         if (
             binding.workflow_id != self._workflow_id
             or binding.version != self._workflow_version
         ):
             raise BoundedExistingWorkProgressionBindingError(
                 "existing WorkflowRun differs from configured workflow selector"
-            )
-        snapshot = self._store.snapshot(work_id)
-        if snapshot.work.work_id != work_id:
-            raise BoundedExistingWorkProgressionBindingError(
-                "Work snapshot crossed requested Work identity"
             )
 
     def _progress_role(self, work_id: str, role_run_id: str) -> None:
