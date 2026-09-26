@@ -4,6 +4,16 @@ from codexia_manual_agent.workflow_orchestration.capability_progression import (
 from codexia_manual_agent.workflow_orchestration.cognition_progression import (
     RoleCognitionProgressionService,
 )
+from codexia_manual_agent.workflow_orchestration.existing_work_progression import (
+    MAX_BOUNDED_EXISTING_WORK_STEPS,
+    BoundedExistingWorkProgressionAmbiguityError,
+    BoundedExistingWorkProgressionBindingError,
+    BoundedExistingWorkProgressionConfigurationError,
+    BoundedExistingWorkProgressionError,
+    BoundedExistingWorkProgressionResult,
+    BoundedExistingWorkProgressionService,
+    BoundedExistingWorkProgressionStatus,
+)
 from codexia_manual_agent.workflow_orchestration.proposal_admission import (
     WorkflowProposalAdmissionBindingError,
     WorkflowProposalAdmissionCompletionProviderRequiredError,
@@ -47,6 +57,14 @@ from codexia_manual_agent.workflow_orchestration.workflow_progression import (
 )
 
 __all__ = [
+    "MAX_BOUNDED_EXISTING_WORK_STEPS",
+    "BoundedExistingWorkProgressionAmbiguityError",
+    "BoundedExistingWorkProgressionBindingError",
+    "BoundedExistingWorkProgressionConfigurationError",
+    "BoundedExistingWorkProgressionError",
+    "BoundedExistingWorkProgressionResult",
+    "BoundedExistingWorkProgressionService",
+    "BoundedExistingWorkProgressionStatus",
     "CapabilityProgressionService",
     "DurableWorkYield",
     "DurableWorkYieldKind",
