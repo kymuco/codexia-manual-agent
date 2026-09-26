@@ -34,7 +34,14 @@ from codexia_manual_agent.role_core import (
     project_cognition_handoffs,
     project_role_runs,
 )
-from codexia_manual_agent.work_core import WorkEvent, WorkSnapshot, WorkState, WorkStore
+from codexia_manual_agent.work_core import (
+    Work,
+    WorkConcurrencyError,
+    WorkEvent,
+    WorkSnapshot,
+    WorkState,
+    WorkStore,
+)
 from codexia_manual_agent.workflow_core import (
     WorkflowAdmission,
     WorkflowBinding,
@@ -146,6 +153,142 @@ class BoundedExistingWorkProgressionResult:
         return self.frontier.snapshot.work.work_id
 
 
+class _FrontierBoundWorkStore:
+    """Bind one semantic step to the exact projected parent Work frontier.
+
+    Reads and writes for the target Work fail closed if another writer advances
+    the chronology. Successful writes by this step advance the local binding to
+    the newly admitted snapshot. Reads of independently owned child Work remain
+    delegated to the underlying store.
+    """
+
+    def __init__(self, store: WorkStore, snapshot: WorkSnapshot) -> None:
+        self._store = store
+        self._work_id = snapshot.work.work_id
+        self._snapshot = snapshot
+
+    def _require_current(self) -> WorkSnapshot:
+        current = self._store.snapshot(self._work_id)
+        if current != self._snapshot:
+            raise WorkConcurrencyError(
+                "bounded progression frontier changed before semantic transition"
+            )
+        return current
+
+    def create(self, _work: Work) -> WorkSnapshot:
+        raise BoundedExistingWorkProgressionBindingError(
+            "bounded existing-Work progression cannot create another root Work"
+        )
+
+    def snapshot(self, work_id: str) -> WorkSnapshot:
+        if work_id != self._work_id:
+            return self._store.snapshot(work_id)
+        return self._require_current()
+
+    def events(self, work_id: str) -> tuple[WorkEvent, ...]:
+        if work_id != self._work_id:
+            return self._store.events(work_id)
+        current = self._require_current()
+        events = self._store.events(work_id)
+        if (
+            len(events) != current.revision
+            or (
+                (events[-1].event_digest if events else None)
+                != current.last_event_digest
+            )
+            or any(event.work_id != work_id for event in events)
+        ):
+            raise WorkConcurrencyError(
+                "bounded progression chronology changed during exact read"
+            )
+        return events
+
+    def append(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        if work_id != self._work_id:
+            raise BoundedExistingWorkProgressionBindingError(
+                "bounded progression cannot append another Work"
+            )
+        self._require_current()
+        if expected_revision != self._snapshot.revision:
+            raise WorkConcurrencyError(
+                "semantic transition is not based on bound Work frontier"
+            )
+        admitted = self._store.append(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
+        self._snapshot = admitted
+        return admitted
+
+    def append_with_child_create(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        child_work: Work,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> tuple[WorkSnapshot, WorkSnapshot]:
+        if work_id != self._work_id:
+            raise BoundedExistingWorkProgressionBindingError(
+                "bounded progression cannot delegate from another Work"
+            )
+        self._require_current()
+        if expected_revision != self._snapshot.revision:
+            raise WorkConcurrencyError(
+                "delegation is not based on bound Work frontier"
+            )
+        parent, child = self._store.append_with_child_create(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            child_work=child_work,
+            read_preconditions=read_preconditions,
+        )
+        self._snapshot = parent
+        return parent, child
+
+    def _append_completion(
+        self,
+        work_id: str,
+        *,
+        expected_revision: int,
+        event: WorkEvent,
+        read_preconditions: tuple[WorkSnapshot, ...] = (),
+    ) -> WorkSnapshot:
+        if work_id != self._work_id:
+            raise BoundedExistingWorkProgressionBindingError(
+                "bounded progression cannot complete another Work"
+            )
+        self._require_current()
+        if expected_revision != self._snapshot.revision:
+            raise WorkConcurrencyError(
+                "WorkCompletion is not based on bound Work frontier"
+            )
+        append_completion = getattr(self._store, "_append_completion", None)
+        if append_completion is None:
+            raise BoundedExistingWorkProgressionBindingError(
+                "Work store does not expose guarded completion admission"
+            )
+        admitted = append_completion(
+            work_id,
+            expected_revision=expected_revision,
+            event=event,
+            read_preconditions=read_preconditions,
+        )
+        self._snapshot = admitted
+        return admitted
+
+
 class BoundedExistingWorkProgressionService:
     """Progress one existing Work through a finite number of Codexia steps.
 
@@ -228,10 +371,13 @@ class BoundedExistingWorkProgressionService:
         steps_used = 0
         for _ in range(max_steps):
             before = frontier.snapshot
-            attempted = self._advance_one(
-                work_id,
-                expected_snapshot=before,
-            )
+            try:
+                attempted = self._advance_one(
+                    work_id,
+                    expected_snapshot=before,
+                )
+            except WorkConcurrencyError:
+                attempted = False
             if not attempted:
                 frontier = project_durable_work_yield(
                     work_id,
@@ -309,6 +455,10 @@ class BoundedExistingWorkProgressionService:
             # deciding what to do next.
             return False
 
+        step_store = _FrontierBoundWorkStore(
+            self._store,
+            expected_snapshot,
+        )
         workflows = project_workflow_runs(events)
 
         if not workflows:
@@ -319,7 +469,7 @@ class BoundedExistingWorkProgressionService:
             _, binding = self._resolve_activation_target()
             if snapshot.state is not WorkState.ACTIVE:
                 return False
-            WorkflowAdmission(self._store).admit_start(
+            WorkflowAdmission(step_store).admit_start(
                 WorkflowRun.create(
                     snapshot=snapshot,
                     binding=binding,
@@ -357,7 +507,7 @@ class BoundedExistingWorkProgressionService:
                 raise BoundedExistingWorkProgressionBindingError(
                     "unpinned WorkflowRun is not the exact current Work head"
                 )
-            PackAdmission(self._store).admit_workflow_binding(
+            PackAdmission(step_store).admit_workflow_binding(
                 PackWorkflowBinding.create(
                     workflow=workflow,
                     snapshot=snapshot,
@@ -386,7 +536,7 @@ class BoundedExistingWorkProgressionService:
                     claim=claim,
                     claim_admission_event=head,
                 )
-                WorkCompletionAdmissionService(self._store).admit(completion)
+                WorkCompletionAdmissionService(step_store).admit(completion)
             except DelegationChildrenLiveError:
                 return False
             return True
@@ -433,7 +583,11 @@ class BoundedExistingWorkProgressionService:
                             "durable cognition handoff is routed to another port"
                         )
                     return False
-            self._progress_role(work_id, role.run.role_run_id)
+            self._progress_role(
+                work_id,
+                role.run.role_run_id,
+                store=step_store,
+            )
             return True
 
         if capabilities:
@@ -458,11 +612,12 @@ class BoundedExistingWorkProgressionService:
             self._progress_capability(
                 work_id,
                 capability.need.need_id,
+                store=step_store,
             )
             return True
 
         WorkflowProgressionService(
-            store=self._store,
+            store=step_store,
             resolver=InvariantWorkflowImplementationBridge(
                 self._plugin_service
             ),
@@ -553,7 +708,13 @@ class BoundedExistingWorkProgressionService:
                 "existing WorkflowRun differs from configured workflow selector"
             )
 
-    def _progress_role(self, work_id: str, role_run_id: str) -> None:
+    def _progress_role(
+        self,
+        work_id: str,
+        role_run_id: str,
+        *,
+        store: WorkStore,
+    ) -> None:
         if (
             self._cognition_port is None
             or self._instructions is None
@@ -563,7 +724,7 @@ class BoundedExistingWorkProgressionService:
                 "RoleRun progression requires cognition port, instructions, and context"
             )
         RoleCognitionProgressionService(
-            store=self._store,
+            store=store,
             instructions=self._instructions,
             context=self._context,
         ).progress_once(
@@ -572,12 +733,18 @@ class BoundedExistingWorkProgressionService:
             port=self._cognition_port,
         )
 
-    def _progress_capability(self, work_id: str, need_id: str) -> None:
+    def _progress_capability(
+        self,
+        work_id: str,
+        need_id: str,
+        *,
+        store: WorkStore,
+    ) -> None:
         if self._capability_port is None:
             raise BoundedExistingWorkProgressionConfigurationError(
                 "CapabilityNeed progression requires CapabilityHostPort"
             )
-        CapabilityProgressionService(self._store).progress_once(
+        CapabilityProgressionService(store).progress_once(
             work_id=work_id,
             need_id=need_id,
             port=self._capability_port,
