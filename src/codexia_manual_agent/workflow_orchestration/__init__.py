@@ -35,6 +35,12 @@ from codexia_manual_agent.workflow_orchestration.step import (
     WorkflowStepResult,
     WorkflowStepService,
 )
+from codexia_manual_agent.workflow_orchestration.work_yield import (
+    DurableWorkYield,
+    DurableWorkYieldKind,
+    DurableWorkYieldProjectionError,
+    project_durable_work_yield,
+)
 from codexia_manual_agent.workflow_orchestration.workflow_progression import (
     WorkflowProgressionResult,
     WorkflowProgressionService,
@@ -42,6 +48,9 @@ from codexia_manual_agent.workflow_orchestration.workflow_progression import (
 
 __all__ = [
     "CapabilityProgressionService",
+    "DurableWorkYield",
+    "DurableWorkYieldKind",
+    "DurableWorkYieldProjectionError",
     "CognitionRequestMaterialization",
     "ContextProjectionMaterialPort",
     "RoleCognitionMaterialBindingError",
@@ -70,5 +79,6 @@ __all__ = [
     "WorkflowStepReadPrecondition",
     "WorkflowStepResult",
     "WorkflowStepService",
+    "project_durable_work_yield",
 ]
 
