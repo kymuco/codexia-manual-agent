@@ -381,20 +381,44 @@ class BoundedExistingWorkProgressionService:
                     raise BoundedExistingWorkProgressionBindingError(
                         "REQUESTED RoleRun lacks exact cognition request identity"
                     )
-                if any(
-                    handoff.request_id == role.request_id
-                    for handoff in project_cognition_handoffs(events)
-                ):
+                handoff = next(
+                    (
+                        item
+                        for item in project_cognition_handoffs(events)
+                        if item.request_id == role.request_id
+                    ),
+                    None,
+                )
+                if handoff is not None:
+                    if (
+                        self._cognition_port is not None
+                        and handoff.port_id != self._cognition_port.port_id
+                    ):
+                        raise BoundedExistingWorkProgressionBindingError(
+                            "durable cognition handoff is routed to another port"
+                        )
                     return False
             self._progress_role(work_id, role.run.role_run_id)
             return True
 
         if capabilities:
             capability = capabilities[0]
-            if any(
-                handoff.need_id == capability.need.need_id
-                for handoff in project_capability_handoffs(events)
-            ):
+            handoff = next(
+                (
+                    item
+                    for item in project_capability_handoffs(events)
+                    if item.need_id == capability.need.need_id
+                ),
+                None,
+            )
+            if handoff is not None:
+                if (
+                    self._capability_port is not None
+                    and handoff.host_id != self._capability_port.host_id
+                ):
+                    raise BoundedExistingWorkProgressionBindingError(
+                        "durable capability handoff is routed to another host"
+                    )
                 return False
             self._progress_capability(
                 work_id,
