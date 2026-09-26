@@ -14,6 +14,7 @@ from codexia_manual_agent.attention_core import (
 from codexia_manual_agent.capability_core import (
     CAPABILITY_HANDOFF_ADMITTED_EVENT,
     CAPABILITY_NEED_DECLARED_EVENT,
+    CapabilityAdmission,
     CapabilityBinding,
     CapabilityHostRequest,
     CapabilityNeed,
@@ -25,18 +26,18 @@ from codexia_manual_agent.completion_core import (
     CompletionCriterionResult,
 )
 from codexia_manual_agent.delegation_core import project_delegations
+from codexia_manual_agent.pack_core import (
+    PACK_WORKFLOW_BOUND_EVENT,
+    PackBinding,
+    PackMemberBinding,
+    PackMemberKind,
+)
 from codexia_manual_agent.role_core import (
     COGNITION_HANDOFF_ADMITTED_EVENT,
     CognitionPortRequest,
     ContextProjection,
     RoleBinding,
     RoleRun,
-)
-from codexia_manual_agent.pack_core import (
-    PACK_WORKFLOW_BOUND_EVENT,
-    PackBinding,
-    PackMemberBinding,
-    PackMemberKind,
 )
 from codexia_manual_agent.work_core import (
     WORK_CANCELLED_EVENT,
@@ -49,6 +50,7 @@ from codexia_manual_agent.work_core import (
 from codexia_manual_agent.workflow_core import (
     WORKFLOW_STARTED_EVENT,
     WorkflowBinding,
+    project_workflow_runs,
 )
 from codexia_manual_agent.workflow_orchestration import (
     BoundedExistingWorkProgressionAmbiguityError,
@@ -715,9 +717,6 @@ def test_multiple_unresolved_lanes_fail_closed_instead_of_scheduling(
 
     # First pending CapabilityNeed prevents Workflow progression, so use the
     # existing specialized admission path to create a second unresolved lane.
-    from codexia_manual_agent.capability_core import CapabilityAdmission
-    from codexia_manual_agent.workflow_core import project_workflow_runs
-
     workflow = project_workflow_runs(store.events(work.work_id))[0]
     second = CapabilityNeed.create(
         workflow=workflow,
@@ -767,6 +766,72 @@ def test_cancelled_work_returns_terminal_non_yield_without_provider(
     assert result.steps_used == 0
     assert result.frontier.kind is DurableWorkYieldKind.NONE
     assert result.frontier.snapshot.state is WorkState.CANCELLED
+
+
+class _CrossWorkReadStore:
+    def __init__(
+        self,
+        inner: SqliteWorkStore,
+        requested_work_id: str,
+        other_work_id: str,
+    ) -> None:
+        self._inner = inner
+        self._requested_work_id = requested_work_id
+        self._other_work_id = other_work_id
+        self._snapshot_calls = 0
+
+    def snapshot(self, _work_id: str):
+        self._snapshot_calls += 1
+        target = (
+            self._requested_work_id
+            if self._snapshot_calls == 1
+            else self._other_work_id
+        )
+        return self._inner.snapshot(target)
+
+    def events(self, _work_id: str):
+        target = (
+            self._requested_work_id
+            if self._snapshot_calls <= 1
+            else self._other_work_id
+        )
+        return self._inner.events(target)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+def test_each_progression_step_rejects_cross_work_store_aliasing(
+    tmp_path,
+) -> None:
+    inner = SqliteWorkStore(tmp_path / "cross-work.sqlite")
+    requested = _work(inner, label="cross-requested")
+    other = _work(inner, label="cross-other")
+    provider = _Provider(
+        label="cross-requested",
+        implementation=_AttentionImplementation(),
+    )
+    store = _CrossWorkReadStore(
+        inner,
+        requested.work_id,
+        other.work_id,
+    )
+
+    with pytest.raises(
+        BoundedExistingWorkProgressionBindingError,
+        match="requested Work identity",
+    ):
+        _service(
+            store,
+            provider,
+            plugin_service=_ExplodingPluginService(),
+        ).progress(
+            requested.work_id,
+            max_steps=1,
+        )
+
+    assert inner.events(requested.work_id) == ()
+    assert inner.events(other.work_id) == ()
 
 
 def test_preactivation_chronology_is_not_silently_adopted(tmp_path) -> None:
