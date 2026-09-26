@@ -228,12 +228,30 @@ class BoundedExistingWorkProgressionService:
         steps_used = 0
         for _ in range(max_steps):
             before = frontier.snapshot
-            attempted = self._advance_one(work_id)
+            attempted = self._advance_one(
+                work_id,
+                expected_snapshot=before,
+            )
             if not attempted:
                 frontier = project_durable_work_yield(
                     work_id,
                     store=self._store,
                 )
+                if frontier.kind is not DurableWorkYieldKind.NONE:
+                    return BoundedExistingWorkProgressionResult(
+                        status=BoundedExistingWorkProgressionStatus.YIELDED,
+                        frontier=frontier,
+                        steps_used=steps_used,
+                    )
+                if frontier.snapshot.state is not WorkState.ACTIVE:
+                    return BoundedExistingWorkProgressionResult(
+                        status=(
+                            BoundedExistingWorkProgressionStatus
+                            .TERMINAL_NON_YIELD
+                        ),
+                        frontier=frontier,
+                        steps_used=steps_used,
+                    )
                 return BoundedExistingWorkProgressionResult(
                     status=BoundedExistingWorkProgressionStatus.QUIESCENT,
                     frontier=frontier,
@@ -273,8 +291,24 @@ class BoundedExistingWorkProgressionService:
             steps_used=steps_used,
         )
 
-    def _advance_one(self, work_id: str) -> bool:
+    def _advance_one(
+        self,
+        work_id: str,
+        *,
+        expected_snapshot: WorkSnapshot,
+    ) -> bool:
+        if not isinstance(expected_snapshot, WorkSnapshot):
+            raise TypeError("expected_snapshot must be WorkSnapshot")
+
         snapshot, events = self._read_exact_work(work_id)
+        if snapshot != expected_snapshot:
+            # The caller decided to advance from another exact durable
+            # frontier. Do not reinterpret the newer chronology here: it may
+            # now expose AttentionNeed, WorkCompletion, cancellation, or any
+            # other host-visible boundary. The caller re-projects it before
+            # deciding what to do next.
+            return False
+
         workflows = project_workflow_runs(events)
 
         if not workflows:
