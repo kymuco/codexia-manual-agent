@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
 import io
@@ -268,7 +269,6 @@ def test_attention_yields_without_host_and_answer_resumes_same_work(
 
     retry = StandaloneWorkSurface(store).answer(
         work_id,
-        attention_id=need.attention_id,
         response_text="Continue with branch B.",
     )
     assert retry["idempotent"] is True
@@ -436,7 +436,8 @@ def test_product_surface_adds_no_scheduler_or_plugin_discovery() -> None:
         encoding="utf-8"
     )
 
-    assert "while " not in source
+    tree = ast.parse(source)
+    assert not any(isinstance(node, ast.While) for node in ast.walk(tree))
     assert "Scheduler" not in source
     assert "pkgutil" not in cli
     assert "entry_points" not in cli
