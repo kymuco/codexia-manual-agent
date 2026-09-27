@@ -8,10 +8,12 @@ from typing import Any
 from uuid import uuid4
 
 from codexia_manual_agent.attention_core import (
+    ATTENTION_RESPONSE_RECORDED_EVENT,
     AttentionAdmission,
     AttentionNeed,
     AttentionResponse,
     project_attention_need,
+    project_attention_response,
     project_attention_responses,
 )
 from codexia_manual_agent.capability_core import (
@@ -287,6 +289,22 @@ class StandaloneWorkSurface:
             raise ValueError("response_text must be non-empty text")
 
         snapshot, events, frontier = self._read_exact_surface(work_id)
+        if (
+            attention_id is None
+            and frontier.kind is not DurableWorkYieldKind.ATTENTION
+        ):
+            recovered = self._recover_head_answer_retry(
+                events,
+                response_text=response_text,
+                source_id=source_id,
+            )
+            if recovered is not None:
+                return {
+                    "response": recovered.to_dict(),
+                    "status": self.status(work_id),
+                    "idempotent": True,
+                }
+
         target = self._resolve_answer_target(
             events,
             frontier=frontier,
@@ -614,6 +632,44 @@ class StandaloneWorkSurface:
             "event_count": len(events),
             "latest_event": events[-1].to_dict() if events else None,
         }
+
+    def _recover_head_answer_retry(
+        self,
+        events: tuple[WorkEvent, ...],
+        *,
+        response_text: str,
+        source_id: str | None,
+    ) -> AttentionResponse | None:
+        if (
+            not events
+            or events[-1].kind != ATTENTION_RESPONSE_RECORDED_EVENT
+        ):
+            return None
+
+        response = project_attention_response(
+            events,
+            events[-1].event_id,
+        )
+        if (
+            response.source_namespace
+            != STANDALONE_ANSWER_SOURCE_NAMESPACE
+            or response.response_text != response_text
+        ):
+            return None
+
+        expected_source_id = source_id or (
+            f"attention:{response.attention_id}:"
+            f"{_canonical_digest({'response_text': response_text})}"
+        )
+        if response.source_id != expected_source_id:
+            return None
+        if response.source_payload_digest != _canonical_digest(
+            {"response_text": response_text}
+        ):
+            raise StandaloneWorkSurfaceBindingError(
+                "durable answer payload digest changed exact response evidence"
+            )
+        return response
 
     def _resolve_answer_target(
         self,
