@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "codexia:research-pack-provider",
+  "version": "1.0.0",
+  "source": {
+    "code_path": "plugin.py",
+    "class_name": "ResearchPackProviderV1"
+  }
+}
