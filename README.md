@@ -1,70 +1,183 @@
 # Codexia Manual Agent
 
-Codexia is a human-governed coding agent and local computational laboratory built around explicit authority, durable evidence, and fail-closed execution boundaries.
+Codexia is a **portable governed runtime for durable delegated intellectual work**.
 
-> **Status:** alpha (`0.5.0a0`). Codexia is actively developed and its security-sensitive interfaces should be treated as experimental.
+The repository name reflects the project's origin as a manually governed coding agent. The current Gen2 architecture is broader: Codexia owns the continuity and semantic lifecycle of delegated Work while keeping external execution authority separate.
 
-## What Codexia is
+> **Status:** alpha (`0.5.0a0`). Gen2 is the current product-development baseline. The standalone daily-use product is not yet considered proven; product proof is tracked through DW0–DW6.
 
-Codexia separates model reasoning from the authority to change a machine or repository. A model may propose work, but local policy, explicit authorization, bounded executors, and durable receipts determine what can actually happen.
+## Core idea
 
-The project currently spans four layers:
-
-- **agent runtime** — structured model interaction, bounded workspace inspection, prompts, and provider adapters;
-- **local authority and execution** — digest-bound proposals, one-shot authorization, controlled process/workspace/patch/Git mutation, and platform-specific containment;
-- **durable coordination** — persistent sessions, event receipts, bounded delegation, recovery, and integrity checks;
-- **computational lab** — typed experiment/run/evidence contracts plus an append-only SQLite registry for durable experiment, run, metric, and artifact existence.
-
-Codexia is developed and distributed as a standalone project. It does not require HDE, while remaining compatible with broader HDE integration.
-
-## Core safety model
-
-The central rule is simple:
+Codexia is built around a strict separation:
 
 ```text
 model intent != execution authority
 ```
 
-For side effects, Codexia uses an explicit authority spine:
+A model may reason, progress Work, delegate child Work, request capabilities, produce artifacts/evidence, ask for human judgment, or make a completion claim. None of those acts automatically grants permission to execute a process, mutate a workspace, change Git state, use the network, or perform another external effect.
+
+Important invariants include:
 
 ```text
-PROPOSED
-→ AUTHORIZED
-→ authorization consumed once
-→ EXECUTED
-→ OBSERVED
+worker output != WorkCompletion
+AttentionNeed != approval
+CapabilityNeed != host authority
+CapabilityOutcome.UNKNOWN != retry permission
+restart != replay
 ```
 
-A denial is terminal:
+## Current Gen2 runtime
+
+The current Gen2 baseline includes:
+
+- durable `Work` with exact ingress identity and append-only chronology;
+- `Workflow` / `WorkflowRun` progression;
+- `Role` / `RoleRun` bounded cognition;
+- durable child-Work delegation;
+- `ContextProjection`;
+- `CapabilityNeed`, durable capability handoff, and `CapabilityOutcome`;
+- `AttentionNeed` / `AttentionResponse`;
+- `ArtifactRef` / `EvidenceRef` relationships;
+- `CompletionClaim` and guarded `WorkCompletion`;
+- semantic `Pack` membership and exact Pack pinning;
+- restart-safe durable Work-yield projection;
+- finite bounded progression of one existing Work without a generic scheduler.
+
+The unit Codexia owns is **Work continuity**. Host environments remain responsible for concrete external authority and effects.
+
+## Durable Work lifecycle
+
+A simplified Gen2 flow is:
 
 ```text
-PROPOSED → DENIED
+human / host delegates Work
+        ↓
+Work
+        ↓
+Workflow / Role cognition
+        ↓
+optional child Work
+optional CapabilityNeed
+optional ArtifactRef / EvidenceRef
+        ↓
+AttentionNeed when genuine human judgment is required
+        ↓
+CompletionClaim
+        ↓
+guarded WorkCompletion
 ```
 
-Important properties include:
+Current durable host-return projection recognizes only:
 
-- proposal and observation data are digest-bound;
-- authorization receipts are one-shot and capability-scoped;
-- sensitive paths and repository control data are excluded from ordinary model-driven access;
-- execution and mutation backends fail closed when their required containment/atomicity primitives are unavailable;
-- provider or web-session transport is not treated as a security boundary;
-- durable registries distinguish authoritative chronology from derived navigation indexes and detect disagreement as persistence corruption.
+```text
+COMPLETION
+    exact guarded WorkCompletion
 
-Specific capabilities and platform guarantees are documented milestone-by-milestone under [`docs/`](docs/).
+ATTENTION
+    exact AttentionNeed at the current Work chronology head
 
-## Current development line
+NONE
+    no current durable return frontier
+```
 
-The repository currently contains the development line through **M4.2 — Durable Experiment / Run / Evidence Registry**.
+`NONE` is not a Work state and does not mean that progress is automatically safe or required.
 
-Highlights include:
+## Bounded progression
 
-- M1 — read-only runtime and bounded model-tool loop;
-- M2 — local authority, controlled process/workspace mutation, patch application, Git mutation governance, and bounded delegation;
-- M3 — persistent sessions/event receipts and durable delegation recovery;
-- M4.1 — computational-lab core contracts;
-- M4.2 — authoritative append-only SQLite experiment/run/evidence registry with integrity, recovery, concurrency, and corruption hardening.
+One existing Work can be progressed under an explicit finite budget.
 
-See [`docs/roadmap.md`](docs/roadmap.md) and [`CHANGELOG.md`](CHANGELOG.md) for the detailed history.
+Mechanism-level results include:
+
+```text
+YIELDED
+BOUND_EXHAUSTED
+QUIESCENT
+TERMINAL_NON_YIELD
+```
+
+These are not canonical Work states. They describe only the result of one bounded progression call.
+
+Each bounded semantic step is tied to the exact observed Work frontier. Concurrent durable changes invalidate stale progression decisions before they can continue from the old frontier.
+
+## Standalone viability
+
+The SV1–SV4 line proves increasingly strong standalone properties:
+
+- **SV1** — real standalone process Work from ingress to guarded WorkCompletion;
+- **SV2** — restart-safe continuation of the same Work without redispatching already durable handoffs;
+- **SV3** — durable process attempts, one-shot authority consumption, and an independent runner;
+- **SV4** — exact runner-liveness ownership and safe hard-kill reconciliation to `UNKNOWN` without replay.
+
+These proofs establish that Gen2 can survive real external-effect boundaries without making Codexia itself a general authority root.
+
+## Historical runtime and research substrate
+
+The repository also retains the earlier governed runtime and computational-lab lines:
+
+- **M1** — bounded read-only model/runtime foundation;
+- **M2** — governed process/workspace/patch/Git authority and execution;
+- **M3** — durable sessions, authority chronology, and delegation recovery;
+- **M4** — computational-lab contracts, governed execution, evidence, comparison, and bounded conclusion;
+- **M5** — bounded governed automation;
+- **M6 / Simple Work** — historical delegated-work continuity and product experiments.
+
+Those lines remain valuable implementation history and evidence, but new product development should not treat M6.x / Simple Work internals as the normative Gen2 architecture.
+
+See [`docs/roadmap.md`](docs/roadmap.md) for milestone history and [`docs/gen2_product_baseline.md`](docs/gen2_product_baseline.md) for the current product baseline.
+
+## Current product roadmap
+
+Gen2 product development is now tracked by the DW roadmap:
+
+```text
+DW0  freeze Gen2 baseline / retire legacy product branches
+DW1  standalone Gen2 Work surface
+DW2  Research Work Pack v1
+DW3  real Research Work vertical
+DW4  restart + genuine human-attention continuation
+DW5  Software Work Pack v1
+DW6  general daily-use delegated-work pilot
+```
+
+The roadmap is tracked in GitHub issue **#84**.
+
+The development rule is intentionally failure-driven:
+
+```text
+real vertical
+→ concrete failure
+→ smallest missing invariant
+→ bounded repair
+→ rerun vertical
+```
+
+Major integrations such as HDE or a Runplane-backed technical host are intentionally deferred until the standalone Gen2 product proof is complete.
+
+## Existing governed local execution surfaces
+
+The older local-runtime surfaces remain available for bounded, explicitly governed work.
+
+Read-only inspection:
+
+```powershell
+codexia inspect --workspace W:\dev\some-repository list
+codexia inspect --workspace W:\dev\some-repository read README.md
+codexia inspect --workspace W:\dev\some-repository search "TODO" src
+codexia inspect --workspace W:\dev\some-repository git-status
+```
+
+Human-authorized bounded process execution:
+
+```powershell
+codexia exec `
+  --workspace W:\dev\some-repository `
+  --approve `
+  --timeout 60 `
+  -- `
+  python -m pytest -q
+```
+
+These surfaces are not the future DW1 product UI and should not be read as a complete capability reference.
 
 ## Requirements
 
@@ -72,9 +185,9 @@ See [`docs/roadmap.md`](docs/roadmap.md) and [`CHANGELOG.md`](CHANGELOG.md) for 
 - Windows or Linux, depending on the capability being exercised
 - Bubblewrap for Linux process containment where required
 
-On Windows, the M2.5.1 HTTPS credential transport requires patched CPython with private `tempfile.mkdtemp()` directory semantics: CPython **3.11.10+**, **3.12.4+**, or **3.13+**. Older 3.11/3.12 patch releases and unproven alternative Python implementations fail closed for that transport rather than materializing a credential response in a namespace whose confidentiality is not established.
+On Windows, the governed M2.5.1 HTTPS credential transport requires patched CPython with private `tempfile.mkdtemp()` directory semantics: CPython **3.11.10+**, **3.12.4+**, or **3.13+**. Older 3.11/3.12 patch releases and unproven alternative Python implementations fail closed for that transport rather than materializing a credential response in a namespace whose confidentiality is not established.
 
-Some mutation primitives are intentionally platform-constrained. Codexia does not silently fall back to a weaker backend when a required security primitive is unavailable.
+Some high-assurance mutation primitives are intentionally platform-constrained. Codexia fails closed rather than silently substituting weaker guarantees.
 
 ## Install
 
@@ -84,7 +197,7 @@ Core development install:
 python -m pip install -e .
 ```
 
-With the optional ChatGPT web transport:
+With optional ChatGPT web transport:
 
 ```bash
 python -m pip install -e ".[web]"
@@ -96,59 +209,27 @@ With test tooling:
 python -m pip install -e ".[test]"
 ```
 
-## Run the test suite
+## Test
 
 ```bash
 python -m pytest -q
 ```
 
-The project test suite is designed to exercise denial, corruption, rollback, recovery, and authority-boundary behavior in addition to successful paths.
-
-## Basic usage
-
-Read-only model task:
-
-```powershell
-codexia run "Inspect this repository and summarize its architecture" `
-  --workspace W:\dev\some-repository `
-  --auth-file W:\secrets\auth_data.json `
-  --model thinking `
-  --reasoning-effort high
-```
-
-Direct read-only inspection:
-
-```powershell
-codexia inspect --workspace W:\dev\some-repository list
-codexia inspect --workspace W:\dev\some-repository read README.md
-codexia inspect --workspace W:\dev\some-repository search "TODO" src
-codexia inspect --workspace W:\dev\some-repository git-status
-```
-
-Human-authorized local process:
-
-```powershell
-codexia exec `
-  --workspace W:\dev\some-repository `
-  --approve `
-  --timeout 60 `
-  -- `
-  python -m pytest -q
-```
-
-Do not treat these examples as a complete capability reference. Security-sensitive execution and mutation behavior is defined by the contracts and milestone documentation, not by README examples.
+The test suite exercises successful paths together with denial, corruption, concurrency, replay, restart, ambiguity, and authority-boundary behavior.
 
 ## Documentation
 
 Useful entry points:
 
-- [`docs/architecture.md`](docs/architecture.md) — architecture overview;
+- [`docs/gen2_product_baseline.md`](docs/gen2_product_baseline.md) — current Gen2 product baseline and DW policy;
+- [`docs/roadmap.md`](docs/roadmap.md) — historical milestone roadmap;
+- [`docs/architecture.md`](docs/architecture.md) — governed runtime architecture;
 - [`docs/governance.md`](docs/governance.md) — project and authority principles;
-- [`docs/roadmap.md`](docs/roadmap.md) — milestone history and planned work;
-- [`docs/m4_1_computational_lab_core_contracts.md`](docs/m4_1_computational_lab_core_contracts.md) — computational-lab contracts;
-- [`docs/m4_2_durable_experiment_registry.md`](docs/m4_2_durable_experiment_registry.md) — durable experiment/run/evidence registry.
+- [`docs/hde_durable_work_yield_projection_v1.md`](docs/hde_durable_work_yield_projection_v1.md) — durable Work-yield projection contract;
+- [`docs/hde_bounded_existing_work_progression_v1.md`](docs/hde_bounded_existing_work_progression_v1.md) — bounded existing-Work progression contract;
+- [`docs/sv4_process_runner_ownership_reconciliation.md`](docs/sv4_process_runner_ownership_reconciliation.md) — hard-kill runner reconciliation.
 
-Historical prompts and evaluation material are retained for provenance where appropriate.
+Historical M1–M6 documents are retained for provenance.
 
 ## Security
 
@@ -156,12 +237,16 @@ Do not commit authentication state, cookies, tokens, private keys, or live crede
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Changes that expand authority, weaken fail-closed behavior, or alter durable evidence semantics require explicit tests and review.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Changes that expand authority, weaken fail-closed behavior, alter durable evidence semantics, introduce replay, or add new canonical Work semantics require explicit tests and review.
 
 ## License
 
-Codexia is **source-available** under the [PolyForm Perimeter License 1.0.1](LICENSE). The public license permits use, modification, and distribution for permitted purposes, but it does not permit providing others with a product that competes with Codexia as defined by the license.
+Codexia is **source-available** under the [PolyForm Perimeter License 1.0.1](LICENSE).
 
-Internal professional and business use is not prohibited merely because it is commercial. Separate written commercial licenses may be offered for competing products, OEM or white-label distribution, or other uses that require rights beyond the public license.
+The public license permits use, modification, and distribution for permitted purposes, but it does not permit providing others with a competing product as defined by the license.
 
-Because the public license restricts competing use, Codexia is not OSI open-source software. See [`LICENSING.md`](LICENSING.md) for the licensing, contribution, and commercial-licensing policy.
+Internal professional and business use is not prohibited merely because it is commercial. Separate written **commercial licenses** may be offered for competing products, OEM or white-label distribution, or other uses that require rights beyond the public license.
+
+Because the public license restricts competing use, Codexia is not OSI open-source software. See [`LICENSING.md`](LICENSING.md) for licensing and commercial-use details.
