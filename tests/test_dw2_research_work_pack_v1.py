@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
-import json
+import importlib.util
+import sys
+import types
 from pathlib import Path
 
 from codexia_manual_agent.research_work import (
@@ -148,6 +150,55 @@ def _progress_host(
         instructions=ResearchInstructionsMaterialPort(),
         context=ResearchContextMaterialPort(store=store, work_id=work_id),
     )
+
+
+def test_research_invariant_provider_and_manifest_match_exact_pack(
+    monkeypatch,
+) -> None:
+    spec_module = types.ModuleType("invariant.spec")
+
+    class BasePlugin:
+        pass
+
+    spec_module.BasePlugin = BasePlugin
+    invariant_module = types.ModuleType("invariant")
+    invariant_module.spec = spec_module
+    monkeypatch.setitem(sys.modules, "invariant", invariant_module)
+    monkeypatch.setitem(sys.modules, "invariant.spec", spec_module)
+
+    root = Path(__file__).resolve().parents[1]
+    plugin_path = (
+        root
+        / "examples"
+        / "invariant_research_pack_v1"
+        / "plugin.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "dw2_research_pack_v1",
+        plugin_path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    provider = module.ResearchPackProviderV1()
+
+    distribution = provider.codexia_pack_distribution()
+    assert distribution["pack"] == research_pack_binding().to_dict()
+    assert distribution["workflows"] == [research_workflow_binding().to_dict()]
+    assert distribution["roles"] == [
+        item.to_dict() for item in research_role_bindings()
+    ]
+    assert distribution["capabilities"] == []
+
+    manifest = (
+        root
+        / "examples"
+        / "invariant_research_pack_v1"
+        / "manifest.json"
+    ).read_text(encoding="utf-8")
+    assert '"id": "codexia:research-pack-provider"' in manifest
+    assert '"version": "1.0.0"' in manifest
+    assert '"class_name": "ResearchPackProviderV1"' in manifest
 
 
 def test_research_pack_distribution_is_exact() -> None:
