@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 
-from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
+from codexia_manual_agent.domain.errors import ProviderError
+from codexia_manual_agent.domain.models import (
+    ProviderConversation,
+    ProviderRequest,
+    ProviderResponse,
+)
 from codexia_manual_agent.providers.model_provider_cognition import (
     ModelProviderCognitionPort,
 )
@@ -79,6 +86,117 @@ def _required_work_id() -> str:
     return work_id
 
 
+class _ExternalCwaProvider:
+    """Use an independently managed CWA installation through its stable CLI."""
+
+    def __init__(
+        self,
+        *,
+        executable: str,
+        auth_file: str,
+        profile: str,
+        timeout: float,
+    ) -> None:
+        self._executable = Path(executable).expanduser()
+        if not self._executable.is_file():
+            raise RuntimeError(
+                "CODEXIA_DW3_CWA_EXE must point to the independently managed cwa executable"
+            )
+        self._auth_file = auth_file
+        self._profile = profile
+        self._timeout = timeout
+
+    @property
+    def provider_id(self) -> str:
+        return "cwa-subprocess"
+
+    def send(self, request: ProviderRequest) -> ProviderResponse:
+        prompt = request.prompt
+        if request.system is not None and request.system.strip():
+            prompt = (
+                "[Codexia product-runtime system context]\n"
+                f"{request.system.strip()}\n\n"
+                "[Codexia product-runtime request]\n"
+                f"{request.prompt}"
+            )
+
+        command = [
+            str(self._executable),
+            "send",
+            prompt,
+            "--profile",
+            self._profile,
+            "--timeout",
+            str(self._timeout),
+            "--auth-file",
+            self._auth_file,
+            "--json",
+        ]
+        if request.conversation is not None and request.conversation.conversation_id:
+            command.extend(["--conversation", request.conversation.conversation_id])
+
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise ProviderError(
+                f"external CWA request failed with exit {completed.returncode}: {detail}"
+            )
+
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise ProviderError("external CWA did not return JSON") from exc
+        if payload.get("ok") is not True or not isinstance(payload.get("text"), str):
+            raise ProviderError("external CWA returned an invalid successful execution")
+
+        return ProviderResponse(
+            text=payload["text"],
+            conversation=ProviderConversation(
+                conversation_id=payload.get("conversation_id"),
+                message_id=payload.get("message_id"),
+                finish_reason=payload.get("finish_reason"),
+            ),
+            model=payload.get("observed_model"),
+            metrics={
+                "backend_status": payload.get("backend_status"),
+                "transport": payload.get("transport"),
+                "runtime_observation": payload.get("runtime_observation"),
+                "provenance": payload.get("provenance"),
+            },
+        )
+
+
+def _cwa_profile() -> str:
+    explicit = os.environ.get("CODEXIA_DW3_CWA_PROFILE", "").strip().upper()
+    if explicit:
+        if explicit not in {"FAST", "BALANCED", "DEEP"}:
+            raise RuntimeError(
+                "CODEXIA_DW3_CWA_PROFILE must be FAST, BALANCED, or DEEP"
+            )
+        return explicit
+
+    reasoning = os.environ.get("CODEXIA_DW3_REASONING_EFFORT", "").strip().lower()
+    return {
+        "minimal": "FAST",
+        "low": "FAST",
+        "instant": "FAST",
+        "fast": "FAST",
+        "medium": "BALANCED",
+        "standard": "BALANCED",
+        "balanced": "BALANCED",
+        "high": "DEEP",
+        "extended": "DEEP",
+        "deep": "DEEP",
+    }.get(reasoning, "DEEP")
+
+
 def create_host() -> StandaloneWorkHost:
     """Trusted host factory used by the existing `codexia work` CLI.
 
@@ -94,10 +212,15 @@ def create_host() -> StandaloneWorkHost:
         return StandaloneWorkHost(plugin_service=service)
 
     store = SqliteWorkStore(_store_path())
-    provider = ChatGPTWebProvider(
+    cwa_executable = os.environ.get("CODEXIA_DW3_CWA_EXE", "").strip()
+    if not cwa_executable:
+        raise RuntimeError(
+            "CODEXIA_DW3_CWA_EXE is required for live research progression"
+        )
+    provider = _ExternalCwaProvider(
+        executable=cwa_executable,
         auth_file=os.environ.get("CODEXIA_DW3_AUTH_FILE", "auth_data.json"),
-        model=os.environ.get("CODEXIA_DW3_MODEL") or None,
-        reasoning_effort=os.environ.get("CODEXIA_DW3_REASONING_EFFORT") or None,
+        profile=_cwa_profile(),
         timeout=float(os.environ.get("CODEXIA_DW3_TIMEOUT", "180")),
     )
     return StandaloneWorkHost(
