@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -123,6 +124,12 @@ class _ScriptedCognitionPort:
             request.request,
             output_text=self.outputs.pop(0),
         )
+
+
+def _context_payload(raw: str) -> dict:
+    value = json.loads(raw)
+    assert isinstance(value, dict)
+    return value
 
 
 def _selector() -> StandaloneWorkSelector:
@@ -266,9 +273,16 @@ def test_research_work_runs_critique_revision_materialization_and_completion(
     assert progressed["progression"]["status"] == "bound_exhausted"
     assert port.calls == 4
     assert len(project_role_runs(store.events(work_id))) == 4
-    assert initial in port.contexts[1]
-    assert critique in port.contexts[2]
-    assert revision in port.contexts[3]
+    critic_context = _context_payload(port.contexts[1])
+    reviser_context = _context_payload(port.contexts[2])
+    synthesis_context = _context_payload(port.contexts[3])
+    assert critic_context["prior_outputs"] == [initial]
+    assert reviser_context["prior_outputs"] == [initial, critique]
+    assert synthesis_context["prior_outputs"] == [
+        initial,
+        critique,
+        revision,
+    ]
 
     restarted = SqliteWorkStore(path)
     before_material = len(restarted.events(work_id))
@@ -387,7 +401,10 @@ def test_research_pack_uses_attention_only_for_explicit_human_judgment(
     )
     assert resumed["progression"]["status"] == "bound_exhausted"
     assert remaining.calls == 3
-    assert "Optimize for robustness." in remaining.contexts[0]
+    resumed_context = _context_payload(remaining.contexts[0])
+    assert resumed_context["human_responses"] == [
+        "Optimize for robustness."
+    ]
 
 
 def test_restart_does_not_repeat_completed_research_roles(tmp_path) -> None:
