@@ -185,6 +185,8 @@ These surfaces are not the future DW1 product UI and should not be read as a com
 - Windows or Linux, depending on the capability being exercised
 - Bubblewrap for Linux process containment where required
 
+On Windows, the governed M2.5.1 HTTPS credential transport requires patched CPython with private `tempfile.mkdtemp()` directory semantics: CPython **3.11.10+**, **3.12.4+**, or **3.13+**. Older 3.11/3.12 patch releases and unproven alternative Python implementations fail closed for that transport rather than materializing a credential response in a namespace whose confidentiality is not established.
+
 Some high-assurance mutation primitives are intentionally platform-constrained. Codexia fails closed rather than silently substituting weaker guarantees.
 
 ## Install
