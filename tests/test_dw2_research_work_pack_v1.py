@@ -7,6 +7,9 @@ import sys
 import types
 from pathlib import Path
 
+from codexia_manual_agent.completion_core import (
+    project_admitted_completion_claim,
+)
 from codexia_manual_agent.research_work import (
     ResearchContextMaterialPort,
     ResearchInstructionsMaterialPort,
@@ -322,9 +325,13 @@ def test_research_work_runs_critique_revision_materialization_and_completion(
     )
     assert completed["progression"]["status"] == "yielded"
     assert completed["progression"]["yield"]["kind"] == "completion"
-    assert completed["status"]["yield"]["completion"]["summary"] == (
-        RESEARCH_COMPLETION_SUMMARY
+    completion = completed["status"]["yield"]["completion"]
+    admitted_claim = project_admitted_completion_claim(
+        restarted.events(work_id),
+        completion["claim_id"],
     )
+    assert admitted_claim.summary == RESEARCH_COMPLETION_SUMMARY
+    assert admitted_claim.claim_digest == completion["claim_digest"]
     assert no_more_cognition.calls == 0
 
 
