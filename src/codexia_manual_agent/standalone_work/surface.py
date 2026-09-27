@@ -22,8 +22,15 @@ from codexia_manual_agent.capability_core import (
     project_capability_needs,
 )
 from codexia_manual_agent.delegation_core import project_delegations
-from codexia_manual_agent.invariant_bridge import ManagedPluginServicePort
+from codexia_manual_agent.invariant_bridge import (
+    InvariantPackDistributionBridge,
+    ManagedPluginServicePort,
+    ResolvedPackDistribution,
+)
 from codexia_manual_agent.pack_core import (
+    PackAdmission,
+    PackBindingError,
+    PackWorkflowBinding,
     project_pack_workflow_bindings,
     project_workflow_pack_binding,
 )
@@ -35,13 +42,21 @@ from codexia_manual_agent.role_core import (
 from codexia_manual_agent.work_core import (
     Work,
     WorkEvent,
+    WorkConcurrencyError,
     WorkIngressBinding,
     WorkSnapshot,
     WorkState,
     WorkStore,
 )
-from codexia_manual_agent.workflow_core import project_workflow_runs
+from codexia_manual_agent.workflow_core import (
+    WorkflowAdmission,
+    WorkflowBinding,
+    WorkflowRun,
+    WorkflowRunSnapshot,
+    project_workflow_runs,
+)
 from codexia_manual_agent.workflow_orchestration import (
+    MAX_BOUNDED_EXISTING_WORK_STEPS,
     BoundedExistingWorkProgressionResult,
     BoundedExistingWorkProgressionService,
     BoundedExistingWorkProgressionStatus,
@@ -170,23 +185,11 @@ class StandaloneWorkSurface:
             ),
         )
         snapshot = self._store.create(work)
-        events = self._store.events(snapshot.work.work_id)
-
-        missing_activation_steps = self._missing_activation_steps(
-            snapshot,
-            events,
+        self._activate_exact_work(
+            snapshot.work.work_id,
             selector=selector,
+            host_factory=host_factory,
         )
-        if missing_activation_steps:
-            host = host_factory()
-            self._progression_service(
-                selector=selector,
-                host=host,
-            ).progress(
-                snapshot.work.work_id,
-                max_steps=missing_activation_steps,
-            )
-
         self._require_exact_activation(
             snapshot.work.work_id,
             selector=selector,
@@ -213,6 +216,7 @@ class StandaloneWorkSurface:
             raise TypeError("selector must be StandaloneWorkSelector")
         if not callable(host_factory):
             raise TypeError("host_factory must be callable")
+        self._validate_step_budget(max_steps)
 
         snapshot, events, frontier = self._read_exact_surface(work_id)
         self._require_selector_matches_durable_work(
@@ -380,26 +384,202 @@ class StandaloneWorkSurface:
             context=host.context,
         )
 
-    def _missing_activation_steps(
+    def _activate_exact_work(
         self,
-        snapshot: WorkSnapshot,
-        events: tuple[WorkEvent, ...],
+        work_id: str,
         *,
         selector: StandaloneWorkSelector,
-    ) -> int:
+        host_factory: StandaloneWorkHostFactory,
+    ) -> None:
+        host: StandaloneWorkHost | None = None
+
+        def require_host() -> StandaloneWorkHost:
+            nonlocal host
+            if host is None:
+                candidate = host_factory()
+                if not isinstance(candidate, StandaloneWorkHost):
+                    raise TypeError(
+                        "host_factory must return StandaloneWorkHost"
+                    )
+                host = candidate
+            return host
+
+        snapshot, events, _ = self._read_exact_surface(work_id)
         workflows = project_workflow_runs(events)
         if not workflows:
             if snapshot.revision != 0 or events:
                 raise StandaloneWorkSurfaceBindingError(
                     "unconfigured standalone Work already has durable chronology"
                 )
-            return 2
+            distribution, binding = self._resolve_activation_target(
+                selector=selector,
+                host=require_host(),
+            )
+            run = WorkflowRun.create(
+                snapshot=snapshot,
+                binding=binding,
+            )
+            try:
+                WorkflowAdmission(self._store).admit_start(run)
+            except WorkConcurrencyError:
+                recovered_snapshot, recovered_events, _ = (
+                    self._read_exact_surface(work_id)
+                )
+                recovered_workflows = project_workflow_runs(
+                    recovered_events
+                )
+                if len(recovered_workflows) != 1:
+                    raise StandaloneWorkSurfaceConcurrencyError(
+                        "concurrent activation did not establish one WorkflowRun"
+                    )
+                self._require_workflow_matches_selector(
+                    recovered_workflows[0],
+                    selector=selector,
+                )
+                if recovered_snapshot.work.work_id != work_id:
+                    raise StandaloneWorkSurfaceBindingError(
+                        "concurrent activation crossed Work identity"
+                    )
+                workflows = recovered_workflows
+            else:
+                workflows = project_workflow_runs(
+                    self._store.events(work_id)
+                )
+                if len(workflows) != 1:
+                    raise StandaloneWorkSurfaceBindingError(
+                        "workflow admission did not establish one WorkflowRun"
+                    )
+            workflow = workflows[0]
+            self._require_workflow_matches_selector(
+                workflow,
+                selector=selector,
+            )
+            # The provider was already resolved before the concurrent CAS.
+            # If another caller also pinned while we were racing, its exact
+            # Pack semantics must agree with this distribution below.
+            expected_distribution = distribution
+        else:
+            if len(workflows) != 1:
+                raise StandaloneWorkSurfaceBindingError(
+                    "standalone Work must contain exactly one WorkflowRun"
+                )
+            workflow = workflows[0]
+            self._require_workflow_matches_selector(
+                workflow,
+                selector=selector,
+            )
+            expected_distribution = None
 
+        snapshot, events, _ = self._read_exact_surface(work_id)
+        workflows = project_workflow_runs(events)
         if len(workflows) != 1:
             raise StandaloneWorkSurfaceBindingError(
-                "standalone Work must contain exactly one WorkflowRun"
+                "activation recovery changed WorkflowRun cardinality"
             )
         workflow = workflows[0]
+        self._require_workflow_matches_selector(
+            workflow,
+            selector=selector,
+        )
+        pin = project_workflow_pack_binding(
+            events,
+            workflow.run.workflow_run_id,
+        )
+        if pin is not None:
+            if (
+                expected_distribution is not None
+                and pin.pack != expected_distribution.pack
+            ):
+                raise StandaloneWorkSurfaceBindingError(
+                    "concurrent Pack pin differs from exact provider distribution"
+                )
+            return
+
+        if (
+            not events
+            or events[-1].event_id != workflow.run.workflow_run_id
+            or events[-1].sequence != snapshot.revision
+            or events[-1].event_digest != snapshot.last_event_digest
+        ):
+            raise StandaloneWorkSurfaceBindingError(
+                "unpinned WorkflowRun is not the exact activation frontier"
+            )
+
+        if expected_distribution is None:
+            expected_distribution, binding = self._resolve_activation_target(
+                selector=selector,
+                host=require_host(),
+            )
+            if workflow.run.binding != binding:
+                raise StandaloneWorkSurfaceBindingError(
+                    "existing WorkflowRun differs from exact provider distribution"
+                )
+
+        candidate = PackWorkflowBinding.create(
+            workflow=workflow,
+            snapshot=snapshot,
+            pack=expected_distribution.pack,
+        )
+        try:
+            PackAdmission(self._store).admit_workflow_binding(candidate)
+        except (PackBindingError, WorkConcurrencyError):
+            recovered_snapshot, recovered_events, _ = (
+                self._read_exact_surface(work_id)
+            )
+            recovered_workflows = project_workflow_runs(recovered_events)
+            if len(recovered_workflows) != 1:
+                raise StandaloneWorkSurfaceConcurrencyError(
+                    "concurrent Pack activation changed WorkflowRun cardinality"
+                )
+            recovered_workflow = recovered_workflows[0]
+            self._require_workflow_matches_selector(
+                recovered_workflow,
+                selector=selector,
+            )
+            recovered_pin = project_workflow_pack_binding(
+                recovered_events,
+                recovered_workflow.run.workflow_run_id,
+            )
+            if recovered_pin is None:
+                raise StandaloneWorkSurfaceConcurrencyError(
+                    "concurrent activation did not establish exact Pack pin"
+                )
+            if recovered_pin.pack != expected_distribution.pack:
+                raise StandaloneWorkSurfaceBindingError(
+                    "concurrent Pack pin differs from exact provider distribution"
+                )
+            if recovered_snapshot.work.work_id != work_id:
+                raise StandaloneWorkSurfaceBindingError(
+                    "concurrent Pack activation crossed Work identity"
+                )
+
+    def _resolve_activation_target(
+        self,
+        *,
+        selector: StandaloneWorkSelector,
+        host: StandaloneWorkHost,
+    ) -> tuple[ResolvedPackDistribution, WorkflowBinding]:
+        distribution = InvariantPackDistributionBridge(
+            host.plugin_service
+        ).resolve(selector.provider_ref)
+        matches = tuple(
+            binding
+            for binding in distribution.workflows
+            if binding.workflow_id == selector.workflow_id
+            and binding.version == selector.workflow_version
+        )
+        if len(matches) != 1:
+            raise StandaloneWorkSurfaceBindingError(
+                "provider distribution does not expose one exact selected Workflow"
+            )
+        return distribution, matches[0]
+
+    @staticmethod
+    def _require_workflow_matches_selector(
+        workflow: WorkflowRunSnapshot,
+        *,
+        selector: StandaloneWorkSelector,
+    ) -> None:
         binding = workflow.run.binding
         if (
             binding.workflow_id != selector.workflow_id
@@ -409,17 +589,17 @@ class StandaloneWorkSurface:
                 "existing WorkflowRun differs from selected Workflow"
             )
 
-        pin = project_workflow_pack_binding(
-            events,
-            workflow.run.workflow_run_id,
-        )
-        if pin is None:
-            if snapshot.revision != 1 or len(events) != 1:
-                raise StandaloneWorkSurfaceBindingError(
-                    "unbound WorkflowRun is not the exact activation frontier"
-                )
-            return 1
-        return 0
+    @staticmethod
+    def _validate_step_budget(max_steps: int) -> None:
+        if (
+            type(max_steps) is not int
+            or max_steps <= 0
+            or max_steps > MAX_BOUNDED_EXISTING_WORK_STEPS
+        ):
+            raise ValueError(
+                "max_steps must be an integer in "
+                f"[1, {MAX_BOUNDED_EXISTING_WORK_STEPS}]"
+            )
 
     def _require_exact_activation(
         self,
