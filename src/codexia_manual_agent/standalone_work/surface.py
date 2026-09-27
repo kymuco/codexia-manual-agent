@@ -539,19 +539,20 @@ class StandaloneWorkSurface:
         ]
         child_rows: list[dict[str, Any]] = []
         live_children = 0
-        for delegation in delegations[:MAX_STATUS_ITEMS]:
+        for index, delegation in enumerate(delegations):
             child = self._store.snapshot(delegation.child_work.work_id)
             if child.state is WorkState.ACTIVE:
                 live_children += 1
-            child_rows.append(
-                {
-                    "delegation_id": delegation.delegation_id,
-                    "work_id": child.work.work_id,
-                    "state": child.state.value,
-                    "revision": child.revision,
-                    "objective": child.work.objective,
-                }
-            )
+            if index < MAX_STATUS_ITEMS:
+                child_rows.append(
+                    {
+                        "delegation_id": delegation.delegation_id,
+                        "work_id": child.work.work_id,
+                        "state": child.state.value,
+                        "revision": child.revision,
+                        "objective": child.work.objective,
+                    }
+                )
 
         yield_data: dict[str, Any] = {"kind": frontier.kind.value}
         if frontier.attention is not None:
