@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -43,6 +44,16 @@ from codexia_manual_agent.mutation import (
     MutationTerminationReason,
 )
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
+from codexia_manual_agent.standalone_work import (
+    StandaloneWorkHost,
+    StandaloneWorkSelector,
+    StandaloneWorkSurface,
+    StandaloneWorkSurfaceError,
+)
+from codexia_manual_agent.work_core import SqliteWorkStore, WorkStoreError
+from codexia_manual_agent.workflow_orchestration import (
+    BoundedExistingWorkProgressionError,
+)
 
 
 def _state_directory(workspace: Path, supplied: str | None) -> Path:
@@ -277,6 +288,85 @@ def _build_parser() -> argparse.ArgumentParser:
         "--https-ca-bundle",
         help="Absolute CA bundle path required by --transport https.",
     )
+
+
+    work_parser = subparsers.add_parser(
+        "work",
+        help="Use the standalone Gen2 durable Work product surface.",
+    )
+    work_subparsers = work_parser.add_subparsers(
+        dest="work_action",
+        required=True,
+    )
+
+    def add_work_store_arguments(
+        command_parser: argparse.ArgumentParser,
+    ) -> None:
+        command_parser.add_argument(
+            "--store",
+            default=".codexia/work.sqlite3",
+            help="SQLite path containing canonical Gen2 Work chronology.",
+        )
+        command_parser.add_argument("--json", action="store_true")
+
+    def add_work_runtime_arguments(
+        command_parser: argparse.ArgumentParser,
+    ) -> None:
+        command_parser.add_argument(
+            "--host-factory",
+            required=True,
+            help=(
+                "Trusted local module:function returning StandaloneWorkHost. "
+                "This is explicit host composition, not plugin discovery."
+            ),
+        )
+        command_parser.add_argument("--provider-ref", required=True)
+        command_parser.add_argument("--workflow-id", required=True)
+        command_parser.add_argument("--workflow-version", required=True)
+
+    work_start = work_subparsers.add_parser(
+        "start",
+        help="Create and exactly activate one durable Gen2 Work.",
+    )
+    work_start.add_argument("objective")
+    work_start.add_argument("--source-id")
+    add_work_store_arguments(work_start)
+    add_work_runtime_arguments(work_start)
+
+    work_status = work_subparsers.add_parser(
+        "status",
+        help="Read the current durable Work frontier.",
+    )
+    work_status.add_argument("work_id")
+    add_work_store_arguments(work_status)
+
+    work_advance = work_subparsers.add_parser(
+        "advance",
+        help="Progress one existing Work through an explicit finite budget.",
+    )
+    work_advance.add_argument("work_id")
+    work_advance.add_argument("--max-steps", type=int, default=8)
+    add_work_store_arguments(work_advance)
+    add_work_runtime_arguments(work_advance)
+
+    work_inspect = work_subparsers.add_parser(
+        "inspect",
+        help="Inspect exact durable Work chronology with bounded pagination.",
+    )
+    work_inspect.add_argument("work_id")
+    work_inspect.add_argument("--offset", type=int, default=0)
+    work_inspect.add_argument("--limit", type=int, default=100)
+    add_work_store_arguments(work_inspect)
+
+    work_answer = work_subparsers.add_parser(
+        "answer",
+        help="Record exact response evidence for current AttentionNeed.",
+    )
+    work_answer.add_argument("work_id")
+    work_answer.add_argument("response")
+    work_answer.add_argument("--attention-id")
+    work_answer.add_argument("--source-id")
+    add_work_store_arguments(work_answer)
 
     return parser
 
@@ -538,6 +628,104 @@ def _git_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             close_governed_git_push_preparation(preparation)
 
 
+
+def _work_store(path: str) -> SqliteWorkStore:
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteWorkStore(target)
+
+
+def _standalone_selector(args: argparse.Namespace) -> StandaloneWorkSelector:
+    return StandaloneWorkSelector(
+        provider_ref=args.provider_ref,
+        workflow_id=args.workflow_id,
+        workflow_version=args.workflow_version,
+    )
+
+
+def _standalone_host_factory(spec: str):
+    if type(spec) is not str or spec.count(":") != 1:
+        raise ValueError("host factory must use exact module:function syntax")
+    module_name, attribute = spec.split(":", 1)
+    if (
+        not module_name
+        or not attribute
+        or module_name != module_name.strip()
+        or attribute != attribute.strip()
+    ):
+        raise ValueError("host factory must use exact module:function syntax")
+
+    def factory() -> StandaloneWorkHost:
+        try:
+            module = importlib.import_module(module_name)
+        except (ImportError, ValueError) as exc:
+            raise ValueError(
+                f"cannot import standalone host module: {module_name}"
+            ) from exc
+        target = getattr(module, attribute, None)
+        if not callable(target):
+            raise ValueError(
+                "standalone host factory attribute must be callable"
+            )
+        host = target()
+        if not isinstance(host, StandaloneWorkHost):
+            raise ValueError(
+                "standalone host factory must return StandaloneWorkHost"
+            )
+        return host
+
+    return factory
+
+
+def _work_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    surface = StandaloneWorkSurface(_work_store(args.store))
+
+    if args.work_action == "start":
+        data = surface.start(
+            objective=args.objective,
+            selector=_standalone_selector(args),
+            host_factory=_standalone_host_factory(args.host_factory),
+            source_id=args.source_id,
+        )
+        return data, 0
+
+    if args.work_action == "status":
+        return surface.status(args.work_id), 0
+
+    if args.work_action == "advance":
+        data = surface.advance(
+            args.work_id,
+            selector=_standalone_selector(args),
+            host_factory=_standalone_host_factory(args.host_factory),
+            max_steps=args.max_steps,
+        )
+        progression_status = data["progression"]["status"]
+        return data, 0 if progression_status != "terminal_non_yield" else 1
+
+    if args.work_action == "inspect":
+        return (
+            surface.inspect(
+                args.work_id,
+                offset=args.offset,
+                limit=args.limit,
+            ),
+            0,
+        )
+
+    if args.work_action == "answer":
+        return (
+            surface.answer(
+                args.work_id,
+                response_text=args.response,
+                attention_id=args.attention_id,
+                source_id=args.source_id,
+            ),
+            0,
+        )
+
+    raise RuntimeError(f"Unknown standalone Work action: {args.work_action}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -557,10 +745,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             data, exit_code = _write_command(args)
         elif args.command == "git":
             data, exit_code = _git_command(args)
+        elif args.command == "work":
+            data, exit_code = _work_command(args)
         else:  # pragma: no cover - argparse prevents this
             parser.error(f"Unknown command: {args.command}")
             return 2
-    except (CodexiaError, OSError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        BoundedExistingWorkProgressionError,
+        CodexiaError,
+        OSError,
+        StandaloneWorkSurfaceError,
+        WorkStoreError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"codexia: {exc}", file=sys.stderr)
         return 1
 
