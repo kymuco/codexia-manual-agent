@@ -190,6 +190,45 @@ def test_start_is_exactly_activated_and_restart_idempotent(tmp_path) -> None:
     assert second["latest_event"] == first["latest_event"]
 
 
+def test_concurrent_exact_start_cannot_cross_activation_boundary(
+    tmp_path,
+) -> None:
+    path = tmp_path / "concurrent-start.sqlite"
+    main_provider = _Provider(mode="complete")
+    peer_provider = _Provider(mode="complete")
+    selector = _selector()
+    fired = False
+
+    def racing_factory() -> StandaloneWorkHost:
+        nonlocal fired
+        if not fired:
+            fired = True
+            peer = StandaloneWorkSurface(SqliteWorkStore(path))
+            peer.start(
+                objective="Concurrent exact standalone start.",
+                selector=selector,
+                host_factory=_host_factory(peer_provider),
+                source_id="dw1-concurrent-start",
+            )
+        return StandaloneWorkHost(
+            plugin_service=_PluginService(main_provider)
+        )
+
+    started = StandaloneWorkSurface(SqliteWorkStore(path)).start(
+        objective="Concurrent exact standalone start.",
+        selector=selector,
+        host_factory=racing_factory,
+        source_id="dw1-concurrent-start",
+    )
+
+    assert fired is True
+    assert started["work"]["revision"] == 2
+    assert started["event_count"] == 2
+    assert main_provider.implementation.calls == 0
+    assert peer_provider.implementation.calls == 0
+    assert started["yield"]["kind"] == "none"
+
+
 def test_status_and_inspect_are_read_only_and_advance_is_finite(tmp_path) -> None:
     path = tmp_path / "read.sqlite"
     provider = _Provider(mode="noop")
@@ -273,6 +312,39 @@ def test_attention_yields_without_host_and_answer_resumes_same_work(
     )
     assert retry["idempotent"] is True
     assert retry["response"]["response_id"] == answered["response"]["response_id"]
+
+
+def test_invalid_budget_is_rejected_before_zero_step_yield_shortcut(
+    tmp_path,
+) -> None:
+    path = tmp_path / "invalid-budget.sqlite"
+    provider = _Provider()
+    surface = StandaloneWorkSurface(SqliteWorkStore(path))
+    started = surface.start(
+        objective="Validate finite budget before current AttentionNeed.",
+        selector=_selector(),
+        host_factory=_host_factory(provider),
+        source_id="dw1-invalid-budget",
+    )
+    work_id = started["work"]["work_id"]
+    store = SqliteWorkStore(path)
+    workflow = project_workflow_runs(store.events(work_id))[0]
+    AttentionAdmission(store).admit_need(
+        AttentionNeed.create(
+            workflow=workflow,
+            snapshot=store.snapshot(work_id),
+            question="Need exact user choice?",
+            reason="Budget validation must precede the yielded shortcut.",
+        )
+    )
+
+    with pytest.raises(ValueError, match="max_steps"):
+        StandaloneWorkSurface(store).advance(
+            work_id,
+            selector=_selector(),
+            host_factory=_forbidden_host,
+            max_steps=0,
+        )
 
 
 def test_completion_is_terminal_and_does_not_reload_host(tmp_path) -> None:
