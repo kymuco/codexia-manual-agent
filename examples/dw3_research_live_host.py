@@ -114,9 +114,9 @@ def create_host() -> StandaloneWorkHost:
 def materialize() -> dict[str, object]:
     """Materialize the already-durable research outputs without running cognition."""
 
-    result = ResearchWorkMaterializer(
-        SqliteWorkStore(_store_path())
-    ).materialize(_required_work_id())
+    result = ResearchWorkMaterializer(SqliteWorkStore(_store_path())).materialize(
+        _required_work_id()
+    )
     return {
         "evidence_refs": [item.to_dict() for item in result.evidence_refs],
         "artifact_refs": [item.to_dict() for item in result.artifact_refs],
