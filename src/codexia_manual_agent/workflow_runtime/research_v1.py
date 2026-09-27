@@ -455,7 +455,7 @@ class ResearchWorkflowImplementationV1:
             if artifact.locator
             == (
                 f"work-event://{context.work.work.work_id}/"
-                f"{synthesis_event_id}#output_text"
+                f"{synthesis_event_id}#content"
             )
         )
         if len(artifacts) != 1:
@@ -519,7 +519,7 @@ class ResearchCompletionCriterionV1:
                 accepted=False,
                 reason="Synthesis evidence locator changed durable role provenance.",
             )
-        expected_artifact_locator = expected_evidence_locator + "#output_text"
+        expected_artifact_locator = expected_evidence_locator + "#content"
         if artifact.locator != expected_artifact_locator:
             return CompletionCriterionResult(
                 accepted=False,
