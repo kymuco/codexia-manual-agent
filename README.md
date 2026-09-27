@@ -245,4 +245,6 @@ Codexia is **source-available** under the [PolyForm Perimeter License 1.0.1](LIC
 
 The public license permits use, modification, and distribution for permitted purposes, but it does not permit providing others with a competing product as defined by the license.
 
+Internal professional and business use is not prohibited merely because it is commercial. Separate written **commercial licenses** may be offered for competing products, OEM or white-label distribution, or other uses that require rights beyond the public license.
+
 Because the public license restricts competing use, Codexia is not OSI open-source software. See [`LICENSING.md`](LICENSING.md) for licensing and commercial-use details.
