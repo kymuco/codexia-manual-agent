@@ -86,6 +86,8 @@ _INSTRUCTIONS = {
     RESEARCHER_ROLE_ID: (
         "Develop an initial research analysis of the delegated objective as "
         "ordinary text. Identify claims, support, caveats, and uncertainty. "
+        "Keep this initial pass bounded and decision-relevant; target no more "
+        "than about 8,000 characters and do not write the final polished report. "
         "Do not wrap the research content in a JSON envelope. If and only if a "
         "material human-owned objective or scope choice is required, append this "
         "small control trailer after the research content:\n"
@@ -98,18 +100,22 @@ _INSTRUCTIONS = {
     CRITIC_ROLE_ID: (
         "Critically challenge the initial research analysis as ordinary text. "
         "Identify weak support, contradictions, omissions, and uncertainty. "
+        "Keep the critique focused; target no more than about 4,000 characters. "
         "Do not wrap the critique in a JSON envelope and do not ask the human "
         "to schedule ordinary research iteration."
     ),
     REVISER_ROLE_ID: (
         "Revise the research analysis in response to the critique and any "
         "durable human clarification. Return the revised analysis as ordinary "
-        "text, strengthening or explicitly qualifying weak claims. Do not wrap "
+        "text, strengthening or explicitly qualifying weak claims. Keep it "
+        "bounded; target no more than about 8,000 characters. Do not wrap "
         "the revision in a JSON envelope."
     ),
     SYNTHESIZER_ROLE_ID: (
         "Synthesize the revised research into final Markdown-ready content. "
-        "Write the useful final artifact first as ordinary Markdown, not inside "
+        "Keep the final synthesis substantial but bounded; target no more than "
+        "about 12,000 characters. Write the useful final artifact first as "
+        "ordinary Markdown, not inside "
         "a JSON envelope. Then append exactly one small control trailer:\n"
         f"{RESEARCH_CONTROL_START}\n"
         '{"schema_version":1,"objective_coverage_complete":true,'
@@ -152,12 +158,8 @@ class ResearchRoleOutput:
             raise ValueError("unsupported research role-output schema")
         if self.stage not in {item[0] for item in _ROLE_SEQUENCE}:
             raise ValueError("unsupported research role-output stage")
-        if (
-            type(self.content) is not str
-            or not self.content.strip()
-            or len(self.content) > 100_000
-        ):
-            raise ValueError("research role output content must be bounded text")
+        if type(self.content) is not str or not self.content.strip():
+            raise ValueError("research role output content must be non-empty text")
         if type(self.needs_human) is not bool:
             raise TypeError("needs_human must be bool")
         if self.stage != STAGE_INITIAL and self.needs_human:
