@@ -105,6 +105,7 @@ class _ExternalCwaProvider:
         self._auth_file = auth_file
         self._profile = profile
         self._timeout = timeout
+        self._conversation_id: str | None = None
 
     @property
     def provider_id(self) -> str:
@@ -132,8 +133,14 @@ class _ExternalCwaProvider:
             self._auth_file,
             "--json",
         ]
-        if request.conversation is not None and request.conversation.conversation_id:
-            command.extend(["--conversation", request.conversation.conversation_id])
+        requested_conversation_id = (
+            request.conversation.conversation_id
+            if request.conversation is not None
+            else None
+        )
+        conversation_id = requested_conversation_id or self._conversation_id
+        if conversation_id:
+            command.extend(["--conversation", conversation_id])
 
         child_env = os.environ.copy()
         child_env["PYTHONIOENCODING"] = "utf-8"
@@ -160,10 +167,20 @@ class _ExternalCwaProvider:
         if payload.get("ok") is not True or not isinstance(payload.get("text"), str):
             raise ProviderError("external CWA returned an invalid successful execution")
 
+        observed_conversation_id = payload.get("conversation_id")
+        if not isinstance(observed_conversation_id, str) or not observed_conversation_id:
+            raise ProviderError("external CWA success lacks durable conversation identity")
+        if (
+            conversation_id is not None
+            and observed_conversation_id != conversation_id
+        ):
+            raise ProviderError("external CWA continuation changed conversation identity")
+        self._conversation_id = observed_conversation_id
+
         return ProviderResponse(
             text=payload["text"],
             conversation=ProviderConversation(
-                conversation_id=payload.get("conversation_id"),
+                conversation_id=observed_conversation_id,
                 message_id=payload.get("message_id"),
                 finish_reason=payload.get("finish_reason"),
             ),
@@ -173,6 +190,7 @@ class _ExternalCwaProvider:
                 "transport": payload.get("transport"),
                 "runtime_observation": payload.get("runtime_observation"),
                 "provenance": payload.get("provenance"),
+                "pilot_continuation": conversation_id is not None,
             },
         )
 
