@@ -135,6 +135,9 @@ class _ExternalCwaProvider:
         if request.conversation is not None and request.conversation.conversation_id:
             command.extend(["--conversation", request.conversation.conversation_id])
 
+        child_env = os.environ.copy()
+        child_env["PYTHONIOENCODING"] = "utf-8"
+        child_env["PYTHONUTF8"] = "1"
         completed = subprocess.run(
             command,
             capture_output=True,
@@ -142,6 +145,7 @@ class _ExternalCwaProvider:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env=child_env,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()
