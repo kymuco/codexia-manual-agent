@@ -53,10 +53,10 @@ CRITIQUE_EVIDENCE_KIND = "codexia.research.critique-output.v1"
 REVISION_EVIDENCE_KIND = "codexia.research.revision-output.v1"
 SYNTHESIS_EVIDENCE_KIND = "codexia.research.synthesis-output.v1"
 OBJECTIVE_COVERAGE_EVIDENCE_KIND = "codexia.research.objective-coverage.complete.v1"
-EVIDENCE_SUFFICIENCY_EVIDENCE_KIND = "codexia.research.evidence-sufficiency.sufficient.v1"
-NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND = (
-    "codexia.research.material-uncertainty.none.v1"
+EVIDENCE_SUFFICIENCY_EVIDENCE_KIND = (
+    "codexia.research.evidence-sufficiency.sufficient.v1"
 )
+NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND = "codexia.research.material-uncertainty.none.v1"
 
 _ROLE_SEQUENCE = (
     (STAGE_INITIAL, RESEARCHER_ROLE_ID),
@@ -97,6 +97,7 @@ def _role_output_contract(stage: str) -> str:
         "claims, support, caveats, and uncertainty inside content."
     )
 
+
 _REQUIRED_EVIDENCE_KINDS = frozenset(
     {
         INITIAL_EVIDENCE_KIND,
@@ -124,14 +125,12 @@ _INSTRUCTIONS = {
     REVISER_ROLE_ID: (
         "Revise the research analysis in response to the critique and any "
         "durable human clarification. Strengthen or explicitly qualify weak "
-        "claims."
-        + _role_output_contract(STAGE_REVISION)
+        "claims." + _role_output_contract(STAGE_REVISION)
     ),
     SYNTHESIZER_ROLE_ID: (
         "Synthesize the revised research into final Markdown-ready content and "
         "explicitly judge objective coverage, evidence sufficiency, and "
-        "material unresolved uncertainty."
-        + _role_output_contract(STAGE_SYNTHESIS)
+        "material unresolved uncertainty." + _role_output_contract(STAGE_SYNTHESIS)
     ),
 }
 
@@ -208,9 +207,7 @@ class ResearchRoleOutput:
                 self.material_unresolved_uncertainty,
             )
         ):
-            raise ValueError(
-                "completion judgments are only valid for synthesis output"
-            )
+            raise ValueError("completion judgments are only valid for synthesis output")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -222,9 +219,7 @@ class ResearchRoleOutput:
             "human_reason": self.human_reason,
             "objective_coverage": self.objective_coverage,
             "evidence_sufficiency": self.evidence_sufficiency,
-            "material_unresolved_uncertainty": (
-                self.material_unresolved_uncertainty
-            ),
+            "material_unresolved_uncertainty": (self.material_unresolved_uncertainty),
         }
 
     def to_json(self) -> str:
@@ -256,9 +251,7 @@ class ResearchRoleOutput:
             raise ValueError("research role output keys are not exact")
         result = cls(**value)
         if expected_stage is not None and result.stage != expected_stage:
-            raise ValueError(
-                "research role output stage differs from expected stage"
-            )
+            raise ValueError("research role output stage differs from expected stage")
         return result
 
 
@@ -360,9 +353,7 @@ def research_context_text(
 class ResearchWorkflowImplementationV1:
     def __init__(self) -> None:
         self._binding = research_workflow_binding()
-        self._roles = {
-            role.role_id: role for role in research_role_bindings()
-        }
+        self._roles = {role.role_id: role for role in research_role_bindings()}
 
     @property
     def binding(self) -> WorkflowBinding:
@@ -434,8 +425,7 @@ class ResearchWorkflowImplementationV1:
                 stage=stage,
                 prior_outputs=tuple(prior_text),
                 human_responses=tuple(
-                    response.response_text
-                    for response in context.attention_responses
+                    response.response_text for response in context.attention_responses
                 ),
                 evidence_refs=tuple(
                     evidence.to_dict() for evidence in context.evidence_refs
@@ -444,9 +434,7 @@ class ResearchWorkflowImplementationV1:
                     artifact.to_dict() for artifact in context.artifacts
                 ),
             )
-            projection = ContextProjection.create(
-                content_digest=_sha(context_text)
-            )
+            projection = ContextProjection.create(content_digest=_sha(context_text))
             return RoleRun.create(
                 workflow=context.workflow,
                 snapshot=context.work,
@@ -484,8 +472,7 @@ class ResearchWorkflowImplementationV1:
             for artifact in context.artifacts
             if artifact.locator
             == (
-                f"work-event://{context.work.work.work_id}/"
-                f"{synthesis_event_id}#content"
+                f"work-event://{context.work.work.work_id}/{synthesis_event_id}#content"
             )
         )
         if len(artifacts) != 1:
