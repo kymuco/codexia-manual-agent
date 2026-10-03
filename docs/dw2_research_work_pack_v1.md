@@ -1,5 +1,11 @@
 # DW2 — Research Work Pack v1
 
+> Historical note: DW2 closed the exact Research Pack 1.0.0 JSON-envelope
+> contract. DW3 empirical work later introduced the 1.1.0 hybrid
+> content/control contract documented in
+> `docs/dw3_research_hybrid_output_contract.md`. This document preserves the
+> DW2 closure semantics rather than rewriting that historical proof.
+
 ## Purpose
 
 Research Work Pack v1 is the first non-process cognitive Gen2 Pack.
