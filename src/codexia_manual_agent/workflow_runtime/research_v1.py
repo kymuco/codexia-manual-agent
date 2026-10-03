@@ -292,7 +292,10 @@ class ResearchRoleOutput:
 
 
 def _control_schema_is_supported(payload: dict[str, Any] | None) -> bool:
-    return payload is not None and payload.get("schema_version") == 1
+    if payload is None:
+        return False
+    schema_version = payload.get("schema_version")
+    return type(schema_version) is int and schema_version == 1
 
 
 def _split_control_trailer(text: str) -> tuple[str, dict[str, Any] | None]:
