@@ -241,6 +241,16 @@ def test_research_role_instructions_keep_content_free_form_and_control_minimal()
     assert '"objective_coverage_complete":true' in synthesizer
     assert '"evidence_sufficient":true' in synthesizer
     assert '"material_uncertainty_resolved":true' in synthesizer
+    assert "8,000 characters" in researcher
+    assert "4,000 characters" in critic
+    assert "8,000 characters" in reviser
+    assert "12,000 characters" in synthesizer
+
+
+def test_research_role_output_does_not_add_a_second_pack_size_limit() -> None:
+    content = "x" * 110_000
+    parsed = ResearchRoleOutput.parse(content, expected_stage=STAGE_CRITIQUE)
+    assert parsed.content == content
 
 
 def test_research_role_output_accepts_rich_free_form_json_as_content() -> None:
