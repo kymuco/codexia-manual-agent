@@ -33,8 +33,6 @@ from codexia_manual_agent.workflow_runtime import (
     NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND,
     OBJECTIVE_COVERAGE_EVIDENCE_KIND,
     RESEARCH_COMPLETION_SUMMARY,
-    RESEARCH_CONTROL_END,
-    RESEARCH_CONTROL_START,
     RESEARCH_PACK_ID,
     RESEARCH_PACK_VERSION,
     RESEARCH_WORKFLOW_ID,
@@ -53,6 +51,11 @@ from codexia_manual_agent.workflow_runtime import (
     research_role_instructions,
     research_workflow_binding,
 )
+from codexia_manual_agent.workflow_runtime.research_v1 import (
+    RESEARCH_CONTROL_END,
+    RESEARCH_CONTROL_START,
+)
+
 
 PROVIDER_REF = "codexia:research-pack-provider@1.1.0"
 
@@ -215,11 +218,11 @@ def test_research_pack_distribution_is_exact() -> None:
     assert len(pack.members) == 5
 
 
-def test_research_role_instructions_keep_content_free_form_and_control_minimal(
-) -> None:
+def test_research_role_instructions_keep_content_free_form_and_control_minimal() -> (
+    None
+):
     researcher, critic, reviser, synthesizer = (
-        research_role_instructions(binding)
-        for binding in research_role_bindings()
+        research_role_instructions(binding) for binding in research_role_bindings()
     )
 
     assert "ordinary text" in researcher
@@ -259,8 +262,9 @@ def test_research_role_output_accepts_rich_free_form_json_as_content() -> None:
     assert parsed.objective_coverage is None
 
 
-def test_malformed_synthesis_control_preserves_content_without_completion_signal(
-) -> None:
+def test_malformed_synthesis_control_preserves_content_without_completion_signal() -> (
+    None
+):
     raw = (
         "# Final synthesis\n\nUseful research content.\n\n"
         f"{RESEARCH_CONTROL_START}\n"
