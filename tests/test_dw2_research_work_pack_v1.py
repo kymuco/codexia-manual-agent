@@ -48,6 +48,7 @@ from codexia_manual_agent.workflow_runtime import (
     ResearchWorkflowImplementationV1,
     research_pack_binding,
     research_role_bindings,
+    research_role_instructions,
     research_workflow_binding,
 )
 
@@ -177,12 +178,7 @@ def test_research_invariant_provider_and_manifest_match_exact_pack(
     monkeypatch.setitem(sys.modules, "invariant.spec", spec_module)
 
     root = Path(__file__).resolve().parents[1]
-    plugin_path = (
-        root
-        / "examples"
-        / "invariant_research_pack_v1"
-        / "plugin.py"
-    )
+    plugin_path = root / "examples" / "invariant_research_pack_v1" / "plugin.py"
     spec = importlib.util.spec_from_file_location(
         "dw2_research_pack_v1",
         plugin_path,
@@ -201,10 +197,7 @@ def test_research_invariant_provider_and_manifest_match_exact_pack(
     assert distribution["capabilities"] == []
 
     manifest = (
-        root
-        / "examples"
-        / "invariant_research_pack_v1"
-        / "manifest.json"
+        root / "examples" / "invariant_research_pack_v1" / "manifest.json"
     ).read_text(encoding="utf-8")
     assert '"id": "codexia:research-pack-provider"' in manifest
     assert '"version": "1.0.0"' in manifest
@@ -254,10 +247,7 @@ def test_research_role_instructions_publish_exact_output_contract() -> None:
 
     for binding in research_role_bindings()[:-1]:
         instructions = research_role_instructions(binding)
-        assert (
-            "material_unresolved_uncertainty must each be null"
-            in instructions
-        )
+        assert "material_unresolved_uncertainty must each be null" in instructions
 
     synthesis = research_role_instructions(research_role_bindings()[-1])
     assert "must each be JSON booleans" in synthesis
@@ -301,9 +291,7 @@ def test_research_work_runs_critique_revision_materialization_and_completion(
         sufficient=True,
         uncertainty=False,
     )
-    port = _ScriptedCognitionPort(
-        [initial, critique, revision, synthesis]
-    )
+    port = _ScriptedCognitionPort([initial, critique, revision, synthesis])
 
     progressed = surface.advance(
         work_id,
@@ -452,9 +440,7 @@ def test_research_pack_uses_attention_only_for_explicit_human_judgment(
     assert resumed["progression"]["status"] == "bound_exhausted"
     assert remaining.calls == 3
     resumed_context = _context_payload(remaining.contexts[0])
-    assert resumed_context["human_responses"] == [
-        "Optimize for robustness."
-    ]
+    assert resumed_context["human_responses"] == ["Optimize for robustness."]
 
 
 def test_restart_does_not_repeat_completed_research_roles(tmp_path) -> None:
