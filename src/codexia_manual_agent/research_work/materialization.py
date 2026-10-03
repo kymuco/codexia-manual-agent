@@ -129,12 +129,26 @@ class ResearchContextMaterialPort:
         stage, _kind = meta
         prefix = events[: role.run.start_revision]
         prior_roles = project_role_runs(prefix)
-        prior_outputs = tuple(
-            item.output_text
-            for item in prior_roles
-            if item.state is RoleRunState.COMPLETED
-            and item.output_text is not None
-        )
+        prior_outputs_list: list[str] = []
+        for item in prior_roles:
+            if (
+                item.state is not RoleRunState.COMPLETED
+                or item.output_text is None
+            ):
+                continue
+            prior_meta = _ROLE_META.get(item.run.binding.role_id)
+            if prior_meta is None:
+                raise ResearchWorkMaterializationError(
+                    "research context contains role outside Pack stages"
+                )
+            prior_stage, _prior_kind = prior_meta
+            prior_outputs_list.append(
+                ResearchRoleOutput.parse(
+                    item.output_text,
+                    expected_stage=prior_stage,
+                ).content
+            )
+        prior_outputs = tuple(prior_outputs_list)
         responses = tuple(
             item.response_text
             for item in project_attention_responses(prefix)
