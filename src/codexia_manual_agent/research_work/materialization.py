@@ -112,9 +112,7 @@ class ResearchContextMaterialPort:
                 "research context read crossed Work chronology"
             )
         matches = tuple(
-            role
-            for role in project_role_runs(events)
-            if role.run.context == projection
+            role for role in project_role_runs(events) if role.run.context == projection
         )
         if len(matches) != 1:
             raise ResearchWorkMaterializationError(
@@ -131,10 +129,7 @@ class ResearchContextMaterialPort:
         prior_roles = project_role_runs(prefix)
         prior_outputs_list: list[str] = []
         for item in prior_roles:
-            if (
-                item.state is not RoleRunState.COMPLETED
-                or item.output_text is None
-            ):
+            if item.state is not RoleRunState.COMPLETED or item.output_text is None:
                 continue
             prior_meta = _ROLE_META.get(item.run.binding.role_id)
             if prior_meta is None:
@@ -150,15 +145,10 @@ class ResearchContextMaterialPort:
             )
         prior_outputs = tuple(prior_outputs_list)
         responses = tuple(
-            item.response_text
-            for item in project_attention_responses(prefix)
+            item.response_text for item in project_attention_responses(prefix)
         )
-        evidence = tuple(
-            item.to_dict() for item in project_evidence_refs(prefix)
-        )
-        artifacts = tuple(
-            item.to_dict() for item in project_artifact_refs(prefix)
-        )
+        evidence = tuple(item.to_dict() for item in project_evidence_refs(prefix))
+        artifacts = tuple(item.to_dict() for item in project_artifact_refs(prefix))
         text = research_context_text(
             objective=snapshot.work.objective,
             stage=stage,
@@ -267,9 +257,7 @@ class ResearchWorkMaterializer:
             ),
             content_sha256=_sha_bytes(raw),
             size_bytes=len(raw),
-            locator=(
-                f"work-event://{work_id}/{terminal.event_id}#content"
-            ),
+            locator=(f"work-event://{work_id}/{terminal.event_id}#content"),
             media_type="text/markdown",
         )
         ArtifactAdmission(self._store).record(
@@ -318,9 +306,7 @@ class ResearchWorkMaterializer:
                 evidence_id=evidence_id,
                 evidence_digest=digest,
                 evidence_kind=kind,
-                locator=(
-                    f"work-event://{work_id}/{terminal.event_id}#{field}"
-                ),
+                locator=(f"work-event://{work_id}/{terminal.event_id}#{field}"),
             )
             EvidenceAdmission(self._store).record(
                 self._store.snapshot(work_id),
