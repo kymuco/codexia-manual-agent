@@ -220,6 +220,49 @@ def test_research_pack_distribution_is_exact() -> None:
     assert len(pack.members) == 5
 
 
+def test_research_role_instructions_publish_exact_output_contract() -> None:
+    expected_keys = (
+        "schema_version",
+        "stage",
+        "content",
+        "needs_human",
+        "human_question",
+        "human_reason",
+        "objective_coverage",
+        "evidence_sufficiency",
+        "material_unresolved_uncertainty",
+    )
+    expected_stages = (
+        STAGE_INITIAL,
+        STAGE_CRITIQUE,
+        STAGE_REVISION,
+        STAGE_SYNTHESIS,
+    )
+
+    for binding, stage in zip(
+        research_role_bindings(),
+        expected_stages,
+        strict=True,
+    ):
+        instructions = research_role_instructions(binding)
+        assert "exactly these nine keys" in instructions
+        assert "no Markdown fence" in instructions
+        assert f'stage must be "{stage}"' in instructions
+        assert "Do not add any other top-level keys" in instructions
+        for key in expected_keys:
+            assert key in instructions
+
+    for binding in research_role_bindings()[:-1]:
+        instructions = research_role_instructions(binding)
+        assert (
+            "material_unresolved_uncertainty must each be null"
+            in instructions
+        )
+
+    synthesis = research_role_instructions(research_role_bindings()[-1])
+    assert "must each be JSON booleans" in synthesis
+
+
 def test_research_work_runs_critique_revision_materialization_and_completion(
     tmp_path,
 ) -> None:
