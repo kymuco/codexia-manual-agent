@@ -29,15 +29,15 @@ from codexia_manual_agent.workflow_runtime.boundary import (
 )
 
 RESEARCH_WORKFLOW_ID = "codexia:research-work"
-RESEARCH_WORKFLOW_VERSION = "1.0.0"
+RESEARCH_WORKFLOW_VERSION = "1.1.0"
 RESEARCH_PACK_ID = "codexia:research-work-pack"
-RESEARCH_PACK_VERSION = "1.0.0"
+RESEARCH_PACK_VERSION = "1.1.0"
 
 RESEARCHER_ROLE_ID = "codexia:research-researcher"
 CRITIC_ROLE_ID = "codexia:research-critic"
 REVISER_ROLE_ID = "codexia:research-reviser"
 SYNTHESIZER_ROLE_ID = "codexia:research-synthesizer"
-RESEARCH_ROLE_VERSION = "1.0.0"
+RESEARCH_ROLE_VERSION = "1.1.0"
 
 STAGE_INITIAL = "initial"
 STAGE_CRITIQUE = "critique"
@@ -66,36 +66,8 @@ _ROLE_SEQUENCE = (
 )
 
 
-def _role_output_contract(stage: str) -> str:
-    attention = (
-        "For initial only, needs_human may be true only for a material "
-        "human-owned objective/scope choice; then human_question and human_reason "
-        "must be non-empty strings. Otherwise needs_human=false and both fields "
-        "must be null."
-        if stage == STAGE_INITIAL
-        else (
-            "needs_human must be false and human_question/human_reason must "
-            "both be null."
-        )
-    )
-    judgments = (
-        "objective_coverage, evidence_sufficiency, and "
-        "material_unresolved_uncertainty must each be JSON booleans."
-        if stage == STAGE_SYNTHESIS
-        else (
-            "objective_coverage, evidence_sufficiency, and "
-            "material_unresolved_uncertainty must each be null."
-        )
-    )
-    return (
-        " Return exactly one raw JSON object with no Markdown fence and exactly "
-        "these nine keys: schema_version, stage, content, needs_human, "
-        "human_question, human_reason, objective_coverage, evidence_sufficiency, "
-        "material_unresolved_uncertainty. schema_version must be 1; stage must "
-        f'be "{stage}"; content must be a non-empty JSON string. '
-        f"{attention} {judgments} Do not add any other top-level keys; put "
-        "claims, support, caveats, and uncertainty inside content."
-    )
+RESEARCH_CONTROL_START = "<<<CODEXIA_CONTROL_V1>>>"
+RESEARCH_CONTROL_END = "<<<END_CODEXIA_CONTROL_V1>>>"
 
 
 _REQUIRED_EVIDENCE_KINDS = frozenset(
@@ -112,25 +84,39 @@ _REQUIRED_EVIDENCE_KINDS = frozenset(
 
 _INSTRUCTIONS = {
     RESEARCHER_ROLE_ID: (
-        "Develop an initial research analysis of the delegated objective. "
-        "Identify claims and uncertainty in content."
-        + _role_output_contract(STAGE_INITIAL)
+        "Develop an initial research analysis of the delegated objective as "
+        "ordinary text. Identify claims, support, caveats, and uncertainty. "
+        "Do not wrap the research content in a JSON envelope. If and only if a "
+        "material human-owned objective or scope choice is required, append this "
+        "small control trailer after the research content:\n"
+        f"{RESEARCH_CONTROL_START}\n"
+        '{"schema_version":1,"needs_human":true,'
+        '"human_question":"...","human_reason":"..."}\n'
+        f"{RESEARCH_CONTROL_END}\n"
+        "If no genuine human judgment is needed, omit the control trailer."
     ),
     CRITIC_ROLE_ID: (
-        "Critically challenge the initial research analysis. Identify weak "
-        "support, contradictions, omissions, and uncertainty. Do not ask the "
-        "human to schedule ordinary research iteration."
-        + _role_output_contract(STAGE_CRITIQUE)
+        "Critically challenge the initial research analysis as ordinary text. "
+        "Identify weak support, contradictions, omissions, and uncertainty. "
+        "Do not wrap the critique in a JSON envelope and do not ask the human "
+        "to schedule ordinary research iteration."
     ),
     REVISER_ROLE_ID: (
         "Revise the research analysis in response to the critique and any "
-        "durable human clarification. Strengthen or explicitly qualify weak "
-        "claims." + _role_output_contract(STAGE_REVISION)
+        "durable human clarification. Return the revised analysis as ordinary "
+        "text, strengthening or explicitly qualifying weak claims. Do not wrap "
+        "the revision in a JSON envelope."
     ),
     SYNTHESIZER_ROLE_ID: (
-        "Synthesize the revised research into final Markdown-ready content and "
-        "explicitly judge objective coverage, evidence sufficiency, and "
-        "material unresolved uncertainty." + _role_output_contract(STAGE_SYNTHESIS)
+        "Synthesize the revised research into final Markdown-ready content. "
+        "Write the useful final artifact first as ordinary Markdown, not inside "
+        "a JSON envelope. Then append exactly one small control trailer:\n"
+        f"{RESEARCH_CONTROL_START}\n"
+        '{"schema_version":1,"objective_coverage_complete":true,'
+        '"evidence_sufficient":true,"material_uncertainty_resolved":true}\n'
+        f"{RESEARCH_CONTROL_END}\n"
+        "Set those three booleans according to the synthesis. The trailer is "
+        "workflow control metadata and is not part of the final artifact."
     ),
 }
 
@@ -174,6 +160,8 @@ class ResearchRoleOutput:
             raise ValueError("research role output content must be bounded text")
         if type(self.needs_human) is not bool:
             raise TypeError("needs_human must be bool")
+        if self.stage != STAGE_INITIAL and self.needs_human:
+            raise ValueError("only initial research may request human judgment")
         if self.needs_human:
             if (
                 type(self.human_question) is not str
@@ -188,42 +176,56 @@ class ResearchRoleOutput:
             raise ValueError(
                 "human question/reason must be null when needs_human=false"
             )
+
+        judgments = (
+            self.objective_coverage,
+            self.evidence_sufficiency,
+            self.material_unresolved_uncertainty,
+        )
         if self.stage == STAGE_SYNTHESIS:
-            for name, value in (
-                ("objective_coverage", self.objective_coverage),
-                ("evidence_sufficiency", self.evidence_sufficiency),
-                (
-                    "material_unresolved_uncertainty",
-                    self.material_unresolved_uncertainty,
-                ),
-            ):
-                if type(value) is not bool:
-                    raise TypeError(f"{name} must be bool for synthesis")
-        elif any(
-            value is not None
-            for value in (
-                self.objective_coverage,
-                self.evidence_sufficiency,
-                self.material_unresolved_uncertainty,
+            all_missing = all(value is None for value in judgments)
+            all_boolean = all(type(value) is bool for value in judgments)
+            if not (all_missing or all_boolean):
+                raise TypeError(
+                    "synthesis completion judgments must be all booleans or all null"
+                )
+        elif any(value is not None for value in judgments):
+            raise ValueError(
+                "completion judgments are only valid for synthesis output"
             )
+
+    def to_text(self) -> str:
+        content = self.content.strip()
+        payload: dict[str, Any] | None = None
+        if self.stage == STAGE_INITIAL and self.needs_human:
+            payload = {
+                "schema_version": 1,
+                "needs_human": True,
+                "human_question": self.human_question,
+                "human_reason": self.human_reason,
+            }
+        elif (
+            self.stage == STAGE_SYNTHESIS
+            and type(self.objective_coverage) is bool
+            and type(self.evidence_sufficiency) is bool
+            and type(self.material_unresolved_uncertainty) is bool
         ):
-            raise ValueError("completion judgments are only valid for synthesis output")
+            payload = {
+                "schema_version": 1,
+                "objective_coverage_complete": self.objective_coverage,
+                "evidence_sufficient": self.evidence_sufficiency,
+                "material_uncertainty_resolved": (
+                    not self.material_unresolved_uncertainty
+                ),
+            }
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "stage": self.stage,
-            "content": self.content,
-            "needs_human": self.needs_human,
-            "human_question": self.human_question,
-            "human_reason": self.human_reason,
-            "objective_coverage": self.objective_coverage,
-            "evidence_sufficiency": self.evidence_sufficiency,
-            "material_unresolved_uncertainty": (self.material_unresolved_uncertainty),
-        }
-
-    def to_json(self) -> str:
-        return _canonical_json(self.to_dict())
+        if payload is None:
+            return content
+        return (
+            f"{content}\n\n{RESEARCH_CONTROL_START}\n"
+            f"{_canonical_json(payload)}\n"
+            f"{RESEARCH_CONTROL_END}"
+        )
 
     @classmethod
     def parse(
@@ -232,27 +234,88 @@ class ResearchRoleOutput:
         *,
         expected_stage: str | None = None,
     ) -> ResearchRoleOutput:
-        try:
-            value = json.loads(text)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError("research role output is not valid JSON") from exc
-        expected = {
-            "schema_version",
-            "stage",
-            "content",
-            "needs_human",
-            "human_question",
-            "human_reason",
-            "objective_coverage",
-            "evidence_sufficiency",
-            "material_unresolved_uncertainty",
-        }
-        if not isinstance(value, dict) or set(value) != expected:
-            raise ValueError("research role output keys are not exact")
-        result = cls(**value)
-        if expected_stage is not None and result.stage != expected_stage:
-            raise ValueError("research role output stage differs from expected stage")
-        return result
+        if expected_stage not in {item[0] for item in _ROLE_SEQUENCE}:
+            raise ValueError("expected research stage is required")
+        if type(text) is not str or not text.strip():
+            raise ValueError("research role output must contain text")
+
+        stage = expected_stage
+        content = text.strip()
+        payload: dict[str, Any] | None = None
+        if stage in {STAGE_INITIAL, STAGE_SYNTHESIS}:
+            content, payload = _split_control_trailer(content)
+
+        needs_human = False
+        human_question = None
+        human_reason = None
+        coverage = None
+        sufficient = None
+        unresolved = None
+
+        if stage == STAGE_INITIAL and _control_schema_is_supported(payload):
+            requested = payload.get("needs_human")
+            if requested is True:
+                question = payload.get("human_question")
+                reason = payload.get("human_reason")
+                if (
+                    type(question) is str
+                    and question.strip()
+                    and type(reason) is str
+                    and reason.strip()
+                ):
+                    needs_human = True
+                    human_question = question.strip()
+                    human_reason = reason.strip()
+        elif stage == STAGE_SYNTHESIS and _control_schema_is_supported(payload):
+            raw_coverage = payload.get("objective_coverage_complete")
+            raw_sufficient = payload.get("evidence_sufficient")
+            raw_resolved = payload.get("material_uncertainty_resolved")
+            if all(
+                type(value) is bool
+                for value in (raw_coverage, raw_sufficient, raw_resolved)
+            ):
+                coverage = raw_coverage
+                sufficient = raw_sufficient
+                unresolved = not raw_resolved
+
+        return cls(
+            schema_version=1,
+            stage=stage,
+            content=content,
+            needs_human=needs_human,
+            human_question=human_question,
+            human_reason=human_reason,
+            objective_coverage=coverage,
+            evidence_sufficiency=sufficient,
+            material_unresolved_uncertainty=unresolved,
+        )
+
+
+def _control_schema_is_supported(payload: dict[str, Any] | None) -> bool:
+    return payload is not None and payload.get("schema_version") == 1
+
+
+def _split_control_trailer(text: str) -> tuple[str, dict[str, Any] | None]:
+    stripped = text.strip()
+    if not stripped.endswith(RESEARCH_CONTROL_END):
+        return stripped, None
+
+    end = len(stripped) - len(RESEARCH_CONTROL_END)
+    start = stripped.rfind(RESEARCH_CONTROL_START, 0, end)
+    if start < 0:
+        return stripped, None
+
+    content = stripped[:start].rstrip()
+    if not content:
+        raise ValueError("research role output content must be non-empty")
+    raw = stripped[start + len(RESEARCH_CONTROL_START) : end].strip()
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return content, None
+    if not isinstance(payload, dict):
+        return content, None
+    return content, payload
 
 
 def research_workflow_binding() -> WorkflowBinding:
@@ -384,8 +447,7 @@ class ResearchWorkflowImplementationV1:
                     "initial research"
                 )
             parsed.append(output)
-            assert snapshot.output_text is not None
-            prior_text.append(snapshot.output_text)
+            prior_text.append(output.content)
 
         if parsed:
             initial = parsed[0]
