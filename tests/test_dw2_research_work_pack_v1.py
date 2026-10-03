@@ -38,14 +38,14 @@ from codexia_manual_agent.workflow_runtime import (
     RESEARCH_WORKFLOW_ID,
     RESEARCH_WORKFLOW_VERSION,
     REVISION_EVIDENCE_KIND,
+    ResearchCompletionCriterionV1,
+    ResearchRoleOutput,
+    ResearchWorkflowImplementationV1,
     STAGE_CRITIQUE,
     STAGE_INITIAL,
     STAGE_REVISION,
     STAGE_SYNTHESIS,
     SYNTHESIS_EVIDENCE_KIND,
-    ResearchCompletionCriterionV1,
-    ResearchRoleOutput,
-    ResearchWorkflowImplementationV1,
     research_pack_binding,
     research_role_bindings,
     research_role_instructions,
@@ -55,7 +55,6 @@ from codexia_manual_agent.workflow_runtime.research_v1 import (
     RESEARCH_CONTROL_END,
     RESEARCH_CONTROL_START,
 )
-
 
 PROVIDER_REF = "codexia:research-pack-provider@1.1.0"
 
