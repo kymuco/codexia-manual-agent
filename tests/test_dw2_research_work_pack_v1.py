@@ -33,6 +33,8 @@ from codexia_manual_agent.workflow_runtime import (
     NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND,
     OBJECTIVE_COVERAGE_EVIDENCE_KIND,
     RESEARCH_COMPLETION_SUMMARY,
+    RESEARCH_CONTROL_END,
+    RESEARCH_CONTROL_START,
     RESEARCH_PACK_ID,
     RESEARCH_PACK_VERSION,
     RESEARCH_WORKFLOW_ID,
@@ -52,7 +54,7 @@ from codexia_manual_agent.workflow_runtime import (
     research_workflow_binding,
 )
 
-PROVIDER_REF = "codexia:research-pack-provider@1.0.0"
+PROVIDER_REF = "codexia:research-pack-provider@1.1.0"
 
 
 def _output(
@@ -200,7 +202,7 @@ def test_research_invariant_provider_and_manifest_match_exact_pack(
         root / "examples" / "invariant_research_pack_v1" / "manifest.json"
     ).read_text(encoding="utf-8")
     assert '"id": "codexia:research-pack-provider"' in manifest
-    assert '"version": "1.0.0"' in manifest
+    assert '"version": "1.1.0"' in manifest
     assert '"class_name": "ResearchPackProviderV1"' in manifest
 
 
@@ -213,44 +215,63 @@ def test_research_pack_distribution_is_exact() -> None:
     assert len(pack.members) == 5
 
 
-def test_research_role_instructions_publish_exact_output_contract() -> None:
-    expected_keys = (
-        "schema_version",
-        "stage",
-        "content",
-        "needs_human",
-        "human_question",
-        "human_reason",
-        "objective_coverage",
-        "evidence_sufficiency",
-        "material_unresolved_uncertainty",
-    )
-    expected_stages = (
-        STAGE_INITIAL,
-        STAGE_CRITIQUE,
-        STAGE_REVISION,
-        STAGE_SYNTHESIS,
+def test_research_role_instructions_keep_content_free_form_and_control_minimal() -> None:
+    researcher, critic, reviser, synthesizer = (
+        research_role_instructions(binding)
+        for binding in research_role_bindings()
     )
 
-    for binding, stage in zip(
-        research_role_bindings(),
-        expected_stages,
-        strict=True,
-    ):
-        instructions = research_role_instructions(binding)
-        assert "exactly these nine keys" in instructions
-        assert "no Markdown fence" in instructions
-        assert f'stage must be "{stage}"' in instructions
-        assert "Do not add any other top-level keys" in instructions
-        for key in expected_keys:
-            assert key in instructions
+    assert "ordinary text" in researcher
+    assert "Do not wrap the research content in a JSON envelope" in researcher
+    assert RESEARCH_CONTROL_START in researcher
+    assert RESEARCH_CONTROL_END in researcher
+    assert '"needs_human":true' in researcher
 
-    for binding in research_role_bindings()[:-1]:
-        instructions = research_role_instructions(binding)
-        assert "material_unresolved_uncertainty must each be null" in instructions
+    assert "ordinary text" in critic
+    assert RESEARCH_CONTROL_START not in critic
+    assert "ordinary text" in reviser
+    assert RESEARCH_CONTROL_START not in reviser
 
-    synthesis = research_role_instructions(research_role_bindings()[-1])
-    assert "must each be JSON booleans" in synthesis
+    assert "ordinary Markdown" in synthesizer
+    assert RESEARCH_CONTROL_START in synthesizer
+    assert '"objective_coverage_complete":true' in synthesizer
+    assert '"evidence_sufficient":true' in synthesizer
+    assert '"material_uncertainty_resolved":true' in synthesizer
+
+
+def test_research_role_output_accepts_rich_free_form_json_as_content() -> None:
+    raw = json.dumps(
+        {
+            "schema": "worker-owned",
+            "claims": ["SQLite has stronger transactional semantics."],
+            "comparison": {"sqlite": "strong", "jsonl": "simple"},
+            "recommendation": "Prefer SQLite for the durable authority log.",
+        },
+        sort_keys=True,
+    )
+
+    parsed = ResearchRoleOutput.parse(raw, expected_stage=STAGE_INITIAL)
+
+    assert parsed.content == raw
+    assert parsed.needs_human is False
+    assert parsed.human_question is None
+    assert parsed.objective_coverage is None
+
+
+def test_malformed_synthesis_control_preserves_content_without_completion_signal() -> None:
+    raw = (
+        "# Final synthesis\n\nUseful research content.\n\n"
+        f"{RESEARCH_CONTROL_START}\n"
+        "{not valid json}\n"
+        f"{RESEARCH_CONTROL_END}"
+    )
+
+    parsed = ResearchRoleOutput.parse(raw, expected_stage=STAGE_SYNTHESIS)
+
+    assert parsed.content == "# Final synthesis\n\nUseful research content."
+    assert parsed.objective_coverage is None
+    assert parsed.evidence_sufficiency is None
+    assert parsed.material_unresolved_uncertainty is None
 
 
 def test_research_work_runs_critique_revision_materialization_and_completion(
@@ -543,6 +564,74 @@ def test_incomplete_synthesis_cannot_reach_completion(tmp_path) -> None:
         max_steps=8,
     )
     ResearchWorkMaterializer(store).materialize(work_id)
+    result = surface.advance(
+        work_id,
+        selector=_selector(),
+        host_factory=_progress_host(
+            service=service,
+            store=store,
+            work_id=work_id,
+            port=_ScriptedCognitionPort([]),
+        ),
+        max_steps=1,
+    )
+    assert result["progression"]["status"] == "quiescent"
+    assert result["status"]["yield"]["kind"] == "none"
+
+
+def test_malformed_synthesis_control_materializes_artifact_but_cannot_complete(
+    tmp_path,
+) -> None:
+    path = tmp_path / "malformed-control.sqlite"
+    store = SqliteWorkStore(path)
+    service = _PluginService()
+    surface = StandaloneWorkSurface(store)
+    started = surface.start(
+        objective="Preserve useful synthesis when workflow control is malformed.",
+        selector=_selector(),
+        host_factory=_activation_host(service),
+        source_id="dw3-malformed-control",
+    )
+    work_id = started["work"]["work_id"]
+    synthesis_content = "# Final synthesis\n\nUseful durable research."
+    malformed_synthesis = (
+        f"{synthesis_content}\n\n{RESEARCH_CONTROL_START}\n"
+        "{not valid json}\n"
+        f"{RESEARCH_CONTROL_END}"
+    )
+    port = _ScriptedCognitionPort(
+        [
+            _output(STAGE_INITIAL, "Initial."),
+            _output(STAGE_CRITIQUE, "Critique."),
+            _output(STAGE_REVISION, "Revision."),
+            malformed_synthesis,
+        ]
+    )
+
+    progressed = surface.advance(
+        work_id,
+        selector=_selector(),
+        host_factory=_progress_host(
+            service=service,
+            store=store,
+            work_id=work_id,
+            port=port,
+        ),
+        max_steps=8,
+    )
+    assert progressed["progression"]["status"] == "bound_exhausted"
+
+    materialized = ResearchWorkMaterializer(store).materialize(work_id)
+    assert len(materialized.artifact_refs) == 1
+    assert materialized.artifact_refs[0].size_bytes == len(
+        synthesis_content.encode("utf-8")
+    )
+    kinds = {item.evidence_kind for item in materialized.evidence_refs}
+    assert SYNTHESIS_EVIDENCE_KIND in kinds
+    assert OBJECTIVE_COVERAGE_EVIDENCE_KIND not in kinds
+    assert EVIDENCE_SUFFICIENCY_EVIDENCE_KIND not in kinds
+    assert NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND not in kinds
+
     result = surface.advance(
         work_id,
         selector=_selector(),
