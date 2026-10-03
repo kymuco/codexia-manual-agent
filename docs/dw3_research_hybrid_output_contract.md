@@ -66,6 +66,11 @@ Synthesis appends three positive completion-assessment booleans:
 
 Critic and reviser require no control trailer.
 
+The parser reads only the recognized control fields with exact primitive types.
+Unknown extra control keys are ignored. Missing, malformed, or wrongly typed
+recognized fields do not become authority; they leave the corresponding workflow
+signal unproven.
+
 ## Failure semantics
 
 Malformed or missing control metadata does not erase otherwise useful cognition
