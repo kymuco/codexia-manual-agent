@@ -190,9 +190,7 @@ class ResearchRoleOutput:
                     "synthesis completion judgments must be all booleans or all null"
                 )
         elif any(value is not None for value in judgments):
-            raise ValueError(
-                "completion judgments are only valid for synthesis output"
-            )
+            raise ValueError("completion judgments are only valid for synthesis output")
 
     def to_text(self) -> str:
         content = self.content.strip()
