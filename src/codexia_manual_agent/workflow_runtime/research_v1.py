@@ -322,7 +322,7 @@ def research_workflow_binding() -> WorkflowBinding:
     return WorkflowBinding.create(
         workflow_id=RESEARCH_WORKFLOW_ID,
         version=RESEARCH_WORKFLOW_VERSION,
-        definition_digest=_sha("research-workflow-v1"),
+        definition_digest=_sha("research-workflow-v1.1"),
     )
 
 
@@ -359,7 +359,7 @@ def research_pack_binding() -> PackBinding:
     return PackBinding.create(
         pack_id=RESEARCH_PACK_ID,
         version=RESEARCH_PACK_VERSION,
-        definition_digest=_sha("research-work-pack-v1"),
+        definition_digest=_sha("research-work-pack-v1.1"),
         members=members,
     )
 
