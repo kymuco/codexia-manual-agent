@@ -78,7 +78,7 @@ def _output(
         objective_coverage=coverage,
         evidence_sufficiency=sufficient,
         material_unresolved_uncertainty=uncertainty,
-    ).to_json()
+    ).to_text()
 
 
 class _ResearchProvider:
