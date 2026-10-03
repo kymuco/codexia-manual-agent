@@ -168,13 +168,17 @@ class _ExternalCwaProvider:
             raise ProviderError("external CWA returned an invalid successful execution")
 
         observed_conversation_id = payload.get("conversation_id")
-        if not isinstance(observed_conversation_id, str) or not observed_conversation_id:
-            raise ProviderError("external CWA success lacks durable conversation identity")
         if (
-            conversation_id is not None
-            and observed_conversation_id != conversation_id
+            not isinstance(observed_conversation_id, str)
+            or not observed_conversation_id
         ):
-            raise ProviderError("external CWA continuation changed conversation identity")
+            raise ProviderError(
+                "external CWA success lacks durable conversation identity"
+            )
+        if conversation_id is not None and observed_conversation_id != conversation_id:
+            raise ProviderError(
+                "external CWA continuation changed conversation identity"
+            )
         self._conversation_id = observed_conversation_id
 
         return ProviderResponse(
