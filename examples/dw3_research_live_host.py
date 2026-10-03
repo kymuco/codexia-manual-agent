@@ -30,7 +30,7 @@ from codexia_manual_agent.workflow_runtime import (
     research_workflow_binding,
 )
 
-PROVIDER_REF = "codexia:research-pack-provider@1.0.0"
+PROVIDER_REF = "codexia:research-pack-provider@1.1.0"
 DEFAULT_STORE = ".codexia/dw3-research.sqlite3"
 
 
@@ -38,7 +38,7 @@ class _ResearchProvider:
     """Exact in-process provider for the DW3 product pilot.
 
     This deliberately avoids adding plugin discovery or lifecycle ownership to
-    Codexia. The production semantic objects remain the existing DW2 bindings.
+    Codexia. The production semantic objects remain the bounded Research Work bindings.
     """
 
     def codexia_pack_distribution(self):
