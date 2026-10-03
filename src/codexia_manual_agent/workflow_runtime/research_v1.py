@@ -65,6 +65,38 @@ _ROLE_SEQUENCE = (
     (STAGE_SYNTHESIS, SYNTHESIZER_ROLE_ID),
 )
 
+
+def _role_output_contract(stage: str) -> str:
+    attention = (
+        "For initial only, needs_human may be true only for a material "
+        "human-owned objective/scope choice; then human_question and human_reason "
+        "must be non-empty strings. Otherwise needs_human=false and both fields "
+        "must be null."
+        if stage == STAGE_INITIAL
+        else (
+            "needs_human must be false and human_question/human_reason must "
+            "both be null."
+        )
+    )
+    judgments = (
+        "objective_coverage, evidence_sufficiency, and "
+        "material_unresolved_uncertainty must each be JSON booleans."
+        if stage == STAGE_SYNTHESIS
+        else (
+            "objective_coverage, evidence_sufficiency, and "
+            "material_unresolved_uncertainty must each be null."
+        )
+    )
+    return (
+        " Return exactly one raw JSON object with no Markdown fence and exactly "
+        "these nine keys: schema_version, stage, content, needs_human, "
+        "human_question, human_reason, objective_coverage, evidence_sufficiency, "
+        "material_unresolved_uncertainty. schema_version must be 1; stage must "
+        f'be "{stage}"; content must be a non-empty JSON string. '
+        f"{attention} {judgments} Do not add any other top-level keys; put "
+        "claims, support, caveats, and uncertainty inside content."
+    )
+
 _REQUIRED_EVIDENCE_KINDS = frozenset(
     {
         INITIAL_EVIDENCE_KIND,
@@ -80,28 +112,26 @@ _REQUIRED_EVIDENCE_KINDS = frozenset(
 _INSTRUCTIONS = {
     RESEARCHER_ROLE_ID: (
         "Develop an initial research analysis of the delegated objective. "
-        "Return exactly one codexia.research.role-output.v1 JSON object for "
-        "stage=initial. Identify claims and uncertainty in content. Set "
-        "needs_human=true only when a material objective/scope choice cannot "
-        "be resolved from supplied context; otherwise keep it false."
+        "Identify claims and uncertainty in content."
+        + _role_output_contract(STAGE_INITIAL)
     ),
     CRITIC_ROLE_ID: (
-        "Critically challenge the initial research analysis. Return exactly "
-        "one codexia.research.role-output.v1 JSON object for stage=critique. "
-        "Identify weak support, contradictions, omissions, and uncertainty. "
-        "Do not ask the human to schedule ordinary research iteration."
+        "Critically challenge the initial research analysis. Identify weak "
+        "support, contradictions, omissions, and uncertainty. Do not ask the "
+        "human to schedule ordinary research iteration."
+        + _role_output_contract(STAGE_CRITIQUE)
     ),
     REVISER_ROLE_ID: (
         "Revise the research analysis in response to the critique and any "
-        "durable human clarification. Return exactly one "
-        "codexia.research.role-output.v1 JSON object for stage=revision. "
-        "Strengthen or explicitly qualify weak claims."
+        "durable human clarification. Strengthen or explicitly qualify weak "
+        "claims."
+        + _role_output_contract(STAGE_REVISION)
     ),
     SYNTHESIZER_ROLE_ID: (
-        "Synthesize the revised research into final Markdown-ready content. "
-        "Return exactly one codexia.research.role-output.v1 JSON object for "
-        "stage=synthesis and explicitly judge objective_coverage, "
-        "evidence_sufficiency, and material_unresolved_uncertainty."
+        "Synthesize the revised research into final Markdown-ready content and "
+        "explicitly judge objective coverage, evidence sufficiency, and "
+        "material unresolved uncertainty."
+        + _role_output_contract(STAGE_SYNTHESIS)
     ),
 }
 
