@@ -115,9 +115,41 @@ semantics.
 It is published as Research Pack / Workflow / Role version `1.1.0` rather than
 silently changing the DW2 `1.0.0` binding.
 
+## Hot provider continuation
+
+The DW3 live host may reuse the successful CWA conversation identity for later
+role dispatches inside the same bounded `work advance` process.
+
+This is a session-local transport optimization:
+
+```text
+first role
+→ new CWA conversation
+→ successful durable cognition outcome
+→ next role in the same process uses CWA continuation
+```
+
+The conversation id is deliberately not stored as parallel canonical Work state.
+After process restart the optimization disappears and the next role is
+materialized again from durable Codexia Work context.
+
+Therefore:
+
+```text
+hot provider conversation != Work truth
+restart != dependency on remote chat state
+```
+
+The pilot initially keeps the exact materialized CognitionRequest context on
+continuation. A future delta-context optimization should be added only if live
+evidence shows that conversation reuse alone is insufficient, because silently
+omitting durable context from the actual provider request would weaken the exact
+materialization/audit boundary.
+
 ## Boundary
 
-This is a Research Pack repair, not a new Core transport.
+This is a Research Pack repair plus a DW3 host-local transport optimization, not
+a new Core transport.
 
 Core still carries ordinary `CognitionOutcome.output_text` and retains the same
 handoff, retry, authority, evidence, artifact, and completion boundaries.
