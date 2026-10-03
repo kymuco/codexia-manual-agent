@@ -215,7 +215,8 @@ def test_research_pack_distribution_is_exact() -> None:
     assert len(pack.members) == 5
 
 
-def test_research_role_instructions_keep_content_free_form_and_control_minimal() -> None:
+def test_research_role_instructions_keep_content_free_form_and_control_minimal(
+) -> None:
     researcher, critic, reviser, synthesizer = (
         research_role_instructions(binding)
         for binding in research_role_bindings()
@@ -258,7 +259,8 @@ def test_research_role_output_accepts_rich_free_form_json_as_content() -> None:
     assert parsed.objective_coverage is None
 
 
-def test_malformed_synthesis_control_preserves_content_without_completion_signal() -> None:
+def test_malformed_synthesis_control_preserves_content_without_completion_signal(
+) -> None:
     raw = (
         "# Final synthesis\n\nUseful research content.\n\n"
         f"{RESEARCH_CONTROL_START}\n"
@@ -461,6 +463,9 @@ def test_research_pack_uses_attention_only_for_explicit_human_judgment(
     assert resumed["progression"]["status"] == "bound_exhausted"
     assert remaining.calls == 3
     resumed_context = _context_payload(remaining.contexts[0])
+    assert resumed_context["prior_outputs"] == [
+        "Two defensible scopes remain and the delegated objective cannot choose."
+    ]
     assert resumed_context["human_responses"] == ["Optimize for robustness."]
 
 
