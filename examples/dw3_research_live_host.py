@@ -56,7 +56,7 @@ def _hot_research_continuation_prompt(prompt: str) -> str | None:
 
     try:
         payload = json.loads(prompt)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError):
         return None
     if not isinstance(payload, dict) or set(payload) != _RESEARCH_CONTEXT_KEYS:
         return None
@@ -175,10 +175,14 @@ class _ExternalCwaProvider:
             else None
         )
         conversation_id = requested_conversation_id or self._conversation_id
+        hot_continuation = (
+            self._conversation_id is not None
+            and conversation_id == self._conversation_id
+        )
 
         request_prompt = request.prompt
         context_mode = "full-rehydration"
-        if conversation_id is not None:
+        if hot_continuation:
             delta = _hot_research_continuation_prompt(request.prompt)
             if delta is not None:
                 request_prompt = delta
