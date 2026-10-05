@@ -33,6 +33,63 @@ from codexia_manual_agent.workflow_runtime import (
 PROVIDER_REF = "codexia:research-pack-provider@1.1.0"
 DEFAULT_STORE = ".codexia/dw3-research.sqlite3"
 
+_RESEARCH_CONTEXT_KEYS = frozenset(
+    {
+        "schema_version",
+        "stage",
+        "objective",
+        "prior_outputs",
+        "human_responses",
+        "evidence_refs",
+        "artifact_refs",
+    }
+)
+
+
+def _hot_research_continuation_prompt(prompt: str) -> str | None:
+    """Project full durable Research context to a hot-conversation wire delta.
+
+    The admitted CognitionRequest remains the exact full semantic context. This
+    helper only avoids retransmitting objective/prior outputs that the same
+    verified CWA conversation already contains.
+    """
+
+    try:
+        payload = json.loads(prompt)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or set(payload) != _RESEARCH_CONTEXT_KEYS:
+        return None
+    if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1:
+        return None
+    stage = payload.get("stage")
+    if not isinstance(stage, str) or not stage.strip():
+        return None
+    for field in ("prior_outputs", "human_responses", "evidence_refs", "artifact_refs"):
+        if not isinstance(payload.get(field), list):
+            return None
+
+    delta = {
+        "schema_version": 1,
+        "stage": stage,
+        "context_delivery": "hot-conversation-delta",
+        "instruction": (
+            "Continue the same delegated Research Work using the objective and "
+            "prior role outputs already present in this conversation. They are "
+            "intentionally not repeated in this turn."
+        ),
+        "human_responses": payload["human_responses"],
+        "evidence_refs": payload["evidence_refs"],
+        "artifact_refs": payload["artifact_refs"],
+    }
+    return json.dumps(
+        delta,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
 
 class _ResearchProvider:
     """Exact in-process provider for the DW3 product pilot.
@@ -112,13 +169,28 @@ class _ExternalCwaProvider:
         return "cwa-subprocess"
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
-        prompt = request.prompt
+        requested_conversation_id = (
+            request.conversation.conversation_id
+            if request.conversation is not None
+            else None
+        )
+        conversation_id = requested_conversation_id or self._conversation_id
+
+        request_prompt = request.prompt
+        context_mode = "full-rehydration"
+        if conversation_id is not None:
+            delta = _hot_research_continuation_prompt(request.prompt)
+            if delta is not None:
+                request_prompt = delta
+                context_mode = "hot-conversation-delta"
+
+        prompt = request_prompt
         if request.system is not None and request.system.strip():
             prompt = (
                 "[Codexia product-runtime system context]\n"
                 f"{request.system.strip()}\n\n"
                 "[Codexia product-runtime request]\n"
-                f"{request.prompt}"
+                f"{request_prompt}"
             )
 
         command = [
@@ -133,12 +205,6 @@ class _ExternalCwaProvider:
             self._auth_file,
             "--json",
         ]
-        requested_conversation_id = (
-            request.conversation.conversation_id
-            if request.conversation is not None
-            else None
-        )
-        conversation_id = requested_conversation_id or self._conversation_id
         if conversation_id:
             command.extend(["--conversation", conversation_id])
 
@@ -195,9 +261,9 @@ class _ExternalCwaProvider:
                 "runtime_observation": payload.get("runtime_observation"),
                 "provenance": payload.get("provenance"),
                 "pilot_continuation": conversation_id is not None,
+                "pilot_context_mode": context_mode,
             },
         )
-
 
 def _cwa_profile() -> str:
     explicit = os.environ.get("CODEXIA_DW3_CWA_PROFILE", "").strip().upper()
