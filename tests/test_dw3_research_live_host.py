@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from codexia_manual_agent.domain.models import ProviderRequest
+from codexia_manual_agent.workflow_runtime.research_v1 import research_context_text
 from examples.dw3_research_live_host import _ExternalCwaProvider
 
 
@@ -51,14 +52,43 @@ def test_external_cwa_provider_reuses_conversation_only_within_instance(
         profile="DEEP",
         timeout=420,
     )
-    first = provider.send(ProviderRequest(prompt="first"))
-    second = provider.send(ProviderRequest(prompt="second"))
+    initial_context = research_context_text(
+        objective="choose durable storage",
+        stage="initial",
+        prior_outputs=(),
+        human_responses=(),
+    )
+    researcher_output = "SQLite is the strongest default for the control plane."
+    critique_context = research_context_text(
+        objective="choose durable storage",
+        stage="critique",
+        prior_outputs=(researcher_output,),
+        human_responses=(),
+    )
+
+    first = provider.send(
+        ProviderRequest(prompt=initial_context, system="researcher instructions")
+    )
+    second = provider.send(
+        ProviderRequest(prompt=critique_context, system="critic instructions")
+    )
 
     assert "--conversation" not in commands[0]
+    assert "choose durable storage" in commands[0][2]
+    assert '"prior_outputs":[]' in commands[0][2]
+
     continuation_index = commands[1].index("--conversation")
     assert commands[1][continuation_index + 1] == "conversation-1"
+    assert "critic instructions" in commands[1][2]
+    assert '"context_delivery":"hot-conversation-delta"' in commands[1][2]
+    assert '"stage":"critique"' in commands[1][2]
+    assert "prior_outputs" not in commands[1][2]
+    assert researcher_output not in commands[1][2]
+    assert "choose durable storage" not in commands[1][2]
     assert first.metrics["pilot_continuation"] is False
+    assert first.metrics["pilot_context_mode"] == "full-rehydration"
     assert second.metrics["pilot_continuation"] is True
+    assert second.metrics["pilot_context_mode"] == "hot-conversation-delta"
 
     restarted = _ExternalCwaProvider(
         executable=str(executable),
@@ -66,5 +96,12 @@ def test_external_cwa_provider_reuses_conversation_only_within_instance(
         profile="DEEP",
         timeout=420,
     )
-    restarted.send(ProviderRequest(prompt="after restart"))
+    restarted_response = restarted.send(
+        ProviderRequest(prompt=critique_context, system="critic instructions")
+    )
     assert "--conversation" not in commands[2]
+    assert "choose durable storage" in commands[2][2]
+    assert researcher_output in commands[2][2]
+    assert '"prior_outputs"' in commands[2][2]
+    assert restarted_response.metrics["pilot_context_mode"] == "full-rehydration"
+
