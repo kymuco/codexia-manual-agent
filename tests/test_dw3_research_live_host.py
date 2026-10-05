@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from codexia_manual_agent.domain.models import ProviderRequest
+from codexia_manual_agent.domain.models import ProviderConversation, ProviderRequest
 from codexia_manual_agent.workflow_runtime.research_v1 import research_context_text
 from examples.dw3_research_live_host import _ExternalCwaProvider
 
@@ -104,4 +104,23 @@ def test_external_cwa_provider_reuses_conversation_only_within_instance(
     assert researcher_output in commands[2][2]
     assert '"prior_outputs"' in commands[2][2]
     assert restarted_response.metrics["pilot_context_mode"] == "full-rehydration"
+
+    externally_bound = _ExternalCwaProvider(
+        executable=str(executable),
+        auth_file="auth.json",
+        profile="DEEP",
+        timeout=420,
+    )
+    externally_bound_response = externally_bound.send(
+        ProviderRequest(
+            prompt=critique_context,
+            system="critic instructions",
+            conversation=ProviderConversation(conversation_id="conversation-1"),
+        )
+    )
+    external_index = commands[3].index("--conversation")
+    assert commands[3][external_index + 1] == "conversation-1"
+    assert researcher_output in commands[3][2]
+    assert '"prior_outputs"' in commands[3][2]
+    assert externally_bound_response.metrics["pilot_context_mode"] == "full-rehydration"
 
