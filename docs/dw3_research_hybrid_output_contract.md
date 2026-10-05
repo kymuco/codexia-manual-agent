@@ -140,11 +140,36 @@ hot provider conversation != Work truth
 restart != dependency on remote chat state
 ```
 
-The pilot initially keeps the exact materialized CognitionRequest context on
-continuation. A future delta-context optimization should be added only if live
-evidence shows that conversation reuse alone is insufficient, because silently
-omitting durable context from the actual provider request would weaken the exact
-materialization/audit boundary.
+The first successful hot-conversation pilot provided that live evidence: the
+critic turn was sent in the same CWA conversation while the full durable
+`prior_outputs` payload repeated the researcher's answer that was already present
+in that conversation history. This duplicated tokens and conflated semantic
+context with wire transport context.
+
+The DW3 host now projects the exact admitted CognitionRequest differently by
+transport state:
+
+```text
+fresh provider conversation / process restart
+→ full durable Research context rehydration
+
+verified continuation in the same provider instance
+→ role instructions + small hot-conversation delta
+→ objective and prior role outputs are not retransmitted
+```
+
+The full CognitionRequest and ContextProjection digest remain unchanged and are
+still reconstructed from WorkStore. Only the provider wire representation is
+reduced after a successful conversation identity has been observed by that same
+provider instance. The conversation id is still not persisted as Work truth.
+
+Therefore:
+
+```text
+semantic context != wire prompt
+hot continuation may compress transport context
+restart always rehydrates from durable Work
+```
 
 ## Boundary
 
