@@ -123,4 +123,3 @@ def test_external_cwa_provider_reuses_conversation_only_within_instance(
     assert researcher_output in commands[3][2]
     assert '"prior_outputs"' in commands[3][2]
     assert externally_bound_response.metrics["pilot_context_mode"] == "full-rehydration"
-
