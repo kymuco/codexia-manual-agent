@@ -64,7 +64,7 @@ def _state_directory(workspace: Path, supplied: str | None) -> Path:
 
 def _emit(data: Any, *, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+        print(json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True))
         return
 
     if isinstance(data, dict):
