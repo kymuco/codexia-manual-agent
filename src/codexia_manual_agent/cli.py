@@ -4,8 +4,9 @@ import argparse
 import importlib
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 from uuid import uuid4
 
 from codexia_manual_agent import __version__
@@ -289,7 +290,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Absolute CA bundle path required by --transport https.",
     )
 
-
     work_parser = subparsers.add_parser(
         "work",
         help="Use the standalone Gen2 durable Work product surface.",
@@ -430,7 +430,10 @@ def _run_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             model=args.model,
             reasoning_effort=args.reasoning_effort,
         ).run(manifest=manifest, task=args.task)
-        return {"session": updated.to_dict(), "result": result.to_dict()}, 0 if result.completed else 1
+        return {
+            "session": updated.to_dict(),
+            "result": result.to_dict(),
+        }, 0 if result.completed else 1
 
     manifest = RunSessionService(store).start(
         workspace=workspace,
@@ -468,10 +471,18 @@ def _inspect_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         arguments = {"path": args.path, "max_bytes": args.max_bytes}
     elif args.inspection == "list":
         tool = ToolName.LIST_FILES
-        arguments = {"path": args.path, "recursive": args.recursive, "max_entries": args.limit}
+        arguments = {
+            "path": args.path,
+            "recursive": args.recursive,
+            "max_entries": args.limit,
+        }
     elif args.inspection == "search":
         tool = ToolName.SEARCH_TEXT
-        arguments = {"query": args.query, "path": args.path, "max_matches": args.max_matches}
+        arguments = {
+            "query": args.query,
+            "path": args.path,
+            "max_matches": args.max_matches,
+        }
     elif args.inspection == "git-status":
         tool = ToolName.GIT_STATUS
         arguments = {}
@@ -508,18 +519,25 @@ def _exec_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         actor="local-cli",
     )
     observation = result.observation
-    success = observation.termination_reason is ProcessTerminationReason.EXITED and observation.exit_code == 0
+    success = (
+        observation.termination_reason is ProcessTerminationReason.EXITED
+        and observation.exit_code == 0
+    )
     return result.to_dict(), 0 if success else 1
 
 
 def _read_bounded_content_file(source: Path) -> bytes:
     size = source.stat().st_size
     if size > MAX_POSTIMAGE_BYTES:
-        raise InvalidWorkspaceMutationError(f"Mutation postimage exceeds {MAX_POSTIMAGE_BYTES} bytes")
+        raise InvalidWorkspaceMutationError(
+            f"Mutation postimage exceeds {MAX_POSTIMAGE_BYTES} bytes"
+        )
     with source.open("rb") as handle:
         content = handle.read(MAX_POSTIMAGE_BYTES + 1)
     if len(content) > MAX_POSTIMAGE_BYTES:
-        raise InvalidWorkspaceMutationError(f"Mutation postimage exceeds {MAX_POSTIMAGE_BYTES} bytes")
+        raise InvalidWorkspaceMutationError(
+            f"Mutation postimage exceeds {MAX_POSTIMAGE_BYTES} bytes"
+        )
     return content
 
 
@@ -559,7 +577,12 @@ def _confirm_git_preview(preparation) -> bool:
         json.dumps(preview, ensure_ascii=False, indent=2, sort_keys=True),
         file=sys.stderr,
     )
-    print("Type YES to authorize this exact proposal: ", end="", file=sys.stderr, flush=True)
+    print(
+        "Type YES to authorize this exact proposal: ",
+        end="",
+        file=sys.stderr,
+        flush=True,
+    )
     response = sys.stdin.readline()
     return response.rstrip("\r\n") == "YES"
 
@@ -603,7 +626,9 @@ def _git_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         lifecycle = ActionLifecycle(preparation.proposal, mode)
         phase = lifecycle.apply_receipt(receipt, authority=authority)
         if phase is ActionPhase.DENIED:
-            raise AuthorizationDeniedError(receipt.reason or "Local human denied Git mutation")
+            raise AuthorizationDeniedError(
+                receipt.reason or "Local human denied Git mutation"
+            )
 
         if args.git_action == "commit":
             observation = execute_git_commit(
@@ -664,14 +689,10 @@ def _standalone_host_factory(spec: str):
             ) from exc
         target = getattr(module, attribute, None)
         if not callable(target):
-            raise ValueError(
-                "standalone host factory attribute must be callable"
-            )
+            raise TypeError("standalone host factory attribute must be callable")
         host = target()
         if not isinstance(host, StandaloneWorkHost):
-            raise ValueError(
-                "standalone host factory must return StandaloneWorkHost"
-            )
+            raise TypeError("standalone host factory must return StandaloneWorkHost")
         return host
 
     return factory
