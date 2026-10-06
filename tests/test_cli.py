@@ -5,10 +5,9 @@ import io
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
-from codexia_manual_agent import __version__
 from codexia_manual_agent.cli import _emit, main
 from codexia_manual_agent.domain.models import ProviderConversation, ProviderResponse
 
