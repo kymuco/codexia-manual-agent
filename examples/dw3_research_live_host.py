@@ -269,6 +269,7 @@ class _ExternalCwaProvider:
             },
         )
 
+
 def _cwa_profile() -> str:
     explicit = os.environ.get("CODEXIA_DW3_CWA_PROFILE", "").strip().upper()
     if explicit:
