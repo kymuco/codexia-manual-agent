@@ -9,7 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from codexia_manual_agent import __version__
-from codexia_manual_agent.cli import main
+from codexia_manual_agent.cli import _emit, main
 from codexia_manual_agent.domain.models import ProviderConversation, ProviderResponse
 
 
@@ -45,6 +45,17 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = main(argv)
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_json_emit_is_safe_for_legacy_windows_console_encodings(self) -> None:
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1251", errors="strict")
+        payload = {"text": "SQLite × JSONL — проверка"}
+        with contextlib.redirect_stdout(stream):
+            _emit(payload, as_json=True)
+            stream.flush()
+        rendered = raw.getvalue().decode("cp1251")
+        self.assertEqual(json.loads(rendered), payload)
+        self.assertTrue(rendered.isascii())
 
     def test_run_is_truthful_about_provider(self) -> None:
         code, stdout, stderr = self._invoke(
