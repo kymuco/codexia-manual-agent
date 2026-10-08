@@ -27,7 +27,9 @@ def extract_turn(messages, *, request_message_id: str, response_message_id: str)
         raise ValueError("CWA has an intervening user turn")
     if answer.finish_reason != "stop":
         raise ValueError("CWA target response has no canonical stop completion")
-    if not isinstance(answer.text, str) or not answer.text.strip():
+    if not isinstance(answer.text, str):
+        raise TypeError("CWA target response must be text")
+    if not answer.text.strip():
         raise ValueError("CWA target response is empty")
 
     previous = [
