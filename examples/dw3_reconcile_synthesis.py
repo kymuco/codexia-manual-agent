@@ -9,6 +9,7 @@ CognitionTransportBridge.record_outcome() after exact CWA/Work proof.
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
@@ -65,8 +66,47 @@ def _unique_json_pairs(pairs):
     return result
 
 
-def validate_synthesis(text: str) -> ResearchRoleOutput:
+
+def canonicalize_synthesis(text: str) -> tuple[str, str]:
+    """Unwrap only the literal CWA escaped FINAL trailer, preserving its values.
+
+    Raw CWA response bytes remain separately verified and SHA-bound. The
+    returned plaintext is the exact output to admit to Research Pack 1.1.
+    """
     stripped = text.strip()
+    if stripped.endswith(RESEARCH_CONTROL_END):
+        return text, "verbatim"
+
+    if not stripped.endswith("</escape>"):
+        return text, "verbatim"
+
+    wrapped = stripped[: -len("</escape>")].rstrip()
+    if not wrapped.endswith(RESEARCH_CONTROL_END):
+        raise ValueError("CWA escape wrapper has an invalid final control end")
+
+    start = wrapped.rfind(RESEARCH_CONTROL_START)
+    if start < 0:
+        raise ValueError("CWA escape wrapper has no control start")
+
+    leading = wrapped[:start]
+    opening = re.search(
+        r"(?:\\r?\\n)[ \\t]*<escape>[ \\t]*\\r?\\n[ \\t]*$",
+        leading,
+    )
+    if opening is None:
+        raise ValueError("CWA escape wrapper is not a standalone trailer wrapper")
+
+    body = leading[: opening.start()].rstrip()
+    if not body:
+        raise ValueError("CWA escape wrapper has no synthesis body")
+
+    canonical = body + "\\n\\n" + wrapped[start:]
+    return canonical, "cwa-final-control-escape-unwrapped-v1"
+
+
+def validate_synthesis(text: str) -> ResearchRoleOutput:
+    canonical, _normalization = canonicalize_synthesis(text)
+    stripped = canonical.strip()
     start_count = stripped.count(RESEARCH_CONTROL_START)
     end_count = stripped.count(RESEARCH_CONTROL_END)
     terminal_end = stripped.endswith(RESEARCH_CONTROL_END)
@@ -91,7 +131,7 @@ def validate_synthesis(text: str) -> ResearchRoleOutput:
         if type(trailer[field]) is not bool:
             raise ValueError(f"control {field} must be boolean")
 
-    parsed = ResearchRoleOutput.parse(text, expected_stage=STAGE_SYNTHESIS)
+    parsed = ResearchRoleOutput.parse(canonical, expected_stage=STAGE_SYNTHESIS)
     if (
         parsed.content != prefix.rstrip()
         or parsed.objective_coverage != trailer["objective_coverage_complete"]
@@ -263,8 +303,9 @@ def verify_recovery(
     content = raw.decode("utf-8", errors="strict")
     if content != answer["text"]:
         raise ValueError("recovered file differs from canonical CWA answer")
-    parsed = validate_synthesis(content)
-    outcome = CognitionOutcome.succeeded(request, output_text=content)
+    canonical, normalization = canonicalize_synthesis(content)
+    parsed = validate_synthesis(canonical)
+    outcome = CognitionOutcome.succeeded(request, output_text=canonical)
     result = {
         "verified": True,
         "mode": "dry-run",
@@ -279,6 +320,9 @@ def verify_recovery(
         "cwa_previous_revision_id": revision["message_id"],
         "response_sha256": file_sha,
         "response_chars": len(content),
+        "admitted_output_sha256": _sha256(canonical.encode("utf-8")),
+        "admitted_output_chars": len(canonical),
+        "normalization": normalization,
         "objective_coverage_complete": parsed.objective_coverage,
         "evidence_sufficient": parsed.evidence_sufficiency,
         "material_uncertainty_resolved": not parsed.material_unresolved_uncertainty,
