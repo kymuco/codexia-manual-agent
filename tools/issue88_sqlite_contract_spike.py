@@ -140,15 +140,18 @@ class OfflineSqliteContractSpike:
                     raise RecoveryRefused("expected existing Gen2 event table")
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS issue88_spike_authority (
-                        provider_namespace TEXT PRIMARY KEY,
+                        provider_service TEXT NOT NULL,
+                        provider_namespace TEXT NOT NULL,
                         epoch INTEGER NOT NULL,
                         coverage_digest TEXT NOT NULL,
-                        enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
+                        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+                        PRIMARY KEY(provider_service, provider_namespace)
                     )
                 """)
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS issue88_spike_claim (
                         result_key TEXT PRIMARY KEY,
+                        provider_service TEXT NOT NULL,
                         provider_namespace TEXT NOT NULL,
                         work_id TEXT NOT NULL,
                         request_id TEXT NOT NULL,
@@ -161,6 +164,7 @@ class OfflineSqliteContractSpike:
                     CREATE TABLE IF NOT EXISTS issue88_spike_intent (
                         event_id TEXT PRIMARY KEY,
                         result_key TEXT NOT NULL,
+                        provider_service TEXT NOT NULL,
                         provider_namespace TEXT NOT NULL,
                         work_id TEXT NOT NULL,
                         epoch INTEGER NOT NULL,
@@ -180,11 +184,13 @@ class OfflineSqliteContractSpike:
                             SELECT 1 FROM issue88_spike_intent i
                             JOIN issue88_spike_claim c ON c.result_key=i.result_key
                             JOIN issue88_spike_authority a
-                              ON a.provider_namespace=i.provider_namespace
+                              ON a.provider_service=i.provider_service
+                             AND a.provider_namespace=i.provider_namespace
                             WHERE i.event_id=NEW.event_id
                               AND i.work_id=NEW.work_id
                               AND c.event_id=NEW.event_id
                               AND c.work_id=NEW.work_id
+                              AND c.provider_service=i.provider_service
                               AND c.provider_namespace=i.provider_namespace
                               AND a.enabled=1 AND a.epoch=i.epoch
                               AND a.coverage_digest=i.coverage_digest
@@ -197,9 +203,10 @@ class OfflineSqliteContractSpike:
                 raise
 
     def fixture_enable(
-        self, namespace: str, *, epoch: int, coverage_digest: str
+        self, service: str, namespace: str, *, epoch: int, coverage_digest: str
     ) -> None:
         """Fixture-only seed; does not attest to live-writer/historical coverage."""
+        _nonempty(service, "service")
         _nonempty(namespace, "namespace")
         _sha(coverage_digest, "coverage_digest")
         if type(epoch) is not int or epoch < 1:
@@ -209,25 +216,31 @@ class OfflineSqliteContractSpike:
             try:
                 old = connection.execute(
                     "SELECT epoch FROM issue88_spike_authority "
-                    "WHERE provider_namespace=?",
-                    (namespace,),
+                    "WHERE provider_service=? AND provider_namespace=?",
+                    (service, namespace),
                 ).fetchone()
                 if old is not None and epoch <= old[0]:
                     raise RecoveryRefused("epoch must advance")
                 connection.execute("""
-                    INSERT INTO issue88_spike_authority VALUES (?, ?, ?, 1)
-                    ON CONFLICT(provider_namespace) DO UPDATE SET
+                    INSERT INTO issue88_spike_authority VALUES (?, ?, ?, ?, 1)
+                    ON CONFLICT(provider_service, provider_namespace) DO UPDATE SET
                         epoch=excluded.epoch,
                         coverage_digest=excluded.coverage_digest, enabled=1
-                """, (namespace, epoch, coverage_digest))
+                """, (service, namespace, epoch, coverage_digest))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
                 raise
 
     def revoke(
-        self, namespace: str, *, epoch: int, coverage_digest: str | None = None
+        self,
+        service: str,
+        namespace: str,
+        *,
+        epoch: int,
+        coverage_digest: str | None = None,
     ) -> None:
+        _nonempty(service, "service")
         _nonempty(namespace, "namespace")
         if type(epoch) is not int or epoch < 1:
             raise ValueError("epoch must be positive")
@@ -238,16 +251,16 @@ class OfflineSqliteContractSpike:
             try:
                 old = connection.execute(
                     "SELECT epoch, coverage_digest FROM issue88_spike_authority "
-                    "WHERE provider_namespace=?",
-                    (namespace,),
+                    "WHERE provider_service=? AND provider_namespace=?",
+                    (service, namespace),
                 ).fetchone()
                 if old is None or epoch < old[0]:
                     raise RecoveryRefused("unknown or stale authority")
                 connection.execute("""
                     UPDATE issue88_spike_authority
                     SET epoch=?, coverage_digest=?, enabled=0
-                    WHERE provider_namespace=?
-                """, (epoch, coverage_digest or old[1], namespace))
+                    WHERE provider_service=? AND provider_namespace=?
+                """, (epoch, coverage_digest or old[1], service, namespace))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
@@ -277,26 +290,16 @@ class OfflineSqliteContractSpike:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
-            current = connection.execute("""
-                SELECT epoch,coverage_digest,enabled FROM issue88_spike_authority
-                WHERE provider_namespace=?
-            """, (candidate.provider_namespace,)).fetchone()
-            if (
-                current is None
-                or current[2] != 1
-                or current[0] != candidate.authorized_epoch
-                or current[1] != candidate.authorized_coverage_digest
-            ):
-                raise RecoveryRefused("current recovery epoch or coverage unauthorized")
-            if after_final_authority_read is not None:
-                after_final_authority_read()
-
+            # Compare a durable replay before checking current authority.
+            # A revoked epoch forbids NEW writes, not truthful acknowledgement
+            # of a matching event that was already committed.
             old_claim = connection.execute("""
-                SELECT provider_namespace,work_id,request_id,handoff_id,
+                SELECT provider_service,provider_namespace,work_id,request_id,handoff_id,
                        response_digest,event_id FROM issue88_spike_claim
                 WHERE result_key=?
             """, (candidate.result_key,)).fetchone()
             desired = (
+                candidate.provider_service,
                 candidate.provider_namespace,
                 candidate.work_id,
                 candidate.request_id,
@@ -308,13 +311,40 @@ class OfflineSqliteContractSpike:
                 if tuple(old_claim) != desired:
                     raise ProviderResultClaimed("result was already assigned elsewhere")
                 event = connection.execute(
-                    "SELECT 1 FROM g2_work_event_v1 WHERE event_id=?",
+                    "SELECT work_id,kind,payload_json FROM g2_work_event_v1 WHERE event_id=?",
                     (candidate.outcome_event_id,),
                 ).fetchone()
-                if event is None:
-                    raise RecoveryRefused("claim exists without its outcome event")
+                expected_payload = {
+                    "claim_key": candidate.result_key,
+                    "handoff_id": candidate.handoff_id,
+                    "request_id": candidate.request_id,
+                    "response_digest": candidate.response_digest,
+                }
+                if (
+                    event is None
+                    or event[0] != candidate.work_id
+                    or event[1] != SPIKE_OUTCOME_KIND
+                    or json.loads(event[2]) != expected_payload
+                ):
+                    raise RecoveryRefused("claim exists without matching outcome")
                 connection.execute("COMMIT")
                 return "ALREADY_ADMITTED"
+
+            current = connection.execute("""
+                SELECT epoch,coverage_digest,enabled FROM issue88_spike_authority
+                WHERE provider_service=? AND provider_namespace=?
+            """, (
+                candidate.provider_service, candidate.provider_namespace,
+            )).fetchone()
+            if (
+                current is None
+                or current[2] != 1
+                or current[0] != candidate.authorized_epoch
+                or current[1] != candidate.authorized_coverage_digest
+            ):
+                raise RecoveryRefused("current recovery epoch or coverage unauthorized")
+            if after_final_authority_read is not None:
+                after_final_authority_read()
 
             if connection.execute(
                 "SELECT 1 FROM g2_work_v1 WHERE work_id=?", (candidate.work_id,)
@@ -352,12 +382,13 @@ class OfflineSqliteContractSpike:
             }
             event_digest = _digest(payload)
             connection.execute("""
-                INSERT INTO issue88_spike_claim VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO issue88_spike_claim VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (candidate.result_key, *desired))
             connection.execute("""
-                INSERT INTO issue88_spike_intent VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO issue88_spike_intent VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
-                event_id, candidate.result_key, candidate.provider_namespace,
+                event_id, candidate.result_key, candidate.provider_service,
+                candidate.provider_namespace,
                 candidate.work_id, candidate.authorized_epoch,
                 candidate.authorized_coverage_digest,
             ))
