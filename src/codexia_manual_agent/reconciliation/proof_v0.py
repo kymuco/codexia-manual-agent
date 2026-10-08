@@ -36,6 +36,10 @@ class ReadbackState(StrEnum):
 def _nonempty(value: str, label: str) -> None:
     if type(value) is not str or not value or value.strip() != value:
         raise ValueError(f"{label} must be nonempty canonical text")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{label} must be valid UTF-8 text") from exc
 
 
 def _sha(value: str, label: str) -> None:
@@ -119,6 +123,19 @@ class ReadbackObservation:
         object.__setattr__(self, "state", ReadbackState(self.state))
         _nonempty(self.port_id, "port_id")
         _nonempty(self.provider_namespace, "provider_namespace")
+        for name in (
+            "request_id",
+            "request_message_id",
+            "response_message_id",
+            "finish_reason",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _nonempty(value, name)
+        for name in ("observed_wire_sha256", "reported_response_sha256"):
+            value = getattr(self, name)
+            if value is not None:
+                _sha(value, name)
         for name in ("response_candidates", "intervening_user_turns"):
             value = getattr(self, name)
             if value is not None and (type(value) is not int or value < 0):
