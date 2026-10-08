@@ -31,7 +31,7 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | A05 | Provider accepted write, response pending | `NOT_YET_COMPLETE`; no succeeded outcome |
 | A06 | Provider completion received, crash before local response read | Subsequent read can verify same turn when available; no resend |
 | A07 | Complete response observed, crash before proof persistence | Subsequent read reconstructs exact proof if available; no admission yet |
-| A08 | Proof appended, crash before role outcome append | Recover proof idempotently; role remains `REQUESTED`; no resend |
+| A08 | Frontier-specific proof appended, crash before role outcome | Recover existing proof at exact event identity; role remains `REQUESTED`; if head changed, require new frontier-bound proof-attempt ID, never resend |
 | A09 | Outcome appended, acknowledgement lost | Reconcile reports `ALREADY_ADMITTED`; no additional role event |
 | A10 | Provider read timeout/network/auth failure | `READ_UNAVAILABLE`, NOT terminal `UNKNOWN`; no new dispatch |
 | A11 | Remote result absent due to retention expiry | `UNVERIFIABLE`; no invented result |
@@ -57,7 +57,7 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | B14 | Candidate response SHA differs from independently read bytes | Reject; audit difference |
 | B15 | Same response ID now returns changed bytes | Conflict; no silent overwrite |
 | B16 | Receipt signature/correlation token invalid or missing | No `EXACT_PROVIDER_CORRELATED` proof |
-| B17 | Same provider turn claimed for two distinct handoffs | Conflict across requests; no second outcome |
+| B17 | Same immutable provider result claimed by handoffs in **two different Work IDs** | Host-wide unique provider-result index rejects second claim; per-Work proof events alone are insufficient; zero second outcomes |
 | B18 | Duplicate provider entries with identical text but different turn IDs | Ambiguous unless distinct original receipt identifies one |
 | B19 | Response exceeds Gen2 bounds or invalid UTF-8 | Reject; never truncate silently |
 | B20 | Provider read unexpectedly invokes `send` | Test fails immediately, no admission |
@@ -83,18 +83,20 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 
 | ID | Condition | Required behavior |
 | --- | --- | --- |
-| D01 | Two observers read same provider result | Both may verify; only one role outcome may be appended |
-| D02 | CAS frontier moves before admission | Reject stale decision, require new proof against current head |
+| D01 | Two observers read same provider result | Both may read; one claim owner only, and at most one strict-CAS role outcome appends; loser re-projects |
+| D02 | Unrelated Work event lands **after gate preflight but before final outcome append** | Strict expected revision/digest CAS on **final append** rejects; cannot call rebinding `record_outcome` unmodified; fresh attempt uses new proof ID |
 | D03 | Same exact proof/result after restart | `ALREADY_ADMITTED`, zero new events, same terminal identity |
 | D04 | Different response/hash after one outcome admitted | `CONFLICT`, not a second terminal result |
-| D05 | Different deterministic outcome ID for same handoff/content | Contract must canonicalize/resolve identity, no duplicate event |
+| D05 | Same result/handoff retried after frontier refresh | Provider claim and proposed outcome identity stay stable, **proof-attempt ID changes with frontier**; no WorkIdentityConflictError from reused proof event ID |
 | D06 | Role completed by another authorized path during probe | Re-project and return conflict/already-admitted as appropriate |
 | D07 | Work cancelled or terminal before admission | Reject, do not resurrect |
-| D08 | Recovery proof persisted but append ack lost | Re-read exact proof event by ID/digest; no duplicate proof record |
+| D08 | Recovery proof append ack lost, then head advances | Re-read prior proof event by ID/digest, do not mutate it; create new frontier-bound proof attempt under new event ID; no resend |
 | D09 | Response is valid but proof event has been corrupted | Reject projection, no successful outcome |
 | D10 | Caller supplies a stale `expected_head_digest` | Reject, no independent write |
 | D11 | Context-corroborated human approval scoped to wrong request | Reject |
 | D12 | Result recovered with `material_uncertainty_resolved=false` | Durable synthesis output allowed by policy, but Research Pack completion remains unmet |
+
+**Review-critical gate requirements (P1):** D02 must inject a competing Work append **between** authorized preflight and the final append, not merely before a preliminary snapshot; a gate wrapping existing rebinding `record_outcome()` must fail this test. B17 must use **two separate Work IDs** and a shared installation-scoped atomic result-claim index. D05/D08 must verify deterministic-but-distinct proof-attempt IDs for distinct Work frontiers, and stable provider claim/outcome semantics without duplicate append.
 
 ## E. Explicit separation from M6.6 re-arm
 
