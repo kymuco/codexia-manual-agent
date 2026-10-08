@@ -181,14 +181,14 @@ def verify_readback(
     if observation is not None and not isinstance(observation, ReadbackObservation):
         raise TypeError("observation must be ReadbackObservation or None")
 
+    # Determine the size without allocating a UTF-8 copy of untrusted text.
+    # A rejected over-limit payload must never be encoded or hashed.
+    response_chars = (
+        None
+        if observation is None or observation.response_text is None
+        else len(observation.response_text)
+    )
     response_sha = None
-    if observation is not None and observation.response_text is not None:
-        try:
-            response_sha = hashlib.sha256(
-                observation.response_text.encode("utf-8")
-            ).hexdigest()
-        except UnicodeEncodeError:
-            response_sha = None
 
     def decide(verdict: ReconciliationVerdict, reason: str) -> ReconciliationDecision:
         payload = {
@@ -204,6 +204,7 @@ def verify_readback(
                         if key != "response_text"
                     },
                     "computed_response_sha256": response_sha,
+                    "observed_response_chars": response_chars,
                 }
             ),
             "verdict": verdict.value,
@@ -223,8 +224,15 @@ def verify_readback(
 
     if observation is None:
         return decide(ReconciliationVerdict.UNVERIFIABLE, "no_observation")
-    if observation.response_text is not None and response_sha is None:
-        return decide(ReconciliationVerdict.CONFLICT, "response_not_utf8")
+    if response_chars is not None:
+        if response_chars > _MAX_RESPONSE_CHARS:
+            return decide(ReconciliationVerdict.CONFLICT, "response_out_of_bounds")
+        try:
+            response_sha = hashlib.sha256(
+                observation.response_text.encode("utf-8")
+            ).hexdigest()
+        except UnicodeEncodeError:
+            return decide(ReconciliationVerdict.CONFLICT, "response_not_utf8")
     if (
         observation.port_id != scope.port_id
         or observation.provider_namespace != scope.provider_namespace
@@ -270,8 +278,6 @@ def verify_readback(
         return decide(ReconciliationVerdict.UNVERIFIABLE, "not_final_response")
     if not observation.response_text:
         return decide(ReconciliationVerdict.UNVERIFIABLE, "no_response_text")
-    if len(observation.response_text) > _MAX_RESPONSE_CHARS:
-        return decide(ReconciliationVerdict.CONFLICT, "response_out_of_bounds")
     if observation.reported_response_sha256 is None:
         return decide(ReconciliationVerdict.UNVERIFIABLE, "missing_response_digest")
     if response_sha != observation.reported_response_sha256:
