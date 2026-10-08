@@ -13,7 +13,8 @@ reopens the authority boundary. Gen2 Core is unchanged.
 - A complete UTF-8 synthesis answer saved with the read-only CWA client.
 - The existing ChatGPT conversation and the exact IDs of its synthesis user
   message and completed assistant message.
-- A separate independently installed CWA Python environment with read access.
+- A separate CWA Python environment with read access; if the editable package
+  is absent, provide the existing CWA checkout `src` path explicitly.
 
 ## Dry-run proof
 
@@ -33,11 +34,15 @@ python -m examples.dw3_reconcile_synthesis `
   --recovered-file ".codexia/dw3-synthesis-recovered.txt" `
   --expected-sha256 "<verified full-response SHA-256>" `
   --cwa-python "W:\dev\chatgpt-web-adapter\.venv\Scripts\python.exe" `
+  --cwa-source-root "W:\dev\chatgpt-web-adapter\src" `
   --auth-file "W:\dev\codexia-m66-pilot\auth_data.json"
 ```
 
 The probe invokes `examples/dw3_cwa_recovery_read.py` via the separate
-CWA interpreter, using **only** `ChatGPTWebClient.get_messages`. It confirms:
+CWA interpreter, using **only** `ChatGPTWebClient.get_messages`. When
+`--cwa-source-root` is supplied, it validates that the checkout contains
+`chatgpt_web_adapter/__init__.py` and prepends the `src` folder to the child
+process's `PYTHONPATH`; it does not install, patch, or start CWA. It confirms:
 
 1. Unique synthesis user/assistant IDs, correct order, no intervening user,
    `finish_reason=stop`, and one unique prior completed reviser answer;
