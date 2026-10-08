@@ -48,10 +48,17 @@ CWA interpreter, using **only** `ChatGPTWebClient.get_messages`. It confirms:
    request digest;
 5. exact UTF-8 file bytes equal the CWA response and expected SHA-256;
 6. exactly one final `CODEXIA_CONTROL_V1` trailer with typed, exact fields,
-   successfully parsed by Research Pack 1.1.
+   successfully parsed by Research Pack 1.1. If CWA's literal text encloses
+   **only the final trailer** in standalone `<escape>` and `</escape>` lines,
+   the pilot gate permits exactly that reversible, documented canonicalization.
+   It rejects other trailing text, malformed wrappers, duplicated markers,
+   altered booleans, and non-parseable JSON.
 
 A successful dry run reports `verified=true`, `mode=dry-run`,
-`workstore_modified=false`. It does **not** attest a Work completion or
+`workstore_modified=false`. It reports both `response_sha256` (the *raw,
+unchanged CWA reply*) and `admitted_output_sha256` (the canonical plaintext
+to be written), along with `normalization`. For a wrapped trailer these
+digests intentionally differ. It does **not** attest a Work completion or
 modify durable events.
 
 ## Explicit admission (separate human decision)
@@ -67,11 +74,17 @@ The tool **re-runs every verification** immediately before invoking the
 existing `CognitionTransportBridge.record_outcome`. No CWA send occurs.
 Any Work revision change, message drift, missing evidence, or bad approval
 fails closed. The resulting `role.completed` is the recovered synthesis
-outcome, **not** an automatic `WorkCompletion` or `ArtifactRef`.
+outcome, **not** an automatic `WorkCompletion` or `ArtifactRef`. It stores
+the canonical unwrapped Research Pack output, while the raw CWA response
+identity remains independently SHA-bound in the forensic proof. Human
+approval applies to the original raw SHA, not a newly invented model answer.
 
 After admission, use the separate existing Research materialization and bounded
-Work progression surfaces to produce evidence/artifacts and reach a completion
-claim. The canonical event stores the validated response text; the CWA IDs,
+Work progression surfaces to produce evidence/artifacts. **Do not claim Work
+completion merely because synthesis was recovered:** if the original control
+states `material_uncertainty_resolved=false`, the materializer cannot admit
+the `NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND` required for acceptance. Preserve
+that finding instead of flipping the boolean or fabricating evidence. The canonical event stores the validated response text; the CWA IDs,
 head, and file SHA remain in the reconciliation report and should be archived
 with pilot evidence. This is a pilot-level provenance approach, not a general
 provider outcome recovery API.
