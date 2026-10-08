@@ -653,7 +653,6 @@ def _git_command(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             close_governed_git_push_preparation(preparation)
 
 
-
 def _work_store(path: str) -> SqliteWorkStore:
     target = Path(path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
