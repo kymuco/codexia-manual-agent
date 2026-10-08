@@ -85,10 +85,7 @@ class PendingCognition:
             "expected_head_digest",
         ):
             _sha(getattr(self, name), name)
-        if (
-            type(self.expected_work_revision) is not int
-            or self.expected_work_revision < 1
-        ):
+        if type(self.expected_work_revision) is not int or self.expected_work_revision < 1:
             raise ValueError("expected_work_revision must be a positive integer")
 
 
@@ -161,20 +158,19 @@ def verify_readback(
 
     if not isinstance(scope, PendingCognition):
         raise TypeError("scope must be PendingCognition")
-    if observation is not None and not isinstance(
-        observation, ReadbackObservation
-    ):
+    if observation is not None and not isinstance(observation, ReadbackObservation):
         raise TypeError("observation must be ReadbackObservation or None")
 
     response_sha = None
     if observation is not None and observation.response_text is not None:
-        response_sha = hashlib.sha256(
-            observation.response_text.encode("utf-8")
-        ).hexdigest()
+        try:
+            response_sha = hashlib.sha256(
+                observation.response_text.encode("utf-8")
+            ).hexdigest()
+        except UnicodeEncodeError:
+            response_sha = None
 
-    def decide(
-        verdict: ReconciliationVerdict, reason: str
-    ) -> ReconciliationDecision:
+    def decide(verdict: ReconciliationVerdict, reason: str) -> ReconciliationDecision:
         payload = {
             "schema_version": 1,
             "scope": asdict(scope),
@@ -207,6 +203,8 @@ def verify_readback(
 
     if observation is None:
         return decide(ReconciliationVerdict.UNVERIFIABLE, "no_observation")
+    if observation.response_text is not None and response_sha is None:
+        return decide(ReconciliationVerdict.CONFLICT, "response_not_utf8")
     if (
         observation.port_id != scope.port_id
         or observation.provider_namespace != scope.provider_namespace
