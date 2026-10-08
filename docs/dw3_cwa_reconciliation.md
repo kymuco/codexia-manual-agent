@@ -89,7 +89,8 @@ Work progression surfaces to produce evidence/artifacts. **Do not claim Work
 completion merely because synthesis was recovered:** if the original control
 states `material_uncertainty_resolved=false`, the materializer cannot admit
 the `NO_MATERIAL_UNCERTAINTY_EVIDENCE_KIND` required for acceptance. Preserve
-that finding instead of flipping the boolean or fabricating evidence. The canonical event stores the validated response text; the CWA IDs,
+that finding instead of flipping the boolean or fabricating evidence.
+The canonical event stores the validated response text; the CWA IDs,
 head, and file SHA remain in the reconciliation report and should be archived
 with pilot evidence. This is a pilot-level provenance approach, not a general
 provider outcome recovery API.
