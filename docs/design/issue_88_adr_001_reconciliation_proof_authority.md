@@ -36,12 +36,15 @@ Provider-read APIs must expose declared capabilities (stable execution ID, branc
 
 ## Decision 2a — Claim each provider result exactly once within the host
 
-**Choose:** a durable, atomic, host-wide **ProviderResultClaimIndex** keyed by a canonical provider-result identity: provider adapter ID/version + authenticated tenant/account namespace + immutable execution/turn ID + response message/receipt ID. Its uniqueness scope is the **local Codexia installation**, not a universal cross-machine proof.
+**Choose:** a durable, atomic, host-wide **ProviderResultClaimIndex** keyed by the stable **provider-side result identity**, **not** the adapter implementation or its version: canonical provider service identity + authenticated tenant/account namespace + immutable provider execution/turn (or conversation/branch namespace if needed for unique message IDs) + immutable response message/receipt ID. The key MUST exclude adapter version, wire-serialization version, Work/request/handoff IDs, local timestamps and normalization policy. Its uniqueness scope is the **local Codexia installation**, not a universal cross-machine proof.
 
-- A claim value binds that result key to exactly one original Work/request/handoff. A second handoff, including one in another Work, cannot claim the same provider result: return `PROVIDER_RESULT_ALREADY_CLAIMED`.
+Adapter/schema versions, serializer version and verification capability are **claim metadata**, never additional uniqueness-key dimensions. If the provider changes result-ID format or the canonical provider namespace, an explicit backwards-compatible alias/migration lookup must prove that previously claimed results cannot be claimed again under the new encoding **before** the upgraded adapter is eligible. Fail closed if stable identity cannot be mapped across versions.
+
+- A claim value binds that result key to exactly one original Work/request/handoff. A second handoff, including one in another Work or after an adapter upgrade, cannot claim the same provider result: return `PROVIDER_RESULT_ALREADY_CLAIMED`. An exact same-handoff replay may reuse the original claim only after checking its stored binding and result digest.
 - Claiming must use a unique constraint or transactional compare-and-set across **all Work IDs in that installation**; per-Work event projections do not satisfy test B17. A process-global in-memory set is not enough.
 - A successful claim is sticky across crash and even if proof/outcome admission fails; the **same** handoff may resume idempotently, another handoff may not appropriate the existing external result. Claims do not imply completion or provider write authority.
-- If the result lacks a stable namespace-scoped identity, the index is unavailable, or collision cannot be ruled out, **do not admit** it through this flow. A human's contextual approval cannot override a known duplicate claim.
+- If the result lacks a stable namespace-scoped identity, the index cannot be **read** or **atomically written**, the index has not been initialized/recovered consistently, a schema migration is ambiguous, or collision cannot be ruled out, **do not admit** it through this flow. Never silently fall back to Work-local proof admission or human approval. A human's contextual approval cannot override a known duplicate claim or an unavailable uniqueness gate.
+- A provider result may have a stable immutable response identity without a provider-issued **causal receipt** for the original dispatch. That is sufficient to guard cross-Work uniqueness, but **not** to elevate contextual matching to `EXACT_PROVIDER_CORRELATED`; keep these proof dimensions separate.
 - Prefer keeping the unique claim index in the same durable host database as Work events; if the index and WorkStore cannot transact together, define replay/compensation as a conservative recoverable saga and prove it before integration. Do not promise atomicity across arbitrary backends.
 
 ## Decision 3 — Human approval only for qualified contextual recovery
@@ -86,7 +89,8 @@ If a Work already has a matching completed outcome, report ALREADY_ADMITTED with
 - [ ] Verify human contextual approval is separately recorded and cannot remove conflicts or permit retries.
 - [ ] Verify stable result + timestamp replay and single terminal outcome across crashes and CAS races.
 - [ ] Verify strict expected-head CAS at the **outcome append**; existing rebinding `record_outcome()` is insufficient without a new boundary.
-- [ ] Verify host-wide unique provider-result claim across **different Work IDs**, fail-closed when the claim index cannot be used.
+- [ ] Verify host-wide unique provider-result claim across **different Work IDs** and **adapter versions**; an upgrade may not change the claim key.
+- [ ] Fail closed on claim-index read failure, write/transaction failure, missing stable provider result ID and unresolved namespace migration — including with valid-looking human contextual approval.
 - [ ] Verify a new Work frontier yields a **new proof-attempt ID**, while existing source claim and proposed outcome identity remain stable.
 - [ ] Confirm the provider-read boundary remains read-only and outside Gen2 Core.
 - [ ] Decide scope for the first bounded provider adapter before starting implementation.
