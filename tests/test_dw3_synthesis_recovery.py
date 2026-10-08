@@ -284,8 +284,7 @@ def test_escaped_cwa_trailer_recovers_exact_false_uncertainty_without_retry(
     assert report["evidence_sufficient"] is True
     assert report["material_uncertainty_resolved"] is False
     assert (
-        validate_synthesis(outcome.output_text).material_unresolved_uncertainty
-        is True
+        validate_synthesis(outcome.output_text).material_unresolved_uncertainty is True
     )
     assert f["store"].snapshot(f["work_id"]).revision == before
 
@@ -308,6 +307,74 @@ def test_escaped_cwa_trailer_rejects_ambiguous_wrappers(tmp_path) -> None:
                 RESEARCH_CONTROL_START + "\n" + RESEARCH_CONTROL_START,
             )
         )
+
+
+def test_cwa_readback_explicit_source_root_is_injected_without_send(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from examples.dw3_reconcile_synthesis import _read_cwa
+
+    root = tmp_path / "external-cwa-src"
+    package = root / "chatgpt_web_adapter"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    observed = []
+
+    def fake_run(command, **kwargs):
+        observed.append((command, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "request": {"message_id": "q", "text": "request"},
+                    "response": {
+                        "message_id": "a",
+                        "finish_reason": "stop",
+                        "text": "answer",
+                    },
+                    "prior_revision": {
+                        "message_id": "r",
+                        "finish_reason": "stop",
+                        "text": "revision",
+                    },
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "examples.dw3_reconcile_synthesis.subprocess.run", fake_run
+    )
+    result = _read_cwa(
+        cwa_python="cwa-python",
+        cwa_source_root=str(root),
+        conversation="https://chatgpt.com/c/existing",
+        auth_file="auth.json",
+        request_message_id="q",
+        response_message_id="a",
+    )
+    assert result["response"]["text"] == "answer"
+    assert len(observed) == 1
+    command, kwargs = observed[0]
+    assert command[0] == "cwa-python"
+    assert "--conversation" in command
+    assert "send" not in command
+    assert kwargs["env"]["PYTHONPATH"].split(__import__("os").pathsep)[0] == str(
+        root.resolve()
+    )
+    assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
+
+    with pytest.raises(ValueError, match="CWA source root"):
+        _read_cwa(
+            cwa_python="cwa-python",
+            cwa_source_root=str(tmp_path / "missing"),
+            conversation="https://chatgpt.com/c/existing",
+            auth_file="auth.json",
+            request_message_id="q",
+            response_message_id="a",
+        )
+    assert len(observed) == 1
 
 
 def test_cwa_readonly_probe_selects_one_completed_response() -> None:
