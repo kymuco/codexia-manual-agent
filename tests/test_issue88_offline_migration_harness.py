@@ -112,7 +112,7 @@ def test_injected_failure_leaves_no_ready_manifest(original, tmp_path, fault_at)
     with pytest.raises(OfflinePreparationRefused, match="injected fault"):
         prepare_clone(source, out, fault_at=fault_at)
     assert not (out / "manifest.json").exists()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(OfflinePreparationRefused, match="manifest"):
         inspect_prepared(out)
     assert source.is_file()
     with sqlite3.connect(source) as connection:
