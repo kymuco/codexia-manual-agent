@@ -78,7 +78,9 @@ def validate_synthesis(text: str) -> ResearchRoleOutput:
         raise ValueError("synthesis content is empty")
     raw = raw[: -len(RESEARCH_CONTROL_END)].strip()
     trailer = json.loads(raw, object_pairs_hook=_unique_json_pairs)
-    if not isinstance(trailer, dict) or set(trailer) != _CONTROL_FIELDS:
+    if not isinstance(trailer, dict):
+        raise TypeError("synthesis trailer must be an object")
+    if set(trailer) != _CONTROL_FIELDS:
         raise ValueError("synthesis trailer does not have exact v1 fields")
     if type(trailer["schema_version"]) is not int or trailer["schema_version"] != 1:
         raise ValueError("unsupported synthesis control version")
@@ -151,11 +153,9 @@ def _read_cwa(
             "read-only CWA proof failed: " + completed.stderr.strip()[-1000:]
         )
     result = json.loads(completed.stdout)
-    if not isinstance(result, dict) or set(result) != {
-        "request",
-        "response",
-        "prior_revision",
-    }:
+    if not isinstance(result, dict):
+        raise TypeError("CWA proof must be a JSON object")
+    if set(result) != {"request", "response", "prior_revision"}:
         raise ValueError("CWA proof has an unexpected payload")
     return result
 
