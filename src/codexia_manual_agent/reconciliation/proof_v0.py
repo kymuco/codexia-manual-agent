@@ -85,7 +85,10 @@ class PendingCognition:
             "expected_head_digest",
         ):
             _sha(getattr(self, name), name)
-        if type(self.expected_work_revision) is not int or self.expected_work_revision < 1:
+        if (
+            type(self.expected_work_revision) is not int
+            or self.expected_work_revision < 1
+        ):
             raise ValueError("expected_work_revision must be a positive integer")
 
 
