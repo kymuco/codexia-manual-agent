@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable, Iterator, Literal
 
 from codexia_manual_agent.work_core import SqliteWorkStore
 
@@ -62,13 +63,20 @@ def _sha(value: str, field: str) -> None:
         raise ValueError(f"{field} must be lowercase SHA-256")
 
 
-def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
+@contextmanager
+def _connect(
+    path: Path, *, readonly: bool = False
+) -> Iterator[sqlite3.Connection]:
     if readonly:
         connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     else:
-        connection = sqlite3.connect(path)
-    connection.execute("PRAGMA foreign_keys=ON")
-    return connection
+        connection = sqlite3.connect(path, timeout=10)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
@@ -139,9 +147,7 @@ def prepare_clone(
         raise OfflinePreparationRefused("source must be an existing regular file")
     if output.exists() or output.is_symlink():
         raise OfflinePreparationRefused("output directory must not already exist")
-    if output.parent.resolve() != source.parent.resolve() and (
-        not output.parent.is_dir()
-    ):
+    if not output.parent.is_dir():
         raise OfflinePreparationRefused("output parent directory must exist")
 
     with _connect(source, readonly=True) as original:
