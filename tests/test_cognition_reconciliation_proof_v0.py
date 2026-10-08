@@ -167,6 +167,43 @@ def test_response_over_gen2_limit_is_rejected(scope, observation) -> None:
     assert report.reason == "response_out_of_bounds"
 
 
+def test_oversized_response_is_never_encoded_or_hashed(
+    scope, observation, monkeypatch
+) -> None:
+    from codexia_manual_agent.reconciliation import proof_v0
+
+    oversized = "x" * (131_072 * 16)
+    candidate = replace(
+        observation,
+        response_text=oversized,
+        reported_response_sha256="f" * 64,
+    )
+    original_sha256 = hashlib.sha256
+    hashed_lengths = []
+
+    def guarded_sha256(data):
+        hashed_lengths.append(len(data))
+        if len(data) > 4096:
+            raise AssertionError("oversized response reached hashlib.sha256")
+        return original_sha256(data)
+
+    monkeypatch.setattr(proof_v0.hashlib, "sha256", guarded_sha256)
+    first = verify_readback(scope, candidate)
+    second = verify_readback(scope, candidate)
+    assert first == second
+    assert first.verdict is ReconciliationVerdict.CONFLICT
+    assert first.reason == "response_out_of_bounds"
+    assert first.response_sha256 is None
+    assert hashed_lengths and max(hashed_lengths) < 4096
+
+    # The response is rejected even if other provider metadata is invalid.
+    wrong_port = replace(candidate, port_id="different-port")
+    mismatch = verify_readback(scope, wrong_port)
+    assert mismatch.verdict is ReconciliationVerdict.CONFLICT
+    assert mismatch.eligible_for_automatic_admission is False
+    assert max(hashed_lengths) < 4096
+
+
 def test_invalid_utf8_text_is_rejected_before_any_admission(scope, observation) -> None:
     invalid_unicode = "prefix-\ud800"
     report = verify_readback(
