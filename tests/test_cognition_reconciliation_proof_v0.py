@@ -167,6 +167,19 @@ def test_response_over_gen2_limit_is_rejected(scope, observation) -> None:
     assert report.reason == "response_out_of_bounds"
 
 
+def test_invalid_utf8_text_is_rejected_before_any_admission(
+    scope, observation
+) -> None:
+    invalid_unicode = "prefix-\\ud800"
+    report = verify_readback(
+        scope,
+        replace(observation, response_text=invalid_unicode),
+    )
+    assert report.verdict is ReconciliationVerdict.CONFLICT
+    assert report.reason == "response_not_utf8"
+    assert report.eligible_for_automatic_admission is False
+
+
 def test_missing_or_forged_request_cannot_be_recovered_by_text_match(
     scope, observation
 ) -> None:
