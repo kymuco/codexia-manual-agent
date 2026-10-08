@@ -66,6 +66,10 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | B23 | ProviderResultClaimIndex atomic **write/transaction fails** | No proof/outcome append; fail closed; recovery may safely retry identical source claim after index repair |
 | B24 | Result lacks immutable namespace-scoped provider result identity (or stable message/turn IDs) | No claim permitted; no outcome admission even with human contextual approval |
 | B25 | Adapter upgrade changes provider ID encoding and alias/migration lookup is unavailable or ambiguous | Fail closed; cannot mint a fresh distinct claim for the same provider-side result |
+| B26 | **Ordinary live callback** admits provider result R into Work A; later reconciliation attempts R in Work B | Shared installation-wide provider-result claim is already owned by A; B is rejected with zero outcome/proof admission even though the first result was not recovered |
+| B27 | Provider namespace has **legacy live outcomes without result IDs or index entries**, then new reconciliation candidate appears | Provider-result coverage unproven: reconciliation disabled for namespace, no claim/admission even when response history appears unique |
+| B28 | New claim index created after adapter upgrade, but older source history can still supply pre-index responses | Merely initializing index or recording a cutover timestamp is insufficient; require verifiable backfill or provider-supported exclusion fence; otherwise reject |
+| B29 | Live callback and recovery simultaneously claim same provider response for distinct Work IDs | Shared atomic uniqueness constraint admits at most one claimant; loser gets conflict; no two role outcomes |
 
 ## C. Proof strength, normalization and authorization
 
@@ -84,6 +88,7 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | C11 | Any provider API key/session token in proposed generic audit metadata | Reject/redact; no credential persistence |
 | C12 | Human attestation for retry/re-arm supplied to recovery-of-result command | Reject as wrong authority type |
 | C13 | Valid human contextual result approval, but provider result claim index cannot be read/written | Reject; approval cannot replace global uniqueness or authorization evidence |
+| C14 | Human approves context-corroborated recovery, but historical live callback claim coverage is not provably complete | Reject, no Work write: human approval cannot replace shared live/recovered index coverage |
 
 ## D. Concurrent, duplicate and lifecycle cases
 
@@ -101,8 +106,9 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | D10 | Caller supplies a stale `expected_head_digest` | Reject, no independent write |
 | D11 | Context-corroborated human approval scoped to wrong request | Reject |
 | D12 | Result recovered with `material_uncertainty_resolved=false` | Durable synthesis output allowed by policy, but Research Pack completion remains unmet |
+| D13 | Normal callback and recovery both claim same provider result at different process restart points | Across restart, stable provider-result claim belongs to first handoff; second rejected, including when live callback has already durably completed |
 
-**Review-critical gate requirements (P1):** D02 must inject a competing Work append **between** authorized preflight and the final append, not merely before a preliminary snapshot; a gate wrapping existing rebinding `record_outcome()` must fail this test. B17 must use **two separate Work IDs** and a shared installation-scoped atomic result-claim index. B21/B25 must reuse one immutable provider result across adapter upgrade with unchanged global claim identity. B22/B23/B24 and C13 assert fail-closed behavior when the uniqueness index or stable result identity is unavailable, **including a human-approved candidate**. D05/D08 must verify deterministic-but-distinct proof-attempt IDs for distinct Work frontiers, and stable provider claim/outcome semantics without duplicate append.
+**Review-critical gate requirements (P1):** D02 must inject a competing Work append **between** authorized preflight and the final append, not merely before a preliminary snapshot; a gate wrapping existing rebinding `record_outcome()` must fail this test. B17 must use **two separate Work IDs** and a shared installation-scoped atomic result-claim index. B21/B25 must reuse one immutable provider result across adapter upgrade with unchanged global claim identity. B22/B23/B24 and C13 assert fail-closed behavior when the uniqueness index or stable result identity is unavailable, **including a human-approved candidate**. B26/B29/D13 assert the uniqueness gate is shared by **normal live callbacks and recovery**; B27/B28/C14 assert fail-closed coverage for historical unindexed callbacks even after adapter upgrades or human approval. D05/D08 must verify deterministic-but-distinct proof-attempt IDs for distinct Work frontiers, and stable provider claim/outcome semantics without duplicate append.
 
 ## E. Explicit separation from M6.6 re-arm
 
