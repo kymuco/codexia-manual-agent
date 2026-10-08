@@ -82,7 +82,7 @@ def _connect(
 def _unique_columns(connection: sqlite3.Connection, table: str) -> set[tuple[str, ...]]:
     found = set()
     for row in connection.execute(f"PRAGMA index_list({table})"):
-        if row[2]:
+        if row[2] and not row[4]:
             escaped = row[1].replace('"', '""')
             columns = tuple(
                 item[2] for item in connection.execute(
@@ -93,7 +93,9 @@ def _unique_columns(connection: sqlite3.Connection, table: str) -> set[tuple[str
     return found
 
 
-def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
+def _verify_core(
+    connection: sqlite3.Connection, *, allow_prepared: bool = False
+) -> tuple[str, int, int]:
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise OfflinePreparationRefused("SQLite integrity_check failed")
     expected_indexes = {
@@ -124,9 +126,15 @@ def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
         raise OfflinePreparationRefused(
             "SQLite foreign key check cannot validate Gen2 schema"
         ) from exc
-    if connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE name LIKE 'issue88_offline_%'"
-    ).fetchone():
+    offline = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE name GLOB 'issue88_offline_*'"
+        )
+    }
+    if allow_prepared:
+        if offline != {"issue88_offline_meta", "issue88_offline_claim"}:
+            raise OfflinePreparationRefused("prepared migration object set changed")
+    elif offline:
         raise OfflinePreparationRefused("Issue88 migration objects already exist")
     return _core_rows(connection)
 
@@ -287,7 +295,7 @@ def inspect_prepared(output_dir: str | Path) -> Preparation:
     with _connect(output / "backup.sqlite3", readonly=True) as backup:
         backed = _verify_core(backup)
     with _connect(output / "prepared.sqlite3", readonly=True) as clone:
-        if _core_rows(clone) != backed:
+        if _verify_core(clone, allow_prepared=True) != backed:
             raise OfflinePreparationRefused("prepared Work chronology changed")
         state = clone.execute(
             "SELECT schema_version,state,core_digest FROM issue88_offline_meta"
