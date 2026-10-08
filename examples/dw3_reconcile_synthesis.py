@@ -90,7 +90,7 @@ def canonicalize_synthesis(text: str) -> tuple[str, str]:
 
     leading = wrapped[:start]
     opening = re.search(
-        r"(?:\\r?\\n)[ \\t]*<escape>[ \\t]*\\r?\\n[ \\t]*$",
+        r"(?:\r?\n)[ \t]*<escape>[ \t]*\r?\n[ \t]*$",
         leading,
     )
     if opening is None:
@@ -100,7 +100,7 @@ def canonicalize_synthesis(text: str) -> tuple[str, str]:
     if not body:
         raise ValueError("CWA escape wrapper has no synthesis body")
 
-    canonical = body + "\\n\\n" + wrapped[start:]
+    canonical = body + "\n\n" + wrapped[start:]
     return canonical, "cwa-final-control-escape-unwrapped-v1"
 
 
