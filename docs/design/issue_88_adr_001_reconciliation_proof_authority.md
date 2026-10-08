@@ -11,13 +11,13 @@
 
 - The proof event binds the existing request/handoff/role/Work digests, provider namespace, original wire-input digest, response locator/IDs, raw + canonical content digests, transformation policy, provenance/proof level, and authorized human decision reference where required.
 - It contains no credentials, cookies, raw browser lease, auth header or provider token. Any raw provider evidence outside Work is privacy-governed, integrity checked and addressed by content digest. The existing CognitionOutcome can still carry its canonical output text; the proof event need not duplicate it.
-- Crash-ordering protocol for later implementation: (1) verify/store referenced evidence bytes; (2) CAS-append an immutable *proof pending-admission* event; (3) CAS-append the existing outcome through the exact bridge; (4) re-project and compare. The proof event alone **never means the role completed**.
+- Crash-ordering protocol for later implementation: (1) authenticate/read and bound the provider result; (2) acquire a durable **provider-result claim** through the host-wide unique index; (3) CAS-append a frontier-specific immutable *proof pending-admission* event; (4) use a **new strict-frontier outcome admission operation** (not the current rebinding `record_outcome`) to CAS-append the role outcome against precisely that proof event's revision/head; (5) re-project and compare. The proof event or result claim alone **never means the role completed**.
 - If proof append is acknowledged ambiguously, locate its deterministic identity and exact digest before taking another step. If outcome append is acknowledged ambiguously, recover the terminal RoleRun and compare the expected semantic response and proof binding before returning ALREADY_ADMITTED.
-- A Work revision movement between steps fails closed or triggers a *new read-only* verification. No weak bypass of the WorkStore CAS frontier is allowed.
+- A Work revision movement between steps fails closed. A fresh attempt must re-project the Work and generate a **new proof-attempt ID bound to the new frontier**; the provider-result claim and canonical outcome identity remain the same. No weak bypass of the WorkStore CAS frontier is allowed.
 
-**Why:** a separate host-only ledger cannot by itself show which result became authoritative in the canonical Work timeline. A single atomic two-event append would be ideal but would require a new WorkStore transaction API; a recoverable two-step CAS sequence is the narrower initial proposal.
+**Why:** a separate host-only ledger cannot by itself show which result became authoritative in the canonical Work timeline. A single atomic two-event append would be ideal but would require a new WorkStore transaction API; a recoverable two-step CAS sequence is the narrower initial proposal. Critically, today's `CognitionTransportBridge.record_outcome()` **is not itself a strict-frontier CAS API**: it rereads the current snapshot and rebinds the outcome, so it cannot be called unmodified after an external preflight to enforce D02. The implementation must introduce a narrow atomic expected-head admission path, using WorkStore's actual `append(expected_revision=...)` boundary to reject concurrent movement.
 
-**Risk to resolve in implementation:** recovery must not expose a pending proof as an admitted outcome; event projection, retention and referential availability must be validated before new event kinds are introduced.
+**Risk to resolve in implementation:** recovery must not expose a pending proof as an admitted outcome; event projection, retention and referential availability must be validated before new event kinds are introduced. A pending proof must store both its **observed subject frontier** and its **post-proof admission frontier**. Only the proof event itself may advance the Work between authorization and admission; any unrelated event rejects the attempt.
 
 ## Decision 2 — Provider correlation threshold
 
@@ -33,6 +33,16 @@ Minimum for exact tier:
 Where any of those is not available, maximum tier is **CONTEXT_CORROBORATED**, even if the plaintext matches perfectly. CWA conversation history by itself is not assumed to meet exact-tier requirements.
 
 Provider-read APIs must expose declared capabilities (stable execution ID, branch lineage, completion signal, original-wire readback, receipt verification), with a versioned trust contract. Unsupported or unavailable features downgrade/fail closed; no guessed correlation based on timestamps.
+
+## Decision 2a — Claim each provider result exactly once within the host
+
+**Choose:** a durable, atomic, host-wide **ProviderResultClaimIndex** keyed by a canonical provider-result identity: provider adapter ID/version + authenticated tenant/account namespace + immutable execution/turn ID + response message/receipt ID. Its uniqueness scope is the **local Codexia installation**, not a universal cross-machine proof.
+
+- A claim value binds that result key to exactly one original Work/request/handoff. A second handoff, including one in another Work, cannot claim the same provider result: return `PROVIDER_RESULT_ALREADY_CLAIMED`.
+- Claiming must use a unique constraint or transactional compare-and-set across **all Work IDs in that installation**; per-Work event projections do not satisfy test B17. A process-global in-memory set is not enough.
+- A successful claim is sticky across crash and even if proof/outcome admission fails; the **same** handoff may resume idempotently, another handoff may not appropriate the existing external result. Claims do not imply completion or provider write authority.
+- If the result lacks a stable namespace-scoped identity, the index is unavailable, or collision cannot be ruled out, **do not admit** it through this flow. A human's contextual approval cannot override a known duplicate claim.
+- Prefer keeping the unique claim index in the same durable host database as Work events; if the index and WorkStore cannot transact together, define replay/compensation as a conservative recoverable saga and prove it before integration. Do not promise atomicity across arbitrary backends.
 
 ## Decision 3 — Human approval only for qualified contextual recovery
 
@@ -56,13 +66,14 @@ A human "approve" does **not** transform CONTEXT_CORROBORATED into EXACT_PROVIDE
 - provider namespace + execution/turn identity where available, plus response message/receipt identity;
 - canonical output digest and status (and raw digest + normalization policy/version).
 
-Use a namespace-hashed key (for example UUIDv5) for proof and proposed outcome identity, **not** a newly generated random UUID on every retry. Persist the exact proposed outcome metadata, including creation timestamp, before first admission attempt or derive it from a durable record. A replay must reuse the same identity and payload bytes; deterministic ID alone is not sufficient because changed timestamp changes the event digest.
+Use separate namespace-hashed IDs (for example UUIDv5) for (a) a **provider-result claim** independent of Work ID; (b) the **frontier-bound proof attempt** incorporating Work revision and previous event digest; and (c) a stable **proposed outcome identity** for this handoff/result, independent of proof refreshes. Do **not** use a newly generated random ID on every retry. Persist the exact proposed outcome metadata, including creation timestamp, before first admission attempt or derive it from a durable record. A replay must reuse the same identity and payload bytes; deterministic ID alone is not sufficient because changed timestamp changes the event digest.
 
-If a Work already has a matching completed outcome, report ALREADY_ADMITTED with zero appended events. If a different provider response or canonical digest claims the same handoff, return CONFLICT, not a second terminal outcome. Concurrency is resolved via WorkStore CAS then re-projection; compare original source provenance and semantic digest after losing a race.
+If a Work already has a matching completed outcome, report ALREADY_ADMITTED with zero appended events. If a different provider response or canonical digest claims the same handoff, return CONFLICT, not a second terminal outcome. A new proof attempt after changed Work head uses a **new proof-event identity**, not a replay of the old event ID with different bytes. Concurrency is resolved via WorkStore CAS then re-projection; compare original source provenance and semantic digest after losing a race.
 
 ## Explicitly deferred
 
-- Detailed event schema, migration and collision behavior in Gen2 Core.
+- Detailed proof-attempt and result-claim schemas, migration and collision behavior in Gen2 Core.
+- Atomic API shape for strict expected-revision **and** expected-head-digest outcome admission; must be enforced on the final append, not in a separate stale preflight.
 - Selection of the first provider with genuine authenticated readback + stable causal receipt; CWA does **not** automatically qualify.
 - Token/receipt retention, privacy limits, encrypted payload storage and deletion policy.
 - Whether a privileged **exact-tier** result may ever be admitted automatically in a later product policy; v1 default is no.
@@ -74,6 +85,9 @@ If a Work already has a matching completed outcome, report ALREADY_ADMITTED with
 - [ ] Verify authenticated causal correlation is never inferred from a prompt or readback message ID alone.
 - [ ] Verify human contextual approval is separately recorded and cannot remove conflicts or permit retries.
 - [ ] Verify stable result + timestamp replay and single terminal outcome across crashes and CAS races.
+- [ ] Verify strict expected-head CAS at the **outcome append**; existing rebinding `record_outcome()` is insufficient without a new boundary.
+- [ ] Verify host-wide unique provider-result claim across **different Work IDs**, fail-closed when the claim index cannot be used.
+- [ ] Verify a new Work frontier yields a **new proof-attempt ID**, while existing source claim and proposed outcome identity remain stable.
 - [ ] Confirm the provider-read boundary remains read-only and outside Gen2 Core.
 - [ ] Decide scope for the first bounded provider adapter before starting implementation.
 
