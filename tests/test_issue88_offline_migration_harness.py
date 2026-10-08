@@ -131,6 +131,29 @@ def test_missing_core_table_fails_before_creating_output(tmp_path):
     assert not dest.exists()
 
 
+def test_missing_unique_indexes_are_not_accepted(tmp_path):
+    source = tmp_path / "no-indexes.sqlite3"
+    with sqlite3.connect(source) as cx:
+        cx.execute("""
+            CREATE TABLE g2_work_v1 (
+                work_id TEXT, created_at TEXT, objective TEXT,
+                source_namespace TEXT, source_id TEXT,
+                ingress_payload_digest TEXT, ingress_binding_digest TEXT,
+                work_digest TEXT
+            )
+        """)
+        cx.execute("""
+            CREATE TABLE g2_work_event_v1 (
+                event_id TEXT, work_id TEXT, sequence INTEGER,
+                created_at TEXT, kind TEXT, payload_json TEXT,
+                previous_event_digest TEXT, event_digest TEXT,
+                FOREIGN KEY(work_id) REFERENCES g2_work_v1(work_id)
+            )
+        """)
+    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+        prepare_clone(source, tmp_path / "do-not-clone")
+
+
 def test_non_fresh_destination_is_refused(original, tmp_path):
     source, _, _ = original
     target = tmp_path / "existing"
@@ -157,7 +180,9 @@ def test_modified_backup_fails_readonly_validation(original, tmp_path):
         inspect_prepared(out)
 
 
-def test_two_paths_share_one_atomic_claim_even_after_adapter_upgrade(original, tmp_path):
+def test_two_paths_share_one_atomic_claim_even_after_adapter_upgrade(
+    original, tmp_path
+):
     source, _, _ = original
     out = tmp_path / "claims"
     prepare_clone(source, out)
