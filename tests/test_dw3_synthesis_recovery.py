@@ -45,8 +45,8 @@ from examples.dw3_cwa_recovery_read import extract_turn
 from examples.dw3_reconcile_synthesis import validate_synthesis, verify_recovery
 from examples.dw3_research_live_host import (
     PROVIDER_REF,
-    _PluginService,
     _hot_research_continuation_prompt,
+    _PluginService,
 )
 
 
@@ -125,14 +125,18 @@ def _fixture(tmp_path: Path):
         if role.run.binding.role_id == SYNTHESIZER_ROLE_ID
     )
     assert synth.state is RoleRunState.REQUESTED
-    request = RoleCognitionMaterializationService(
-        store=store,
-        instructions=ResearchInstructionsMaterialPort(),
-        context=ResearchContextMaterialPort(store=store, work_id=work_id),
-    ).rematerialize_request(
-        work_id=work_id,
-        role_run_id=synth.run.role_run_id,
-    ).request
+    request = (
+        RoleCognitionMaterializationService(
+            store=store,
+            instructions=ResearchInstructionsMaterialPort(),
+            context=ResearchContextMaterialPort(store=store, work_id=work_id),
+        )
+        .rematerialize_request(
+            work_id=work_id,
+            role_run_id=synth.run.role_run_id,
+        )
+        .request
+    )
     delta = _hot_research_continuation_prompt(request.context)
     assert delta is not None
     prompt = (
@@ -245,23 +249,33 @@ def test_recovery_requires_exact_final_control(tmp_path) -> None:
 def test_cwa_readonly_probe_selects_one_completed_response() -> None:
     messages = [
         SimpleNamespace(
-            role="user", message_id="rev-user", text="Revise",
+            role="user",
+            message_id="rev-user",
+            text="Revise",
             finish_reason=None,
         ),
         SimpleNamespace(
-            role="assistant", message_id="rev-answer", text="Revision",
+            role="assistant",
+            message_id="rev-answer",
+            text="Revision",
             finish_reason="stop",
         ),
         SimpleNamespace(
-            role="user", message_id="syn-user", text="Synthesize",
+            role="user",
+            message_id="syn-user",
+            text="Synthesize",
             finish_reason=None,
         ),
         SimpleNamespace(
-            role="assistant", message_id="interim", text="Working",
+            role="assistant",
+            message_id="interim",
+            text="Working",
             finish_reason=None,
         ),
         SimpleNamespace(
-            role="assistant", message_id="syn-answer", text="Final",
+            role="assistant",
+            message_id="syn-answer",
+            text="Final",
             finish_reason="stop",
         ),
     ]
