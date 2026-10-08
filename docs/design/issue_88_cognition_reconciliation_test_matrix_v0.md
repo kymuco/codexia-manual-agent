@@ -61,6 +61,11 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | B18 | Duplicate provider entries with identical text but different turn IDs | Ambiguous unless distinct original receipt identifies one |
 | B19 | Response exceeds Gen2 bounds or invalid UTF-8 | Reject; never truncate silently |
 | B20 | Provider read unexpectedly invokes `send` | Test fails immediately, no admission |
+| B21 | Same provider execution and response after **adapter v1 → v2 upgrade**, second Work claims it | One stable provider-side claim key across adapter versions; second Work rejected; no second outcome |
+| B22 | ProviderResultClaimIndex **read unavailable** (I/O error, permission, corruption) | Fail closed before proof/outcome admission; no Work-local fallback even with human attestation |
+| B23 | ProviderResultClaimIndex atomic **write/transaction fails** | No proof/outcome append; fail closed; recovery may safely retry identical source claim after index repair |
+| B24 | Result lacks immutable namespace-scoped provider result identity (or stable message/turn IDs) | No claim permitted; no outcome admission even with human contextual approval |
+| B25 | Adapter upgrade changes provider ID encoding and alias/migration lookup is unavailable or ambiguous | Fail closed; cannot mint a fresh distinct claim for the same provider-side result |
 
 ## C. Proof strength, normalization and authorization
 
@@ -78,6 +83,7 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | C10 | Control boolean changed during normalization | Reject; no coercion or flag upgrading |
 | C11 | Any provider API key/session token in proposed generic audit metadata | Reject/redact; no credential persistence |
 | C12 | Human attestation for retry/re-arm supplied to recovery-of-result command | Reject as wrong authority type |
+| C13 | Valid human contextual result approval, but provider result claim index cannot be read/written | Reject; approval cannot replace global uniqueness or authorization evidence |
 
 ## D. Concurrent, duplicate and lifecycle cases
 
@@ -96,7 +102,7 @@ Use stable seeded identifiers, no timing-sensitive sleeps, no real model invocat
 | D11 | Context-corroborated human approval scoped to wrong request | Reject |
 | D12 | Result recovered with `material_uncertainty_resolved=false` | Durable synthesis output allowed by policy, but Research Pack completion remains unmet |
 
-**Review-critical gate requirements (P1):** D02 must inject a competing Work append **between** authorized preflight and the final append, not merely before a preliminary snapshot; a gate wrapping existing rebinding `record_outcome()` must fail this test. B17 must use **two separate Work IDs** and a shared installation-scoped atomic result-claim index. D05/D08 must verify deterministic-but-distinct proof-attempt IDs for distinct Work frontiers, and stable provider claim/outcome semantics without duplicate append.
+**Review-critical gate requirements (P1):** D02 must inject a competing Work append **between** authorized preflight and the final append, not merely before a preliminary snapshot; a gate wrapping existing rebinding `record_outcome()` must fail this test. B17 must use **two separate Work IDs** and a shared installation-scoped atomic result-claim index. B21/B25 must reuse one immutable provider result across adapter upgrade with unchanged global claim identity. B22/B23/B24 and C13 assert fail-closed behavior when the uniqueness index or stable result identity is unavailable, **including a human-approved candidate**. D05/D08 must verify deterministic-but-distinct proof-attempt IDs for distinct Work frontiers, and stable provider claim/outcome semantics without duplicate append.
 
 ## E. Explicit separation from M6.6 re-arm
 
