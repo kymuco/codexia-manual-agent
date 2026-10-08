@@ -1,16 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from codexia_manual_agent.role_core import (
-    CognitionOutcome,
-    RoleRunState,
-    project_role_runs,
-)
 from codexia_manual_agent.role_core.transport_bridge import (
     CognitionTransportBridge,
     CognitionTransportPortError,
@@ -22,6 +18,11 @@ from codexia_manual_agent.research_work import (
     ResearchContextMaterialPort,
     ResearchInstructionsMaterialPort,
 )
+from codexia_manual_agent.role_core import (
+    CognitionOutcome,
+    RoleRunState,
+    project_role_runs,
+)
 from codexia_manual_agent.standalone_work import (
     StandaloneWorkHost,
     StandaloneWorkSelector,
@@ -32,16 +33,12 @@ from codexia_manual_agent.workflow_orchestration.role_cognition import (
     RoleCognitionMaterializationService,
 )
 from codexia_manual_agent.workflow_runtime.research_v1 import (
-    CRITIC_ROLE_ID,
-    RESEARCHER_ROLE_ID,
-    REVISER_ROLE_ID,
     STAGE_CRITIQUE,
     STAGE_INITIAL,
     STAGE_REVISION,
     STAGE_SYNTHESIS,
     SYNTHESIZER_ROLE_ID,
     ResearchRoleOutput,
-    research_role_bindings,
     research_workflow_binding,
 )
 from examples.dw3_cwa_recovery_read import extract_turn
@@ -150,8 +147,6 @@ def _fixture(tmp_path: Path):
     )
     filepath = tmp_path / "response.txt"
     filepath.write_bytes(response.encode("utf-8"))
-    import hashlib
-
     sha = hashlib.sha256(filepath.read_bytes()).hexdigest()
     return {
         "store": store,
