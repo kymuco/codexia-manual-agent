@@ -136,17 +136,20 @@ def test_missing_unique_indexes_are_not_accepted(tmp_path):
     with sqlite3.connect(source) as cx:
         cx.execute("""
             CREATE TABLE g2_work_v1 (
-                work_id TEXT, created_at TEXT, objective TEXT,
-                source_namespace TEXT, source_id TEXT,
-                ingress_payload_digest TEXT, ingress_binding_digest TEXT,
-                work_digest TEXT
+                work_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL, objective TEXT NOT NULL,
+                source_namespace TEXT NOT NULL, source_id TEXT NOT NULL,
+                ingress_payload_digest TEXT NOT NULL,
+                ingress_binding_digest TEXT NOT NULL, work_digest TEXT NOT NULL
             )
         """)
         cx.execute("""
             CREATE TABLE g2_work_event_v1 (
-                event_id TEXT, work_id TEXT, sequence INTEGER,
-                created_at TEXT, kind TEXT, payload_json TEXT,
-                previous_event_digest TEXT, event_digest TEXT,
+                event_id TEXT PRIMARY KEY,
+                work_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL, kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL, previous_event_digest TEXT,
+                event_digest TEXT NOT NULL,
                 FOREIGN KEY(work_id) REFERENCES g2_work_v1(work_id)
             )
         """)
@@ -159,10 +162,11 @@ def test_partial_unique_indexes_do_not_meet_core_schema(tmp_path):
     with sqlite3.connect(source) as cx:
         cx.execute("""
             CREATE TABLE g2_work_v1 (
-                work_id TEXT PRIMARY KEY, created_at TEXT, objective TEXT,
-                source_namespace TEXT, source_id TEXT,
-                ingress_payload_digest TEXT, ingress_binding_digest TEXT,
-                work_digest TEXT
+                work_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL, objective TEXT NOT NULL,
+                source_namespace TEXT NOT NULL, source_id TEXT NOT NULL,
+                ingress_payload_digest TEXT NOT NULL,
+                ingress_binding_digest TEXT NOT NULL, work_digest TEXT NOT NULL
             )
         """)
         cx.execute("""
@@ -172,9 +176,10 @@ def test_partial_unique_indexes_do_not_meet_core_schema(tmp_path):
         cx.execute("""
             CREATE TABLE g2_work_event_v1 (
                 event_id TEXT PRIMARY KEY,
-                work_id TEXT, sequence INTEGER, created_at TEXT, kind TEXT,
-                payload_json TEXT, previous_event_digest TEXT,
-                event_digest TEXT,
+                work_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+                created_at TEXT NOT NULL, kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL, previous_event_digest TEXT,
+                event_digest TEXT NOT NULL,
                 FOREIGN KEY(work_id) REFERENCES g2_work_v1(work_id)
             )
         """)
@@ -197,10 +202,73 @@ def test_prepared_core_schema_tamper_is_rejected(original, tmp_path):
         """)
         cx.execute("DROP TABLE g2_work_event_v1")
         cx.execute("ALTER TABLE issue88_bad_core RENAME TO g2_work_event_v1")
-    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+    with pytest.raises(OfflinePreparationRefused, match="Gen2 table shape"):
         inspect_prepared(out)
-    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+    with pytest.raises(OfflinePreparationRefused, match="Gen2 table shape"):
         claim_fixture(out, _claim(), path="recovery")
+
+
+def test_prepared_claim_table_replacement_is_rejected(original, tmp_path):
+    source, _, _ = original
+    out = tmp_path / "claim-schema"
+    prepare_clone(source, out)
+    with sqlite3.connect(out / "prepared.sqlite3") as cx:
+        cx.execute("DROP TABLE issue88_offline_claim")
+        cx.execute("""
+            CREATE TABLE issue88_offline_claim (
+                provider_service TEXT,
+                result_key TEXT,
+                provider_namespace TEXT,
+                execution_id TEXT, response_id TEXT,
+                work_id TEXT, request_id TEXT, handoff_id TEXT,
+                response_digest TEXT, first_path TEXT
+            )
+        """)
+    with pytest.raises(OfflinePreparationRefused, match="DDL mismatch"):
+        inspect_prepared(out)
+    with pytest.raises(OfflinePreparationRefused, match="DDL mismatch"):
+        claim_fixture(out, _claim(), path="live")
+
+
+def test_nonprefixed_trigger_on_claim_table_is_rejected(original, tmp_path):
+    source, _, _ = original
+    out = tmp_path / "trigger"
+    prepare_clone(source, out)
+    with sqlite3.connect(out / "prepared.sqlite3") as cx:
+        cx.execute("""
+            CREATE TRIGGER erase_claims AFTER INSERT
+            ON issue88_offline_claim
+            BEGIN DELETE FROM issue88_offline_claim; END
+        """)
+    with pytest.raises(OfflinePreparationRefused, match="prepared-table trigger"):
+        inspect_prepared(out)
+    with pytest.raises(OfflinePreparationRefused, match="prepared-table trigger"):
+        claim_fixture(out, _claim(), path="recovery")
+
+
+def test_matching_names_but_missing_gen2_not_null_is_rejected(tmp_path):
+    source = tmp_path / "weak-shape.sqlite3"
+    with sqlite3.connect(source) as cx:
+        cx.execute("""
+            CREATE TABLE g2_work_v1 (
+                work_id TEXT PRIMARY KEY, created_at TEXT, objective TEXT,
+                source_namespace TEXT, source_id TEXT,
+                ingress_payload_digest TEXT, ingress_binding_digest TEXT,
+                work_digest TEXT, UNIQUE(source_namespace, source_id)
+            )
+        """)
+        cx.execute("""
+            CREATE TABLE g2_work_event_v1 (
+                event_id TEXT PRIMARY KEY,
+                work_id TEXT, sequence INTEGER,
+                created_at TEXT, kind TEXT, payload_json TEXT,
+                previous_event_digest TEXT, event_digest TEXT,
+                UNIQUE(work_id, sequence),
+                FOREIGN KEY(work_id) REFERENCES g2_work_v1(work_id)
+            )
+        """)
+    with pytest.raises(OfflinePreparationRefused, match="Gen2 table shape"):
+        prepare_clone(source, tmp_path / "rejected-shape")
 
 
 def test_non_fresh_destination_is_refused(original, tmp_path):
