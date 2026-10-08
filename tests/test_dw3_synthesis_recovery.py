@@ -344,9 +344,7 @@ def test_cwa_readback_explicit_source_root_is_injected_without_send(
             stderr="",
         )
 
-    monkeypatch.setattr(
-        "examples.dw3_reconcile_synthesis.subprocess.run", fake_run
-    )
+    monkeypatch.setattr("examples.dw3_reconcile_synthesis.subprocess.run", fake_run)
     result = _read_cwa(
         cwa_python="cwa-python",
         cwa_source_root=str(root),
@@ -361,9 +359,7 @@ def test_cwa_readback_explicit_source_root_is_injected_without_send(
     assert command[0] == "cwa-python"
     assert "--conversation" in command
     assert "send" not in command
-    assert kwargs["env"]["PYTHONPATH"].split(os.pathsep)[0] == str(
-        root.resolve()
-    )
+    assert kwargs["env"]["PYTHONPATH"].split(os.pathsep)[0] == str(root.resolve())
     assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
 
     with pytest.raises(ValueError, match="CWA source root"):
