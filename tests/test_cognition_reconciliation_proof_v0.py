@@ -251,6 +251,14 @@ def test_malformed_scope_is_rejected(scope, field, value) -> None:
         ("branch_verified", 1),
         ("request_precedes_response", "yes"),
         ("response_text", b"bytes"),
+        ("request_id", 123),
+        ("request_message_id", 123),
+        ("response_message_id", 456),
+        ("request_message_id", ""),
+        ("response_message_id", " bad-id "),
+        ("observed_wire_sha256", "not-a-sha256"),
+        ("reported_response_sha256", 99),
+        ("finish_reason", b"stop"),
     ],
 )
 def test_malformed_observation_is_rejected(observation, field, value) -> None:
