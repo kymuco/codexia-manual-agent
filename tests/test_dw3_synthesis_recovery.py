@@ -283,7 +283,10 @@ def test_escaped_cwa_trailer_recovers_exact_false_uncertainty_without_retry(
     assert report["objective_coverage_complete"] is True
     assert report["evidence_sufficient"] is True
     assert report["material_uncertainty_resolved"] is False
-    assert validate_synthesis(outcome.output_text).material_unresolved_uncertainty is True
+    assert (
+        validate_synthesis(outcome.output_text).material_unresolved_uncertainty
+        is True
+    )
     assert f["store"].snapshot(f["work_id"]).revision == before
 
 
