@@ -248,10 +248,15 @@ def prepare_clone(
     with _connect(source, readonly=True) as original:
         before = _verify_core(original)
 
-    output.mkdir(exist_ok=False)
+    output.mkdir(mode=0o700, exist_ok=False)
     backup_path = output / "backup.sqlite3"
     prepared_path = output / "prepared.sqlite3"
     manifest_path = output / "manifest.json"
+    # Reserve both filenames exclusively inside the new private directory.
+    # This prevents a pre-existing link at either destination.
+    for destination in (backup_path, prepared_path):
+        with destination.open("xb"):
+            pass
 
     with _connect(source, readonly=True) as original:
         with _connect(backup_path) as backup:
@@ -323,7 +328,16 @@ def prepare_clone(
 def inspect_prepared(output_dir: str | Path) -> Preparation:
     """Read-only validation of a complete, still-disabled clone."""
     output = Path(output_dir)
-    record = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    if output.is_symlink() or not output.is_dir():
+        raise OfflinePreparationRefused("prepared directory is invalid")
+    for name in ("backup.sqlite3", "prepared.sqlite3"):
+        candidate = output / name
+        if candidate.is_symlink() or not candidate.is_file():
+            raise OfflinePreparationRefused("prepared database copy is invalid")
+    manifest = output / "manifest.json"
+    if manifest.is_symlink() or not manifest.is_file():
+        raise OfflinePreparationRefused("prepared manifest is missing or linked")
+    record = json.loads(manifest.read_text(encoding="utf-8"))
     if record.get("schema_version") != SCHEMA_VERSION or record.get("state") != STATE:
         raise OfflinePreparationRefused("missing valid disabled manifest")
     with _connect(output / "backup.sqlite3", readonly=True) as backup:
