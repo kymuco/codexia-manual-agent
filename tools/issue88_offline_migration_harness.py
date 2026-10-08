@@ -96,8 +96,6 @@ def _unique_columns(connection: sqlite3.Connection, table: str) -> set[tuple[str
 def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise OfflinePreparationRefused("SQLite integrity_check failed")
-    if connection.execute("PRAGMA foreign_key_check").fetchall():
-        raise OfflinePreparationRefused("SQLite foreign key integrity failed")
     expected_indexes = {
         "g2_work_v1": {("work_id",), ("source_namespace", "source_id")},
         "g2_work_event_v1": {("event_id",), ("work_id", "sequence")},
@@ -119,6 +117,13 @@ def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
     }
     if ("g2_work_v1", "work_id", "work_id") not in foreign_keys:
         raise OfflinePreparationRefused("missing Gen2 event Work foreign key")
+    try:
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise OfflinePreparationRefused("SQLite foreign key integrity failed")
+    except sqlite3.DatabaseError as exc:
+        raise OfflinePreparationRefused(
+            "SQLite foreign key check cannot validate Gen2 schema"
+        ) from exc
     if connection.execute(
         "SELECT 1 FROM sqlite_master WHERE name LIKE 'issue88_offline_%'"
     ).fetchone():
