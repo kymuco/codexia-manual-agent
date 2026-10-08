@@ -180,6 +180,28 @@ def _verify_core(
                 raise OfflinePreparationRefused(
                     f"prepared table DDL mismatch: {name}"
                 )
+        # The INTEGER PRIMARY KEY meta uses rowid with no index. The
+        # claim TEXT PRIMARY KEY has exactly one SQLite pk autoindex.
+        # An extra index (even a nonprefixed one) can change claim semantics.
+        meta_indexes = connection.execute(
+            "PRAGMA index_list(issue88_offline_meta)"
+        ).fetchall()
+        claim_indexes = connection.execute(
+            "PRAGMA index_list(issue88_offline_claim)"
+        ).fetchall()
+        if meta_indexes or len(claim_indexes) != 1:
+            raise OfflinePreparationRefused("unexpected prepared-table indexes")
+        index = claim_indexes[0]
+        if (index[2], index[3], index[4]) != (1, "pk", 0):
+            raise OfflinePreparationRefused("unexpected claim index authority")
+        pk_name = index[1].replace('"', '""')
+        pk_columns = tuple(
+            row[2] for row in connection.execute(
+                f'PRAGMA index_info("{pk_name}")'
+            )
+        )
+        if pk_columns != ("result_key",):
+            raise OfflinePreparationRefused("claim key index changed")
         attached = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='trigger' AND "
             "(tbl_name IN ('issue88_offline_meta','issue88_offline_claim') "
