@@ -47,6 +47,16 @@ Adapter/schema versions, serializer version and verification capability are **cl
 - A provider result may have a stable immutable response identity without a provider-issued **causal receipt** for the original dispatch. That is sufficient to guard cross-Work uniqueness, but **not** to elevate contextual matching to `EXACT_PROVIDER_CORRELATED`; keep these proof dimensions separate.
 - Prefer keeping the unique claim index in the same durable host database as Work events; if the index and WorkStore cannot transact together, define replay/compensation as a conservative recoverable saga and prove it before integration. Do not promise atomicity across arbitrary backends.
 
+### Normal callbacks must participate in the same uniqueness boundary
+
+**Normative requirement:** the unique claim namespace covers **all provider-identified result admissions**, not merely the recovery command. A completed provider response entering via the ordinary live `CognitionTransportBridge.record_outcome()` callback must acquire/check the **same canonical provider-result claim** bound to its Work/request/handoff **before** that outcome becomes durable. Otherwise an already consumed response can be claimed again by reconciliation into a different Work.
+
+The current `ModelProviderCognitionPort` and `CognitionOutcome` do **not** expose an authenticated provider-result identity, and `record_outcome()` does **not** maintain this index. Therefore the current code cannot truthfully claim claim-index completeness. A future host integration must explicitly route **both** live callback outcomes and recovered outcomes through a shared atomic claim boundary; normal synchronous admission must remain a separately reviewed behavior rather than silently repurposing the existing bridge as proof of coverage.
+
+**Rollout/completeness gate:** reconciliation admission is **disabled by default** for each canonical provider/account namespace until a durable coverage assessment proves the full relevant historical admission window is indexed with stable provider-side result identities. Existing legacy callbacks that lack provider result IDs prevent automatic coverage certification. Allow activation only after a complete, verifiable historical backfill/alias reconciliation **or** a source-supported exclusion fence proving no older unindexed result can be supplied to this recovery path. A local software upgrade date or `index_initialized=true` marker **is not** such a fence. If no such proof exists, keep the namespace quarantined for reconciliation, including human-authorized contextual recovery.
+
+Index availability and index completeness are distinct conditions: both must be proven **at final admission**, and any race with a newly completing live callback must be serialized by the shared unique claim constraint. A human approval, matching raw hash, Work-local proof event, or successful lookup against an incomplete index cannot waive this gate. The existing legacy live callback path may continue according to its existing safety contract while reconciliation remains disabled for that namespace; do not pretend it has retroactively minted an index claim.
+
 ## Decision 3 — Human approval only for qualified contextual recovery
 
 **Choose:** v1 defaults to **zero automatic outcome admission**, including exact-tier evidence, until a separate product policy explicitly authorizes a narrow provider. The pure verifier in PR #90 has no admission capability.
@@ -90,6 +100,8 @@ If a Work already has a matching completed outcome, report ALREADY_ADMITTED with
 - [ ] Verify stable result + timestamp replay and single terminal outcome across crashes and CAS races.
 - [ ] Verify strict expected-head CAS at the **outcome append**; existing rebinding `record_outcome()` is insufficient without a new boundary.
 - [ ] Verify host-wide unique provider-result claim across **different Work IDs** and **adapter versions**; an upgrade may not change the claim key.
+- [ ] Verify **normal live callbacks and reconciliation** share the same atomic claim; a response consumed by live Work A cannot be recovered into Work B.
+- [ ] Verify historical coverage or a provider-supported exclusion fence before enabling reconciliation; legacy unindexed live results, missing identity and missing coverage proof quarantine the provider namespace even with human approval.
 - [ ] Fail closed on claim-index read failure, write/transaction failure, missing stable provider result ID and unresolved namespace migration — including with valid-looking human contextual approval.
 - [ ] Verify a new Work frontier yields a **new proof-attempt ID**, while existing source claim and proposed outcome identity remain stable.
 - [ ] Confirm the provider-read boundary remains read-only and outside Gen2 Core.
