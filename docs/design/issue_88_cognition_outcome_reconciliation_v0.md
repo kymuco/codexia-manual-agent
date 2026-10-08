@@ -47,22 +47,27 @@ A request may have `handoff_admitted=true` and every provider-execution facet **
 ## 4. Proposed architecture
 
 ```text
-Durable WorkStore               Host, authorized read                  Pure verifier
-  CognitionRequest  ───────────┐
-  CognitionHandoff  ───────────┼─→ RecoveryScope ─→ ProviderReadPort ─→ Observation
-  current RoleRun   ───────────┘                         │                  │
-                                   (no send, no tool or   │                  v
-                                    model side effect)    └──→ ProofDecision
-                                                                   │
-                                   ambiguous/conflict ────────────┤ no write
-                                   verified + permitted ──────────┤
-                                                                   v
-                                                          explicit admission gate
-                                                                   │
-                                              existing CognitionTransportBridge
-                                                   .record_outcome(...)
-                                                                   │
-                                                        durable RoleRun outcome
+  Durable WorkStore                Host-only read path             Provider read
+  Request + Handoff ───────────────→ RecoveryScope ───────────────→ Observation
+  Requested RoleRun                   │                                 │
+                                     └─────────→ Pure verifier ←────────┘
+                                                    │
+                                       UNVERIFIABLE / CONFLICT
+                                                    └──→ No Work writes
+                                                    │
+                                      Corroborated candidate
+                                                    ↓
+                                    Authenticated policy/human gate
+                                                    ↓
+                              Host-wide ProviderResultClaimIndex (atomic unique)
+                                                    ↓
+                                 Frontier-bound Work proof attempt (CAS)
+                                                    ↓
+                           NEW strict expected-head CognitionOutcome admission
+                                 (WorkStore final append CAS; NOT current
+                                    record_outcome() snapshot rebinding)
+                                                    ↓
+                                      Re-project durable RoleRun
 ```
 
 **Proposed interfaces** (names illustrative; not committed public APIs):
@@ -72,7 +77,7 @@ Durable WorkStore               Host, authorized read                  Pure veri
 - `Observation`: request/response identity and parent or branch lineage (if exposed), provider completion signal, raw response bytes/hash, captured request/wire prompt digest or provider-side correlation token, read source and capability version, transformation metadata, and trust/provenance. An observation is **evidence**, not a `CognitionOutcome` or dispatch authorization.
 - `ReconciliationVerifier`: pure, bounded comparison between durable scope and provider observation(s). Returns a closed `ProofDecision`, never invokes a provider or changes Work.
 - `AdmissionGate`: separately confirms exact current durable frontier, caller authorization, proof policy, canonical output and existing handoff. It must invoke a **new expected-head CAS outcome admission boundary** that checks the authorized revision/digest on the final WorkStore append. The existing `record_outcome()` rereads and rebinds to the latest snapshot, so an earlier preflight plus that method is insufficient. It does not call the provider.
-- `ProviderResultClaimIndex`: an atomic durable claim over provider namespace + immutable execution/turn + response ID **across all Work IDs within the installation**; it rejects a second handoff claiming the same result. The claim grants no dispatch or completion authority.
+- `ProviderResultClaimIndex`: an atomic durable claim over stable provider service identity + authenticated tenant/account namespace + immutable provider-side execution/turn (or conversation namespace) + response ID **across all Work IDs within the installation**. Adapter version and serializer version are metadata, **never part of the uniqueness key**. On adapter upgrades, aliases/migrations must preserve one claim for one external result. If stable identity, cross-version mapping, index read, or index write is unavailable, reject admission even with human contextual approval. The claim grants no dispatch or completion authority.
 
 Avoid giving `CognitionPort` generic WorkStore, credentials, workspace authority or introspection powers. The read port belongs at the **host/provider integration boundary**, not in `RoleCore`. Research Pack-specific trailer parsing remains an application-level canonicalization policy, never a Gen2 generic grammar.
 
@@ -121,7 +126,7 @@ The proposed design prefers a small, versioned, immutable `ReconciliationProof` 
 - proof level, conflicts/ambiguity flags and read provenance; human decision reference if used;
 - expected Work frontier and a deterministic proof identity (not a timestamp-derived random key).
 
-Store a **host-wide provider-result claim** first (atomic unique index), then a **frontier-specific Work proof event**, then the outcome via an explicit **strict expected-head CAS API**. A proof event alone must never imply completion. If Work advances after the proof event, append a **new proof attempt at the new frontier with a new proof-event ID** after renewed read-only verification; do not reuse its old event identity with different bytes. Keep claim identity stable across these retries. The existing `CognitionTransportBridge.record_outcome()` is **not** the required strict CAS API because it silently binds to the newest Work snapshot. Re-project after each write, fail closed on missing claim-index guarantees, and never persist auth/session tokens. The exact transaction schema remains future work.
+Store a **host-wide provider-result claim** first (atomic unique index keyed by provider-side identity **across adapter versions**), then a **frontier-specific Work proof event**, then the outcome via an explicit **strict expected-head CAS API**. Refuse admission if the index cannot reliably read/write or stable result identity is missing; no per-Work or human-approval fallback. A proof event alone must never imply completion. If Work advances after the proof event, append a **new proof attempt at the new frontier with a new proof-event ID** after renewed read-only verification; do not reuse its old event identity with different bytes. Keep claim identity stable across these retries. The existing `CognitionTransportBridge.record_outcome()` is **not** the required strict CAS API because it silently binds to the newest Work snapshot. Re-project after each write, fail closed on missing claim-index guarantees, and never persist auth/session tokens. The exact transaction schema remains future work.
 
 **Proposed resolution:** [ADR-001 — proof authority, receipts, human approval and replay](issue_88_adr_001_reconciliation_proof_authority.md) selects a Work-chronology proof association, causal provider receipts for the exact tier, explicitly authorized context-only recovery, and deterministic replay identity. These choices are **not yet implemented or externally reviewed**. Provider capability selection, detailed event schema, payload retention and actual readback proof remain open before integration.
 
