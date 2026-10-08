@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 
-from chatgpt_web_adapter import ChatGPTWebClient
-
 
 def extract_turn(messages, *, request_message_id: str, response_message_id: str):
     users = [
@@ -62,6 +60,8 @@ def main() -> int:
     parser.add_argument("--request-message-id", required=True)
     parser.add_argument("--response-message-id", required=True)
     args = parser.parse_args()
+
+    from chatgpt_web_adapter import ChatGPTWebClient
 
     client = ChatGPTWebClient(auth_file=args.auth_file, timeout=120)
     messages = client.get_messages(args.conversation, limit=40)
