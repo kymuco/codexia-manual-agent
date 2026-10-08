@@ -230,6 +230,38 @@ def test_prepared_claim_table_replacement_is_rejected(original, tmp_path):
         claim_fixture(out, _claim(), path="live")
 
 
+@pytest.mark.parametrize("unique", [False, True])
+def test_extra_nonprefixed_claim_index_is_rejected(
+    original, tmp_path, unique
+):
+    source, _, _ = original
+    out = tmp_path / ("unique-index" if unique else "ordinary-index")
+    prepare_clone(source, out)
+    keyword = "UNIQUE " if unique else ""
+    with sqlite3.connect(out / "prepared.sqlite3") as cx:
+        cx.execute(
+            f"CREATE {keyword}INDEX sabotage ON "
+            "issue88_offline_claim(work_id)"
+        )
+    with pytest.raises(OfflinePreparationRefused, match="indexes"):
+        inspect_prepared(out)
+    with pytest.raises(OfflinePreparationRefused, match="indexes"):
+        claim_fixture(out, _claim(), path="live")
+
+
+def test_distinct_provider_results_can_share_same_work(original, tmp_path):
+    source, _, _ = original
+    out = tmp_path / "same-work"
+    prepare_clone(source, out)
+    first = _claim()
+    second = replace(
+        first, execution_id="turn-2", response_id="message-2"
+    )
+    assert claim_fixture(out, first, path="live") == "CLAIMED"
+    assert claim_fixture(out, second, path="recovery") == "CLAIMED"
+    assert claim_fixture(out, first, path="recovery") == "ALREADY_CLAIMED"
+
+
 def test_nonprefixed_trigger_on_claim_table_is_rejected(original, tmp_path):
     source, _, _ = original
     out = tmp_path / "trigger"
