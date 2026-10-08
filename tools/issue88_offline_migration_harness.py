@@ -113,16 +113,26 @@ def _connect(
 
 
 def _unique_columns(connection: sqlite3.Connection, table: str) -> set[tuple[str, ...]]:
+    """Only full, ascending, BINARY-collated unique key columns qualify."""
     found = set()
     for row in connection.execute(f"PRAGMA index_list({table})"):
-        if row[2] and not row[4]:
-            escaped = row[1].replace('"', '""')
-            columns = tuple(
-                item[2] for item in connection.execute(
-                    f'PRAGMA index_info("{escaped}")'
-                )
+        if not row[2] or row[4]:
+            continue
+        escaped = row[1].replace('"', '""')
+        key_rows = [
+            info for info in connection.execute(
+                f'PRAGMA index_xinfo("{escaped}")'
             )
-            found.add(columns)
+            if info[5] == 1
+        ]
+        if all(
+            info[1] >= 0
+            and info[2] is not None
+            and info[3] == 0
+            and info[4] == "BINARY"
+            for info in key_rows
+        ):
+            found.add(tuple(info[2] for info in key_rows))
     return found
 
 
