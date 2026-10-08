@@ -19,17 +19,50 @@ from codexia_manual_agent.work_core import SqliteWorkStore
 
 SCHEMA_VERSION = 1
 STATE = "PREPARED_DISABLED"
-_TABLES = {
+_CORE_SHAPES = {
     "g2_work_v1": (
-        "work_id", "created_at", "objective", "source_namespace",
-        "source_id", "ingress_payload_digest", "ingress_binding_digest",
-        "work_digest",
+        ("work_id", "TEXT", 0, 1),
+        ("created_at", "TEXT", 1, 0),
+        ("objective", "TEXT", 1, 0),
+        ("source_namespace", "TEXT", 1, 0),
+        ("source_id", "TEXT", 1, 0),
+        ("ingress_payload_digest", "TEXT", 1, 0),
+        ("ingress_binding_digest", "TEXT", 1, 0),
+        ("work_digest", "TEXT", 1, 0),
     ),
     "g2_work_event_v1": (
-        "event_id", "work_id", "sequence", "created_at", "kind",
-        "payload_json", "previous_event_digest", "event_digest",
+        ("event_id", "TEXT", 0, 1),
+        ("work_id", "TEXT", 1, 0),
+        ("sequence", "INTEGER", 1, 0),
+        ("created_at", "TEXT", 1, 0),
+        ("kind", "TEXT", 1, 0),
+        ("payload_json", "TEXT", 1, 0),
+        ("previous_event_digest", "TEXT", 0, 0),
+        ("event_digest", "TEXT", 1, 0),
     ),
 }
+
+_META_DDL = """
+    CREATE TABLE issue88_offline_meta (
+        schema_version INTEGER PRIMARY KEY CHECK(schema_version=1),
+        state TEXT NOT NULL CHECK(state='PREPARED_DISABLED'),
+        core_digest TEXT NOT NULL
+    )
+"""
+_CLAIM_DDL = """
+    CREATE TABLE issue88_offline_claim (
+        result_key TEXT PRIMARY KEY,
+        provider_service TEXT NOT NULL,
+        provider_namespace TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        response_id TEXT NOT NULL,
+        work_id TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        handoff_id TEXT NOT NULL,
+        response_digest TEXT NOT NULL,
+        first_path TEXT NOT NULL CHECK(first_path IN ('live','recovery'))
+    )
+"""
 
 
 class OfflinePreparationRefused(RuntimeError):
@@ -102,14 +135,15 @@ def _verify_core(
         "g2_work_v1": {("work_id",), ("source_namespace", "source_id")},
         "g2_work_event_v1": {("event_id",), ("work_id", "sequence")},
     }
-    for name, columns in _TABLES.items():
+    for name, expected in _CORE_SHAPES.items():
         table = connection.execute(
             "SELECT type FROM sqlite_master WHERE name=?", (name,)
         ).fetchone()
         actual = tuple(
-            row[1] for row in connection.execute(f"PRAGMA table_info({name})")
+            (row[1], row[2].upper(), row[3], row[5])
+            for row in connection.execute(f"PRAGMA table_info({name})")
         )
-        if table != ("table",) or actual != columns:
+        if table != ("table",) or actual != expected:
             raise OfflinePreparationRefused(f"unexpected Gen2 table shape: {name}")
         if not expected_indexes[name].issubset(_unique_columns(connection, name)):
             raise OfflinePreparationRefused(f"missing Gen2 unique indexes: {name}")
@@ -134,6 +168,25 @@ def _verify_core(
     if allow_prepared:
         if offline != {"issue88_offline_meta", "issue88_offline_claim"}:
             raise OfflinePreparationRefused("prepared migration object set changed")
+        expected_ddl = {
+            "issue88_offline_meta": _META_DDL,
+            "issue88_offline_claim": _CLAIM_DDL,
+        }
+        for name, ddl in expected_ddl.items():
+            actual = connection.execute(
+                "SELECT type,sql FROM sqlite_master WHERE name=?", (name,)
+            ).fetchone()
+            if actual != ("table", ddl.strip()):
+                raise OfflinePreparationRefused(
+                    f"prepared table DDL mismatch: {name}"
+                )
+        attached = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' AND "
+            "(tbl_name IN ('issue88_offline_meta','issue88_offline_claim') "
+            "OR name GLOB 'issue88_*')"
+        ).fetchone()
+        if attached:
+            raise OfflinePreparationRefused("unexpected prepared-table trigger")
     elif offline:
         raise OfflinePreparationRefused("Issue88 migration objects already exist")
     return _core_rows(connection)
@@ -227,27 +280,8 @@ def prepare_clone(
     with _connect(prepared_path) as prepared:
         prepared.execute("BEGIN IMMEDIATE")
         try:
-            prepared.execute("""
-                CREATE TABLE issue88_offline_meta (
-                    schema_version INTEGER PRIMARY KEY CHECK(schema_version=1),
-                    state TEXT NOT NULL CHECK(state='PREPARED_DISABLED'),
-                    core_digest TEXT NOT NULL
-                )
-            """)
-            prepared.execute("""
-                CREATE TABLE issue88_offline_claim (
-                    result_key TEXT PRIMARY KEY,
-                    provider_service TEXT NOT NULL,
-                    provider_namespace TEXT NOT NULL,
-                    execution_id TEXT NOT NULL,
-                    response_id TEXT NOT NULL,
-                    work_id TEXT NOT NULL,
-                    request_id TEXT NOT NULL,
-                    handoff_id TEXT NOT NULL,
-                    response_digest TEXT NOT NULL,
-                    first_path TEXT NOT NULL CHECK(first_path IN ('live','recovery'))
-                )
-            """)
+            prepared.execute(_META_DDL)
+            prepared.execute(_CLAIM_DDL)
             prepared.execute(
                 "INSERT INTO issue88_offline_meta VALUES (?,?,?)",
                 (SCHEMA_VERSION, STATE, backed[0]),
@@ -302,12 +336,6 @@ def inspect_prepared(output_dir: str | Path) -> Preparation:
         ).fetchone()
         if state != (SCHEMA_VERSION, STATE, backed[0]):
             raise OfflinePreparationRefused("prepared clone is not disabled")
-        installed = clone.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='trigger' "
-            "AND name LIKE 'issue88_%'"
-        ).fetchone()
-        if installed:
-            raise OfflinePreparationRefused("unexpected writer trigger")
     if (
         record.get("core_digest") != backed[0]
         or record.get("work_count") != backed[1]
