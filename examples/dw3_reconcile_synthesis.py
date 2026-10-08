@@ -67,12 +67,15 @@ def _unique_json_pairs(pairs):
 
 def validate_synthesis(text: str) -> ResearchRoleOutput:
     stripped = text.strip()
-    if (
-        stripped.count(RESEARCH_CONTROL_START) != 1
-        or stripped.count(RESEARCH_CONTROL_END) != 1
-        or not stripped.endswith(RESEARCH_CONTROL_END)
-    ):
-        raise ValueError("synthesis requires exactly one final control trailer")
+    start_count = stripped.count(RESEARCH_CONTROL_START)
+    end_count = stripped.count(RESEARCH_CONTROL_END)
+    terminal_end = stripped.endswith(RESEARCH_CONTROL_END)
+    if start_count != 1 or end_count != 1 or not terminal_end:
+        raise ValueError(
+            "synthesis requires exactly one final control trailer "
+            f"(starts={start_count}, ends={end_count}, "
+            f"terminal_end={terminal_end})"
+        )
     prefix, raw = stripped.rsplit(RESEARCH_CONTROL_START, 1)
     if not prefix.strip():
         raise ValueError("synthesis content is empty")
