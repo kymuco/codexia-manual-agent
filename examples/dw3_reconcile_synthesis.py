@@ -74,6 +74,11 @@ def canonicalize_synthesis(text: str) -> tuple[str, str]:
     returned plaintext is the exact output to admit to Research Pack 1.1.
     """
     stripped = text.strip()
+    if (
+        stripped.count(RESEARCH_CONTROL_START) > 1
+        or stripped.count(RESEARCH_CONTROL_END) > 1
+    ):
+        raise ValueError("synthesis requires exactly one final control trailer")
     if stripped.endswith(RESEARCH_CONTROL_END):
         return text, "verbatim"
 
