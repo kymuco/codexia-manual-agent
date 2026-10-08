@@ -9,6 +9,7 @@ CognitionTransportBridge.record_outcome() after exact CWA/Work proof.
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -64,7 +65,6 @@ def _unique_json_pairs(pairs):
             raise ValueError("duplicate control-trailer key")
         result[key] = value
     return result
-
 
 
 def canonicalize_synthesis(text: str) -> tuple[str, str]:
@@ -169,6 +169,7 @@ def _cwa_conversation_id(value: str) -> str:
 def _read_cwa(
     *,
     cwa_python: str,
+    cwa_source_root: str | None,
     conversation: str,
     auth_file: str,
     request_message_id: str,
@@ -187,6 +188,19 @@ def _read_cwa(
         "--response-message-id",
         response_message_id,
     ]
+    child_env = os.environ.copy()
+    if cwa_source_root is not None:
+        source_root = Path(cwa_source_root).expanduser().resolve()
+        if not (source_root / "chatgpt_web_adapter" / "__init__.py").is_file():
+            raise ValueError(
+                "CWA source root must contain chatgpt_web_adapter/__init__.py"
+            )
+        prior_path = child_env.get("PYTHONPATH", "")
+        child_env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(source_root), prior_path) if part
+        )
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
     completed = subprocess.run(
         command,
         capture_output=True,
@@ -195,6 +209,7 @@ def _read_cwa(
         errors="replace",
         check=False,
         timeout=180,
+        env=child_env,
     )
     if completed.returncode != 0:
         raise ValueError(
@@ -349,6 +364,7 @@ def main() -> int:
     parser.add_argument("--recovered-file", required=True, type=Path)
     parser.add_argument("--expected-sha256", required=True)
     parser.add_argument("--cwa-python", required=True)
+    parser.add_argument("--cwa-source-root")
     parser.add_argument("--auth-file", required=True)
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--approve-sha256")
@@ -367,6 +383,7 @@ def main() -> int:
     initial_revision = store.snapshot(args.work_id).revision
     turn = _read_cwa(
         cwa_python=args.cwa_python,
+        cwa_source_root=args.cwa_source_root,
         conversation=args.conversation,
         auth_file=args.auth_file,
         request_message_id=args.request_message_id,
