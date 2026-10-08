@@ -36,7 +36,9 @@ def extract_turn(messages, *, request_message_id: str, response_message_id: str)
         if item.role == "assistant" and item.finish_reason == "stop"
     ]
     if len(previous) != 1:
-        raise ValueError("CWA synthesis chat requires one unique prior completed revision")
+        raise ValueError(
+            "CWA synthesis chat requires one unique prior completed revision"
+        )
 
     return {
         "request": {"message_id": user.message_id, "text": user.text},
