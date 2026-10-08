@@ -167,9 +167,7 @@ def test_response_over_gen2_limit_is_rejected(scope, observation) -> None:
     assert report.reason == "response_out_of_bounds"
 
 
-def test_invalid_utf8_text_is_rejected_before_any_admission(
-    scope, observation
-) -> None:
+def test_invalid_utf8_text_is_rejected_before_any_admission(scope, observation) -> None:
     invalid_unicode = "prefix-\ud800"
     report = verify_readback(
         scope,
