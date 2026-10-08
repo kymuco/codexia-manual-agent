@@ -79,17 +79,46 @@ def _connect(
         connection.close()
 
 
+def _unique_columns(connection: sqlite3.Connection, table: str) -> set[tuple[str, ...]]:
+    found = set()
+    for row in connection.execute(f"PRAGMA index_list({table})"):
+        if row[2]:
+            escaped = row[1].replace('"', '""')
+            columns = tuple(
+                item[2] for item in connection.execute(
+                    f'PRAGMA index_info("{escaped}")'
+                )
+            )
+            found.add(columns)
+    return found
+
+
 def _verify_core(connection: sqlite3.Connection) -> tuple[str, int, int]:
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise OfflinePreparationRefused("SQLite integrity_check failed")
     if connection.execute("PRAGMA foreign_key_check").fetchall():
         raise OfflinePreparationRefused("SQLite foreign key integrity failed")
+    expected_indexes = {
+        "g2_work_v1": {("work_id",), ("source_namespace", "source_id")},
+        "g2_work_event_v1": {("event_id",), ("work_id", "sequence")},
+    }
     for name, columns in _TABLES.items():
+        table = connection.execute(
+            "SELECT type FROM sqlite_master WHERE name=?", (name,)
+        ).fetchone()
         actual = tuple(
             row[1] for row in connection.execute(f"PRAGMA table_info({name})")
         )
-        if actual != columns:
+        if table != ("table",) or actual != columns:
             raise OfflinePreparationRefused(f"unexpected Gen2 table shape: {name}")
+        if not expected_indexes[name].issubset(_unique_columns(connection, name)):
+            raise OfflinePreparationRefused(f"missing Gen2 unique indexes: {name}")
+    foreign_keys = {
+        (row[2], row[3], row[4])
+        for row in connection.execute("PRAGMA foreign_key_list(g2_work_event_v1)")
+    }
+    if ("g2_work_v1", "work_id", "work_id") not in foreign_keys:
+        raise OfflinePreparationRefused("missing Gen2 event Work foreign key")
     if connection.execute(
         "SELECT 1 FROM sqlite_master WHERE name LIKE 'issue88_offline_%'"
     ).fetchone():
