@@ -285,7 +285,12 @@ def test_d19_final_authority_read_to_append_race_is_serialized(db):
     assert revoker_finished.is_set()
     assert db.counts() == (1, 1, 0)
     with pytest.raises(RecoveryRefused, match="unauthorized"):
-        db.admit_fixture(candidate(work_id="work-1", handoff_id="other"))
+        db.admit_fixture(candidate(
+            work_id="work-1",
+            handoff_id="other",
+            execution_id="different-execution",
+            response_id="different-response",
+        ))
 
 
 def test_d19_revocation_commits_first_and_stale_append_rejects(db):
