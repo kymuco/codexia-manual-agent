@@ -294,7 +294,8 @@ class OfflineSqliteContractSpike:
             # A revoked epoch forbids NEW writes, not truthful acknowledgement
             # of a matching event that was already committed.
             old_claim = connection.execute("""
-                SELECT provider_service,provider_namespace,work_id,request_id,handoff_id,
+                SELECT provider_service,provider_namespace,work_id,
+                       request_id,handoff_id,
                        response_digest,event_id FROM issue88_spike_claim
                 WHERE result_key=?
             """, (candidate.result_key,)).fetchone()
@@ -311,7 +312,8 @@ class OfflineSqliteContractSpike:
                 if tuple(old_claim) != desired:
                     raise ProviderResultClaimed("result was already assigned elsewhere")
                 event = connection.execute(
-                    "SELECT work_id,kind,payload_json FROM g2_work_event_v1 WHERE event_id=?",
+                    "SELECT work_id,kind,payload_json FROM g2_work_event_v1 "
+                    "WHERE event_id=?",
                     (candidate.outcome_event_id,),
                 ).fetchone()
                 expected_payload = {
