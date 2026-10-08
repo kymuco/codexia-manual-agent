@@ -33,6 +33,7 @@ from codexia_manual_agent.workflow_orchestration.role_cognition import (
     RoleCognitionMaterializationService,
 )
 from codexia_manual_agent.workflow_runtime.research_v1 import (
+    RESEARCH_CONTROL_START,
     STAGE_CRITIQUE,
     STAGE_INITIAL,
     STAGE_REVISION,
@@ -42,7 +43,11 @@ from codexia_manual_agent.workflow_runtime.research_v1 import (
     research_workflow_binding,
 )
 from examples.dw3_cwa_recovery_read import extract_turn
-from examples.dw3_reconcile_synthesis import validate_synthesis, verify_recovery
+from examples.dw3_reconcile_synthesis import (
+    canonicalize_synthesis,
+    validate_synthesis,
+    verify_recovery,
+)
 from examples.dw3_research_live_host import (
     PROVIDER_REF,
     _hot_research_continuation_prompt,
@@ -242,6 +247,62 @@ def test_recovery_requires_exact_final_control(tmp_path) -> None:
             text.replace(
                 '"objective_coverage_complete":true',
                 '"objective_coverage_complete":"true"',
+            )
+        )
+
+
+def test_escaped_cwa_trailer_recovers_exact_false_uncertainty_without_retry(
+    tmp_path,
+) -> None:
+    f = _fixture(tmp_path)
+    response = f["turn"]["response"]["text"].replace(
+        '"material_uncertainty_resolved":true',
+        '"material_uncertainty_resolved":false',
+    )
+    assert '"material_uncertainty_resolved":false' in response
+    wrapped = (
+        response.replace(
+            RESEARCH_CONTROL_START,
+            "<escape>\n" + RESEARCH_CONTROL_START,
+        )
+        + "\n</escape>"
+    )
+    f["filepath"].write_bytes(wrapped.encode("utf-8"))
+    f["turn"]["response"]["text"] = wrapped
+    f["sha"] = hashlib.sha256(wrapped.encode("utf-8")).hexdigest()
+
+    before = f["store"].snapshot(f["work_id"]).revision
+    outcome, report = _verify(f)
+    canonical, mode = canonicalize_synthesis(wrapped)
+    assert mode == "cwa-final-control-escape-unwrapped-v1"
+    assert outcome.output_text == canonical
+    assert outcome.output_text != wrapped
+    assert report["response_sha256"] == f["sha"]
+    assert report["admitted_output_sha256"] != f["sha"]
+    assert report["normalization"] == mode
+    assert report["objective_coverage_complete"] is True
+    assert report["evidence_sufficient"] is True
+    assert report["material_uncertainty_resolved"] is False
+    assert validate_synthesis(outcome.output_text).material_unresolved_uncertainty is True
+    assert f["store"].snapshot(f["work_id"]).revision == before
+
+
+def test_escaped_cwa_trailer_rejects_ambiguous_wrappers(tmp_path) -> None:
+    f = _fixture(tmp_path)
+    text = f["turn"]["response"]["text"]
+    wrapped = (
+        text.replace(RESEARCH_CONTROL_START, "<escape>\n" + RESEARCH_CONTROL_START)
+        + "\n</escape>"
+    )
+    with pytest.raises(ValueError, match="exactly one"):
+        validate_synthesis(wrapped.replace("</escape>", "</escape>\nextra"))
+    with pytest.raises(ValueError, match="standalone"):
+        validate_synthesis(wrapped.replace("<escape>\n", "<escape>junk\n"))
+    with pytest.raises(ValueError, match="exactly one"):
+        validate_synthesis(
+            wrapped.replace(
+                RESEARCH_CONTROL_START,
+                RESEARCH_CONTROL_START + "\n" + RESEARCH_CONTROL_START,
             )
         )
 
