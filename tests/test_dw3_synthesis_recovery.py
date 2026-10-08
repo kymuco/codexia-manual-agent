@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -360,7 +361,7 @@ def test_cwa_readback_explicit_source_root_is_injected_without_send(
     assert command[0] == "cwa-python"
     assert "--conversation" in command
     assert "send" not in command
-    assert kwargs["env"]["PYTHONPATH"].split(__import__("os").pathsep)[0] == str(
+    assert kwargs["env"]["PYTHONPATH"].split(os.pathsep)[0] == str(
         root.resolve()
     )
     assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
