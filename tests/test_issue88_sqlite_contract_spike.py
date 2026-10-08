@@ -81,7 +81,7 @@ def candidate(work_id="work-0", adapter_version="v1", **changes):
 
 def enable(db):
     # Synthetic coverage assertion only: no provider history was inspected.
-    db.fixture_enable("account-x", epoch=1, coverage_digest="c" * 64)
+    db.fixture_enable("provider-x", "account-x", epoch=1, coverage_digest="c" * 64)
 
 
 def test_disabled_by_default_does_not_claim_or_append(db):
@@ -118,6 +118,37 @@ def test_cross_work_double_claim_fails_even_after_adapter_upgrade(db):
     with pytest.raises(ProviderResultClaimed, match="assigned elsewhere"):
         db.admit_fixture(b)
     assert db.counts() == (1, 1, 0)
+
+
+def test_readonly_replay_survives_revocation_after_committed_outcome(db):
+    enable(db)
+    item = candidate()
+    assert db.admit_fixture(item) == "ADMITTED"
+    db.revoke("provider-x", "account-x", epoch=2)
+    assert db.admit_fixture(item) == "ALREADY_ADMITTED"
+    assert db.counts() == (1, 1, 0)
+    with pytest.raises(ProviderResultClaimed, match="assigned elsewhere"):
+        db.admit_fixture(candidate(work_id="work-1", handoff_id="different"))
+
+
+def test_authority_is_scoped_by_provider_service_and_account(db):
+    enable(db)
+    other_service = candidate(
+        work_id="work-1", provider_service="provider-y",
+        execution_id="execution-y", response_id="response-y",
+    )
+    with pytest.raises(RecoveryRefused, match="unauthorized"):
+        db.admit_fixture(other_service)
+    db.fixture_enable("provider-y", "account-x", epoch=1, coverage_digest="c" * 64)
+    assert db.admit_fixture(other_service) == "ADMITTED"
+    db.revoke("provider-x", "account-x", epoch=2)
+    # Revoking service X cannot revoke the independent service Y.
+    next_result = candidate(
+        work_id="work-2", provider_service="provider-y",
+        execution_id="execution-z", response_id="response-z",
+    )
+    assert db.admit_fixture(next_result) == "ADMITTED"
+    assert db.counts() == (2, 2, 0)
 
 
 def test_claim_index_read_failure_blocks_outcome(db):
@@ -160,7 +191,7 @@ def test_epoch_revocation_after_preflight_rejects(db):
         assert cx.execute(
             "SELECT enabled FROM issue88_spike_authority"
         ).fetchone()[0] == 1
-    db.revoke("account-x", epoch=2)
+    db.revoke("provider-x", "account-x", epoch=2)
     with pytest.raises(RecoveryRefused, match="unauthorized"):
         db.admit_fixture(item)
     assert db.counts() == (0, 0, 0)
@@ -168,7 +199,7 @@ def test_epoch_revocation_after_preflight_rejects(db):
 
 def test_coverage_revocation_after_preflight_rejects(db):
     enable(db)
-    db.revoke("account-x", epoch=1, coverage_digest="d" * 64)
+    db.revoke("provider-x", "account-x", epoch=1, coverage_digest="d" * 64)
     with pytest.raises(RecoveryRefused, match="unauthorized"):
         db.admit_fixture(candidate())
     assert db.counts() == (0, 0, 0)
@@ -227,7 +258,7 @@ def test_d19_final_authority_read_to_append_race_is_serialized(db):
     def revoker():
         revoker_started.set()
         try:
-            db.revoke("account-x", epoch=2)
+            db.revoke("provider-x", "account-x", epoch=2)
         except BaseException as exc:
             failures.append(exc)
         finally:
@@ -259,7 +290,7 @@ def test_d19_final_authority_read_to_append_race_is_serialized(db):
 
 def test_d19_revocation_commits_first_and_stale_append_rejects(db):
     enable(db)
-    db.revoke("account-x", epoch=2)
+    db.revoke("provider-x", "account-x", epoch=2)
     with pytest.raises(RecoveryRefused, match="unauthorized"):
         db.admit_fixture(candidate())
     assert db.counts() == (0, 0, 0)
@@ -278,7 +309,7 @@ def test_native_sqlite_workstore_rejects_legacy_role_event(tmp_path):
     initial = store.create(work)
     spike = OfflineSqliteContractSpike(db_path)
     spike.install_on_disposable_db()
-    spike.fixture_enable("account-x", epoch=1, coverage_digest="c" * 64)
+    spike.fixture_enable("provider-x", "account-x", epoch=1, coverage_digest="c" * 64)
     event = initial.next_event(kind="role.completed", payload={})
     with pytest.raises(sqlite3.IntegrityError, match="LEGACY_WRITER_FENCED"):
         store.append(work.work_id, expected_revision=0, event=event)
