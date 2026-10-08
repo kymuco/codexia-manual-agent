@@ -82,8 +82,8 @@ The future fence must require a same-transaction, provider-identified claim/inte
 
 ## Current evidence and exit criterion
 
-- The accompanying new offline test file covers **M01–M04**, against freshly created, disposable `SqliteWorkStore` databases. Existing PR #91 covers related scratch-only result-claim/D19 checks.
-- **M05–M12 remain proposed gates** for a separate, scoped implementation and are **not** asserted complete here.
+- The accompanying new offline test file covers **M01–M04** on freshly created, disposable `SqliteWorkStore` databases, plus the missing-core-table rejection *portion* of M06. Existing PR #91 covers related scratch-only result-claim/D19 checks.
+- **M05, the full interrupted-DDL/schema-mismatch scope of M06, and M07–M12 remain proposed gates** for separate, scoped implementation. They are **not** asserted complete here.
 - No provider adapter, migration tooling for existing installations, WorkStore table mutation, permission elevation or real RoleAdmission is included in this PR.
 
 **Accepting this design does not authorize production rollout.** The next implementation needs a schema-by-schema migration plan, authenticated provider identity contract for ordinary callback writes, end-to-end crash-injection of pending proof/outcome and a separate human-reviewed enablement gate.
