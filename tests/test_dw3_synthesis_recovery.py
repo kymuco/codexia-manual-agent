@@ -7,13 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from codexia_manual_agent.role_core.transport_bridge import (
-    CognitionTransportBridge,
-    CognitionTransportPortError,
-)
-from codexia_manual_agent.role_core.transport_projection import (
-    project_cognition_handoffs,
-)
 from codexia_manual_agent.research_work import (
     ResearchContextMaterialPort,
     ResearchInstructionsMaterialPort,
@@ -22,6 +15,13 @@ from codexia_manual_agent.role_core import (
     CognitionOutcome,
     RoleRunState,
     project_role_runs,
+)
+from codexia_manual_agent.role_core.transport_bridge import (
+    CognitionTransportBridge,
+    CognitionTransportPortError,
+)
+from codexia_manual_agent.role_core.transport_projection import (
+    project_cognition_handoffs,
 )
 from codexia_manual_agent.standalone_work import (
     StandaloneWorkHost,
