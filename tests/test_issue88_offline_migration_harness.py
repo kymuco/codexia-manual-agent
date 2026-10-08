@@ -154,6 +154,55 @@ def test_missing_unique_indexes_are_not_accepted(tmp_path):
         prepare_clone(source, tmp_path / "do-not-clone")
 
 
+def test_partial_unique_indexes_do_not_meet_core_schema(tmp_path):
+    source = tmp_path / "partial-unique.sqlite3"
+    with sqlite3.connect(source) as cx:
+        cx.execute("""
+            CREATE TABLE g2_work_v1 (
+                work_id TEXT PRIMARY KEY, created_at TEXT, objective TEXT,
+                source_namespace TEXT, source_id TEXT,
+                ingress_payload_digest TEXT, ingress_binding_digest TEXT,
+                work_digest TEXT
+            )
+        """)
+        cx.execute("""
+            CREATE UNIQUE INDEX subset_work_ingress ON g2_work_v1
+            (source_namespace, source_id) WHERE source_id <> 'hidden'
+        """)
+        cx.execute("""
+            CREATE TABLE g2_work_event_v1 (
+                event_id TEXT PRIMARY KEY,
+                work_id TEXT, sequence INTEGER, created_at TEXT, kind TEXT,
+                payload_json TEXT, previous_event_digest TEXT,
+                event_digest TEXT,
+                FOREIGN KEY(work_id) REFERENCES g2_work_v1(work_id)
+            )
+        """)
+        cx.execute("""
+            CREATE UNIQUE INDEX subset_event_sequence ON g2_work_event_v1
+            (work_id,sequence) WHERE sequence > 0
+        """)
+    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+        prepare_clone(source, tmp_path / "reject-partial")
+
+
+def test_prepared_core_schema_tamper_is_rejected(original, tmp_path):
+    source, _, _ = original
+    out = tmp_path / "tamper-schema"
+    prepare_clone(source, out)
+    with sqlite3.connect(out / "prepared.sqlite3") as cx:
+        cx.execute("""
+            CREATE TABLE issue88_bad_core AS
+            SELECT * FROM g2_work_event_v1
+        """)
+        cx.execute("DROP TABLE g2_work_event_v1")
+        cx.execute("ALTER TABLE issue88_bad_core RENAME TO g2_work_event_v1")
+    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+        inspect_prepared(out)
+    with pytest.raises(OfflinePreparationRefused, match="unique indexes"):
+        claim_fixture(out, _claim(), path="recovery")
+
+
 def test_non_fresh_destination_is_refused(original, tmp_path):
     source, _, _ = original
     target = tmp_path / "existing"
