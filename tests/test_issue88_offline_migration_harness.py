@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import replace
-from pathlib import Path
 from threading import Event, Thread
 from uuid import uuid4
 
@@ -116,9 +114,12 @@ def test_injected_failure_leaves_no_ready_manifest(original, tmp_path, fault_at)
     assert not (out / "manifest.json").exists()
     with pytest.raises(FileNotFoundError):
         inspect_prepared(out)
-    assert SqliteWorkStore(source).snapshot(
-        SqliteWorkStore(source).events  # not used; no source mutation claimed
-    ) if False else True
+    assert source.is_file()
+    with sqlite3.connect(source) as connection:
+        assert not any(
+            "issue88_offline" in row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master")
+        )
 
 
 def test_missing_core_table_fails_before_creating_output(tmp_path):
@@ -246,14 +247,10 @@ def test_two_writers_cannot_claim_same_result_for_different_work(original, tmp_p
     worker.start()
     try:
         assert entered.wait(5)
+        # The first writer already holds BEGIN IMMEDIATE. Releasing it
+        # allows the second path to observe the durable claim and conflict.
+        release.set()
         with pytest.raises(OfflineClaimConflict):
-            # SQLite busy_timeout is longer than this pause, release first
-            # through a helper thread so the second writer observes the claim.
-            def release_later():
-                release.set()
-            release_thread = Thread(target=release_later)
-            release_thread.start()
-            release_thread.join(timeout=5)
             claim_fixture(
                 out, replace(_claim(), work_id="work-b"), path="recovery"
             )
