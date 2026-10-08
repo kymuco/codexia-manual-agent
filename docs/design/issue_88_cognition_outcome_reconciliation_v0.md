@@ -122,7 +122,7 @@ The proposed design prefers a small, versioned, immutable `ReconciliationProof` 
 
 Store this **before or atomically with** the outcome if the future WorkStore boundary permits it. If separate events are required, crash between proof and outcome must be explicitly recoverable and must not imply completion. Use an append/CAS protocol; re-project after each write. Never persist raw provider auth/session tokens. Decide whether to use a generic Work event or a separate host evidence ledger with content-addressed references before code changes. Do not silently alter `RoleAdmission` idempotency semantics.
 
-**Open design decisions:** available provider correlation strength; portability of provider branch IDs; whether response payload is stored in Work or external content-addressed storage; exactly how source trust and human attestation are verified; audit proof durability and authorization boundary; bounded retention of sensitive response material. These must be reviewed with an actual provider contract before implementation.
+**Proposed resolution:** [ADR-001 — proof authority, receipts, human approval and replay](issue_88_adr_001_reconciliation_proof_authority.md) selects a Work-chronology proof association, causal provider receipts for the exact tier, explicitly authorized context-only recovery, and deterministic replay identity. These choices are **not yet implemented or externally reviewed**. Provider capability selection, detailed event schema, payload retention and actual readback proof remain open before integration.
 
 ## 8. Phased implementation boundary (future, not in this issue's design phase)
 
