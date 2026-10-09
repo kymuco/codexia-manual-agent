@@ -15,21 +15,21 @@ First **pilot-only** vertical toward delegated ChatGPT Work. This is **not** an 
 First activate one real Work using the existing `codexia work start` product surface and a trusted local `--host-factory`/Pack. Then:
 
 ```powershell
-python tools/dw_chatgpt_bootstrap_v0.py \`
-  --store .codexia/work.sqlite3 \`
-  --work-id "<existing-work-id>" \`
-  --file W:\dev\project\decisions.md \`
+python tools/dw_chatgpt_bootstrap_v0.py `
+  --store .codexia/work.sqlite3 `
+  --work-id "<existing-work-id>" `
+  --file W:\dev\project\decisions.md `
   --file W:\dev\project\new_chat_handoff.md
 ```
 
 Review the dry-run manifest. Only when ready to create one ChatGPT conversation:
 
 ```powershell
-python tools/dw_chatgpt_bootstrap_v0.py \`
-  --store .codexia/work.sqlite3 \`
-  --work-id "<existing-work-id>" \`
-  --file W:\dev\project\decisions.md \`
-  --file W:\dev\project\new_chat_handoff.md \`
+python tools/dw_chatgpt_bootstrap_v0.py `
+  --store .codexia/work.sqlite3 `
+  --work-id "<existing-work-id>" `
+  --file W:\dev\project\decisions.md `
+  --file W:\dev\project\new_chat_handoff.md `
   --auth-file auth_data.json --profile DEEP --commit
 ```
 
