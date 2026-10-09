@@ -7,9 +7,10 @@ First **pilot-only** vertical toward Delegated ChatGPT Work. The implementation 
 1. `codexia work start` activates one real Work with a pinned workflow/Pack (the existing DW1 CLI; a trusted host factory is required).
 2. Bootstrap reads the current Work status, checks the objective/work digest/revision, pinned workflow and no active roles, effects or live child Work.
 3. The operator chooses 1–12 regular handoff / decisions / project-plan files, with a total preflight read budget of 6 MB. The default is read-only `DRY_RUN`.
-4. Opt-in `--commit` writes `codexia.chat.bootstrap.claimed.v0` into the **same Gen2 WorkStore** using `append(expected_revision=...)` (SQLite `BEGIN IMMEDIATE`). This event is the durable, atomic **dispatch-attempt fence**, not a record that the model executed.
-5. Only after the atomic claim, make **one** CWA `send_text_observed(..., media=[...])` to a *new* ChatGPT conversation. Exact return requires `browser-owned` transport and nonempty response message/conversation ids and text.
-6. On successful CWA return, append `codexia.chat.bootstrap.captured.v0` to the exact claimed head. This is captured transport metadata only (conversation id, message id and response SHA-256). It does not admit a Gen2 CognitionOutcome, prove semantic completion, or grant actions.
+4. Before any claim, `--commit` also checks CWA health and the evidence-backed `new_chat`, `files`, and `canonical_readback` capabilities without sending.
+5. Opt-in `--commit` writes `codexia.chat.bootstrap.claimed.v0` into the **same Gen2 WorkStore** using `append(expected_revision=...)` (SQLite `BEGIN IMMEDIATE`). This event is the durable, atomic **dispatch-attempt fence**, not a record that the model executed.
+6. Only after the atomic claim, make **one** CWA `send_text_observed(..., media=[...])` to a *new* ChatGPT conversation. Exact return requires `browser-owned` transport and nonempty response message/conversation ids and text.
+7. On successful CWA return, append `codexia.chat.bootstrap.captured.v0` to the exact claimed head. This is captured transport metadata only (conversation id, message id and response SHA-256). It does not admit a Gen2 CognitionOutcome, prove semantic completion, or grant actions.
 
 **No automatic retry** after claim under any circumstance, including crash after claim but before send, unknown CWA result, failed capture, or concurrent Work advancement. Future recovery must read already-completed provider evidence. The user must not use the script a second time with the same Work.
 
