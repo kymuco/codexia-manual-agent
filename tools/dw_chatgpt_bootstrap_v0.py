@@ -150,6 +150,18 @@ def _capture_response(
     }
 
 
+
+def _require_cwa_readiness(runtime: Any) -> None:
+    """Non-mutating CWA capability/health check BEFORE the no-replay claim."""
+    health = runtime.health()
+    if getattr(health, "ready", False) is not True:
+        raise ValueError("CWA browser-owned runtime is not ready")
+    capabilities = runtime.capabilities()
+    for name in ("new_chat", "files", "canonical_readback"):
+        state = capabilities.state(name)
+        if getattr(state, "value", None) != "AVAILABLE":
+            raise ValueError(f"CWA required capability {name} is unavailable")
+
 def bootstrap_once(
     *,
     status: dict[str, Any],
@@ -181,6 +193,8 @@ def bootstrap_once(
         return {"status": "DRY_RUN", **plan}
     if runtime is None:
         raise ValueError("explicit CWA runtime required for commit")
+
+    _require_cwa_readiness(runtime)
 
     # This SQLite CAS is deliberately after CWA initialization, but before the
     # remote effect. A failed or ambiguous send must not be replayed.
