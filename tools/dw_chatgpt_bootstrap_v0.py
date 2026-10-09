@@ -1,20 +1,23 @@
 """Pilot-only Gen2 Work -> one CWA ChatGPT bootstrap.
 
-The local attempt receipt is transport evidence, NOT Gen2 Work truth.
-No retry, continuation, outcome admission, or completion is implemented here.
+A CAS-claimed WorkEvent is the durable no-replay fence. External CWA output is
+transport evidence, not admitted RoleRun, execution authority or WorkCompletion.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
 
+from codexia_manual_agent.work_core import WorkSnapshot, WorkStore
+
 MAX_FILES = 12
 MAX_TOTAL_BYTES = 6_000_000
+CLAIM_KIND = "codexia.chat.bootstrap.claimed.v0"
+CAPTURE_KIND = "codexia.chat.bootstrap.captured.v0"
 
 
 def _sha(data: bytes) -> str:
@@ -43,61 +46,120 @@ def _file_evidence(paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
         if len(data) != size:
             raise ValueError("context changed during read")
         remaining -= size
-        entries.append({"name": path.name, "path": str(path), "bytes": size, "sha256": _sha(data)})
+        entries.append(
+            {"name": path.name, "path": str(path), "bytes": size, "sha256": _sha(data)}
+        )
         media.append(str(path))
     return entries, media
 
 
 def _validate_work(status: dict[str, Any]) -> dict[str, Any]:
     work = status["work"]
-    if work["state"] != "active" or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", work["work_id"]):
-        raise ValueError("bootstrap requires one active Gen2 Work with safe id")
+    if work["state"] != "active" or not re.fullmatch(
+        r"[a-f0-9-]{36}", work["work_id"]
+    ):
+        raise ValueError("bootstrap requires an active Gen2 Work with UUID id")
     if not status["workflow"] or any(row.get("pack") is None for row in status["workflow"]):
         raise ValueError("Gen2 Work must have pinned workflow/Pack")
     if status["yield"]["kind"] != "none":
         raise ValueError("Gen2 Work already yielded; do not start another chat")
-    if status["unresolved"]["roles_total"] or status["unresolved"]["capabilities_total"]:
-        raise ValueError("bootstrap requires no pending role or effect")
-    return {"work_id": work["work_id"], "work_digest": work["work_digest"], "revision": work["revision"]}
+    unresolved = status["unresolved"]
+    if (
+        unresolved["roles_total"]
+        or unresolved["capabilities_total"]
+        or unresolved["children_live_total"]
+    ):
+        raise ValueError("bootstrap requires no active role, effect or delegated child")
+    return {
+        "work_id": work["work_id"],
+        "work_digest": work["work_digest"],
+        "revision": work["revision"],
+    }
 
 
-def _write_receipt(path: Path, record: dict[str, Any], *, exclusive: bool) -> None:
-    payload = (json.dumps(record, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode("ascii")
-    if exclusive:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-        except BaseException:
-            raise
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    else:
-        # This is an update of the already-claimed transport receipt only.
-        temp = path.with_suffix(".tmp")
-        with temp.open("xb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
+def _claim_once(
+    *,
+    store: WorkStore,
+    work: dict[str, Any],
+    plan: dict[str, Any],
+) -> WorkSnapshot:
+    """Atomically commit dispatch intent against the exact validated Gen2 head.
+
+    An earlier attempt, even one which may have failed before the actual send,
+    permanently blocks another bootstrap for this Work. Recovery is read-only.
+    """
+    work_id = work["work_id"]
+    events = store.events(work_id)
+    if any(event.kind in {CLAIM_KIND, CAPTURE_KIND} for event in events):
+        raise ValueError("bootstrap was previously claimed for this Work; no retry")
+    snapshot = store.snapshot(work_id)
+    if (
+        snapshot.work.work_digest != work["work_digest"]
+        or snapshot.revision != work["revision"]
+        or snapshot.state.value != "active"
+        or len(events) != snapshot.revision
+        or (events[-1].event_digest if events else None) != snapshot.last_event_digest
+    ):
+        raise ValueError("Gen2 Work frontier changed before bootstrap claim")
+    candidate = snapshot.next_event(
+        kind=CLAIM_KIND,
+        payload={"schema": "codexia.chat.bootstrap.claim.v0", "plan": plan},
+    )
+    # BEGIN IMMEDIATE + expected_revision protects the race between this
+    # preflight and the actual write; it is the *only* dispatch gate.
+    return store.append(
+        work_id, expected_revision=snapshot.revision, event=candidate
+    )
+
+
+def _capture_response(
+    *, store: WorkStore, claimed: WorkSnapshot, execution: Any
+) -> dict[str, Any]:
+    if getattr(execution, "transport", None) != "browser-owned":
+        raise ValueError("CWA returned unexpected transport: preserve claimed UNKNOWN")
+    raw = execution.response
+    conversation = raw.conversation
+    conversation_id = conversation.conversation_id
+    message_id = conversation.message_id
+    answer = raw.text
+    if not all(
+        isinstance(value, str) and value
+        for value in (conversation_id, message_id, answer)
+    ):
+        raise ValueError("CWA response lacks exact message/conversation/text evidence")
+    response_sha = _sha(answer.encode("utf-8"))
+    event = claimed.next_event(
+        kind=CAPTURE_KIND,
+        payload={
+            "schema": "codexia.chat.bootstrap.capture.v0",
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "response_sha256": response_sha,
+            "transport": "browser-owned",
+        },
+    )
+    store.append(
+        claimed.work.work_id, expected_revision=claimed.revision, event=event
+    )
+    return {
+        "status": "CAPTURED_UNADMITTED",
+        "work_id": claimed.work.work_id,
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "response_sha256": response_sha,
+    }
 
 
 def bootstrap_once(
     *,
     status: dict[str, Any],
     files: list[str],
-    receipt_dir: Path,
+    store: WorkStore,
     runtime: Any | None,
     profile: str = "DEEP",
     commit: bool = False,
 ) -> dict[str, Any]:
-    """Start one external chat, never retry an already claimed external write."""
+    """Start one external chat. Never replay a persisted attempt."""
     if profile not in {"FAST", "BALANCED", "DEEP"}:
         raise ValueError("unsupported CWA model profile")
     work = _validate_work(status)
@@ -111,36 +173,27 @@ def bootstrap_once(
         "versus assumed. Do not treat this message as permission for repository, "
         "process, network or filesystem effects. Do not claim completion from an answer."
     )
-    plan = {"schema": "codexia.dw-chat-bootstrap.v0", "work": work, "files": evidence,
-            "profile": profile, "prompt_sha256": _sha(prompt.encode("utf-8"))}
+    plan = {
+        "schema": "codexia.dw-chat-bootstrap.v0",
+        "work": work,
+        "files": evidence,
+        "profile": profile,
+        "prompt_sha256": _sha(prompt.encode("utf-8")),
+    }
     if not commit:
         return {"status": "DRY_RUN", **plan}
     if runtime is None:
         raise ValueError("explicit CWA runtime required for commit")
-    receipt_dir.mkdir(parents=True, exist_ok=True)
-    receipt = receipt_dir / f"{work['work_id']}.json"
-    # Claim BEFORE any remote call. Existing receipt means UNKNOWN, not retry.
-    record = {**plan, "state": "IN_FLIGHT_UNKNOWN"}
-    _write_receipt(receipt, record, exclusive=True)
-    try:
-        response = runtime.send_text_observed(prompt, media=media, model_profile=profile)
-        raw = response.response
-        conversation = raw.conversation
-        conversation_id = conversation.conversation_id
-        message_id = conversation.message_id
-        answer = raw.text
-        if not all(isinstance(x, str) and x for x in (conversation_id, message_id, answer)):
-            raise ValueError("CWA response lacks exact message/conversation/text evidence")
-        record.update(state="CAPTURED_UNADMITTED", conversation_id=conversation_id,
-                      message_id=message_id, response_sha256=_sha(answer.encode("utf-8")))
-        _write_receipt(receipt, record, exclusive=False)
-        return {"status": record["state"], "receipt": str(receipt),
-                "conversation_id": conversation_id, "message_id": message_id,
-                "response_sha256": record["response_sha256"]}
-    except Exception:
-        # Even a local printing/transport failure may follow a successful send.
-        # Preserve IN_FLIGHT_UNKNOWN and require read-only reconciliation.
-        raise
+
+    # This SQLite CAS is deliberately after CWA initialization, but before the
+    # remote effect. A failed or ambiguous send must not be replayed.
+    claimed = _claim_once(store=store, work=work, plan=plan)
+    execution = runtime.send_text_observed(
+        prompt, media=media, model_profile=profile
+    )
+    # A failed capture still leaves CLAIM_KIND durably visible. An already
+    # completed response may be recovered later, but never resent here.
+    return _capture_response(store=store, claimed=claimed, execution=execution)
 
 
 def main() -> int:
@@ -148,20 +201,36 @@ def main() -> int:
     parser.add_argument("--store", default=".codexia/work.sqlite3")
     parser.add_argument("--work-id", required=True)
     parser.add_argument("--file", action="append", required=True, dest="files")
-    parser.add_argument("--receipt-dir", default=".codexia/dw-chat-bootstrap")
     parser.add_argument("--auth-file", default="auth_data.json")
-    parser.add_argument("--profile", default="DEEP", choices=["FAST", "BALANCED", "DEEP"])
-    parser.add_argument("--commit", action="store_true", help="Perform one CWA product write (never retry automatically)")
+    parser.add_argument(
+        "--profile", default="DEEP", choices=["FAST", "BALANCED", "DEEP"]
+    )
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Record atomic Gen2 claim then perform exactly one CWA product write",
+    )
     args = parser.parse_args()
     from codexia_manual_agent.standalone_work import StandaloneWorkSurface
     from codexia_manual_agent.work_core import SqliteWorkStore
-    status = StandaloneWorkSurface(SqliteWorkStore(Path(args.store))).status(args.work_id)
+
+    store = SqliteWorkStore(Path(args.store))
+    status = StandaloneWorkSurface(store).status(args.work_id)
     runtime = None
     if args.commit:
         from chatgpt_web_adapter import assemble_product_runtime
-        runtime = assemble_product_runtime(transport="browser-owned", auth_file=args.auth_file)
-    result = bootstrap_once(status=status, files=args.files, receipt_dir=Path(args.receipt_dir),
-                            runtime=runtime, profile=args.profile, commit=args.commit)
+
+        runtime = assemble_product_runtime(
+            transport="browser-owned", auth_file=args.auth_file
+        )
+    result = bootstrap_once(
+        status=status,
+        files=args.files,
+        store=store,
+        runtime=runtime,
+        profile=args.profile,
+        commit=args.commit,
+    )
     print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
     return 0
 
