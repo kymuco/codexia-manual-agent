@@ -194,3 +194,45 @@ def test_image_media_is_rejected_before_no_replay_claim(tmp_path):
         mod.bootstrap_once(**{**kwargs, "files": [str(image)]})
     assert store.events(status["work"]["work_id"]) == ()
     assert runtime.calls == []
+
+
+def test_real_standalone_work_start_pins_bootstrap_pack_and_dry_runs(tmp_path):
+    from codexia_manual_agent.standalone_work import (
+        StandaloneWorkSelector,
+        StandaloneWorkSurface,
+    )
+    from examples.dw_chat_bootstrap_host import (
+        PROVIDER_REF,
+        WORKFLOW_ID,
+        WORKFLOW_VERSION,
+        make_host,
+    )
+
+    store = SqliteWorkStore(tmp_path / "actual-gen2.sqlite3")
+    surface = StandaloneWorkSurface(store)
+    status = surface.start(
+        objective="Restore Codexia context and propose one bounded PR",
+        selector=StandaloneWorkSelector(
+            provider_ref=PROVIDER_REF,
+            workflow_id=WORKFLOW_ID,
+            workflow_version=WORKFLOW_VERSION,
+        ),
+        host_factory=make_host,
+        source_id="pilot-first-real-activation",
+    )
+    assert status["work"]["state"] == "active"
+    assert status["workflow"][0]["pack"]["pack_id"] == (
+        "codexia:delegated-chat-pilot-pack"
+    )
+    assert status["yield"]["kind"] == "none"
+    assert len(store.events(status["work"]["work_id"])) == 2
+    handoff = tmp_path / "codexia-handoff.md"
+    handoff.write_text("One Work, no HDE, and no implicit authority.", encoding="utf-8")
+    dry = mod.bootstrap_once(
+        status=status,
+        files=[str(handoff)],
+        store=store,
+        runtime=None,
+    )
+    assert dry["status"] == "DRY_RUN"
+    assert len(store.events(status["work"]["work_id"])) == 2
