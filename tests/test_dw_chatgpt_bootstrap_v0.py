@@ -190,7 +190,7 @@ def test_image_media_is_rejected_before_no_replay_claim(tmp_path):
     store, status, file, runtime, kwargs = case(tmp_path)
     image = tmp_path / "screenshot.png"
     image.write_bytes(b"not-an-image-but-also-not-a-handoff")
-    with pytest.raises(ValueError, match="only \\.md/\\.txt handoff files"):
+    with pytest.raises(ValueError, match="admits only"):
         mod.bootstrap_once(**{**kwargs, "files": [str(image)]})
     assert store.events(status["work"]["work_id"]) == ()
     assert runtime.calls == []
