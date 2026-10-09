@@ -52,10 +52,21 @@ def work_and_status(tmp_path):
 
 
 class Runtime:
-    def __init__(self, *, fail=False, transport="browser-owned"):
+    def __init__(self, *, fail=False, transport="browser-owned", ready=True, missing=None):
         self.calls = []
         self.fail = fail
         self.transport = transport
+        self.ready = ready
+        self.missing = missing
+
+    def health(self):
+        return SimpleNamespace(ready=self.ready)
+
+    def capabilities(self):
+        return self
+
+    def state(self, name):
+        return SimpleNamespace(value="UNKNOWN" if name == self.missing else "AVAILABLE")
 
     def send_text_observed(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
@@ -161,3 +172,15 @@ def test_reject_duplicate_file_before_claim(tmp_path):
         mod.bootstrap_once(**{**kwargs, "files": [str(file), str(file)]})
     assert not store.events(status["work"]["work_id"])
     assert not runtime.calls
+
+
+
+def test_cwa_readiness_fail_closed_before_claim(tmp_path):
+    for runtime in (Runtime(ready=False), Runtime(missing="files")):
+        case_dir = tmp_path / ("unready" if not runtime.ready else "no-files")
+        case_dir.mkdir()
+        store, status, file, _, kwargs = case(case_dir, runtime=runtime)
+        with pytest.raises(ValueError, match="not ready|capability files"):
+            mod.bootstrap_once(**kwargs)
+        assert store.events(status["work"]["work_id"]) == ()
+        assert not runtime.calls
