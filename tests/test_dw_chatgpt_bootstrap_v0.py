@@ -98,6 +98,7 @@ def test_exactly_one_send_with_attachment_and_gen2_cas_receipt(tmp_path):
     assert result["status"] == "CAPTURED_UNADMITTED"
     assert len(runtime.calls) == 1
     assert runtime.calls[0][1]["media"] == [str(file.resolve())]
+    assert "model_profile" not in runtime.calls[0][1]
     events = store.events(status["work"]["work_id"])
     assert [event.kind for event in events] == [
         mod.CLAIM_KIND,
