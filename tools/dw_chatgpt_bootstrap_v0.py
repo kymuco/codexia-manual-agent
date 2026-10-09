@@ -156,12 +156,9 @@ def bootstrap_once(
     files: list[str],
     store: WorkStore,
     runtime: Any | None,
-    profile: str = "DEEP",
     commit: bool = False,
 ) -> dict[str, Any]:
     """Start one external chat. Never replay a persisted attempt."""
-    if profile not in {"FAST", "BALANCED", "DEEP"}:
-        raise ValueError("unsupported CWA model profile")
     work = _validate_work(status)
     evidence, media = _file_evidence(files)
     prompt = (
@@ -177,7 +174,7 @@ def bootstrap_once(
         "schema": "codexia.dw-chat-bootstrap.v0",
         "work": work,
         "files": evidence,
-        "profile": profile,
+        "model_profile": None,  # rich attachments do not compose with explicit mode
         "prompt_sha256": _sha(prompt.encode("utf-8")),
     }
     if not commit:
@@ -188,9 +185,7 @@ def bootstrap_once(
     # This SQLite CAS is deliberately after CWA initialization, but before the
     # remote effect. A failed or ambiguous send must not be replayed.
     claimed = _claim_once(store=store, work=work, plan=plan)
-    execution = runtime.send_text_observed(
-        prompt, media=media, model_profile=profile
-    )
+    execution = runtime.send_text_observed(prompt, media=media)
     # A failed capture still leaves CLAIM_KIND durably visible. An already
     # completed response may be recovered later, but never resent here.
     return _capture_response(store=store, claimed=claimed, execution=execution)
@@ -202,9 +197,6 @@ def main() -> int:
     parser.add_argument("--work-id", required=True)
     parser.add_argument("--file", action="append", required=True, dest="files")
     parser.add_argument("--auth-file", default="auth_data.json")
-    parser.add_argument(
-        "--profile", default="DEEP", choices=["FAST", "BALANCED", "DEEP"]
-    )
     parser.add_argument(
         "--commit",
         action="store_true",
@@ -228,7 +220,6 @@ def main() -> int:
         files=args.files,
         store=store,
         runtime=runtime,
-        profile=args.profile,
         commit=args.commit,
     )
     print(json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2))
