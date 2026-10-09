@@ -41,6 +41,24 @@ python tools/dw_chatgpt_bootstrap_v0.py `
 
 Do **not** execute the commit command until the final branch revision has passed independent review and local tests. CWA must remain independently managed (do not reinstall its native host from Codexia's venv). The default browser-owned rich-input path requires an authenticated Chrome/Chromium ChatGPT session. CWA currently rejects rich attachments combined with an explicit model/reasoning profile, so this pilot deliberately uses the selected ChatGPT product default; it never sends a model_profile field.
 
+## CWA installation isolation on Windows
+
+Do not run live `--commit` from a Codexia virtualenv with an older pinned CWA, and do not reinstall CWA from Codexia. Use the Python interpreter from the **already working independently managed CWA checkout**, exposing Codexia's `src` via `PYTHONPATH`.
+
+Example after reviewing paths and creating an isolated checkout:
+
+```powershell
+$env:PYTHONPATH = "W:\dev\codexia-bootstrap-v0\src"
+& "W:\dev\chatgpt-web-adapter\.venv\Scripts\python.exe" `
+  "W:\dev\codexia-bootstrap-v0\tools\dw_chatgpt_bootstrap_v0.py" `
+  --store "W:\dev\codexia-bootstrap-v0\.codexia\work.sqlite3" `
+  --work-id "<existing-activated-work-id>" `
+  --file "W:\dev\project\decisions.md" `
+  --file "W:\dev\project\new_chat_handoff.md"
+```
+
+This example is **dry-run only**. Run it first and verify that both imported source trees are the intended ones. The first `--commit` is permitted only after exact-head review and local readiness gates pass. This does not reinstall or replace CWA's native host.
+
 ## Future verticals
 
 - Read back the newly created conversation and reconcile exact message/provenance before admitting a cognition outcome via Issue #88.
