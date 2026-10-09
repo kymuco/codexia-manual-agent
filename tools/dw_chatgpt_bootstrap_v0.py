@@ -16,6 +16,8 @@ from codexia_manual_agent.work_core import WorkSnapshot, WorkStore
 
 MAX_FILES = 12
 MAX_TOTAL_BYTES = 6_000_000
+# This first vertical admits text project handoffs only, not CWA image/media input.
+_ALLOWED_EXTENSIONS = frozenset({".md", ".txt"})
 CLAIM_KIND = "codexia.chat.bootstrap.claimed.v0"
 CAPTURE_KIND = "codexia.chat.bootstrap.captured.v0"
 
@@ -35,6 +37,8 @@ def _file_evidence(paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
         source = Path(raw).expanduser()
         if source.is_symlink() or not source.is_file():
             raise ValueError("context must be a regular, non-symlink file")
+        if source.suffix.lower() not in _ALLOWED_EXTENSIONS:
+            raise ValueError("bootstrap v0 admits only .md/.txt handoff files")
         path = source.resolve(strict=True)
         if str(path) in seen:
             raise ValueError("duplicate context file")
