@@ -35,10 +35,10 @@ python tools/dw_chatgpt_bootstrap_v0.py `
   --work-id "<existing-work-id>" `
   --file W:\dev\project\decisions.md `
   --file W:\dev\project\new_chat_handoff.md `
-  --auth-file auth_data.json --profile DEEP --commit
+  --auth-file auth_data.json --commit
 ```
 
-Do **not** execute the commit command until the final branch revision has passed independent review and local tests. CWA must remain independently managed (do not reinstall its native host from Codexia's venv). The default browser-owned rich-input path requires an authenticated Chrome/Chromium ChatGPT session.
+Do **not** execute the commit command until the final branch revision has passed independent review and local tests. CWA must remain independently managed (do not reinstall its native host from Codexia's venv). The default browser-owned rich-input path requires an authenticated Chrome/Chromium ChatGPT session. CWA currently rejects rich attachments combined with an explicit model/reasoning profile, so this pilot deliberately uses the selected ChatGPT product default; it never sends a model_profile field.
 
 ## Future verticals
 
