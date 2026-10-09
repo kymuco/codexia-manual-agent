@@ -1,18 +1,23 @@
 # DW ChatGPT bootstrap v0 — one bounded product write
 
-First **pilot-only** vertical toward delegated ChatGPT Work. This is **not** an implemented autonomous peer loop, a Gen2 workflow, a scheduling service, or a completion pathway. It reuses one **already activated** Gen2 Work and the independently managed CWA product runtime.
+First **pilot-only** vertical toward Delegated ChatGPT Work. The implementation reuses an already activated Gen2 Work and the independently managed CWA browser-owned product runtime. It is **not** an autonomous peer loop, a scheduler, an outcome reconciler or a WorkCompletion path.
 
-## Behavior
+## Product flow
 
-- Check exact `StandaloneWorkSurface.status()` of an existing Work; reject terminal, attention-yielded, unpinned, or unresolved Work.
-- Explicitly select 1–12 local regular non-symlink context files; read them for an SHA-256/size manifest; fail over a total 6 MB byte budget.
-- Dry-run by default. `--commit` makes at most one `send_text_observed()` call on the supported CWA browser-owned transport, with attachment paths in `media` and a scoped project-continuation prompt.
-- Persist a unique host-owned **transport attempt** receipt before calling CWA. The `IN_FLIGHT_UNKNOWN` receipt is a no-retry fence across process restart. A successful transport return changes it to `CAPTURED_UNADMITTED` and records provider conversation/message ids plus answer digest.
-- Do not promote a CWA text answer, generated PR, or the receipt to Gen2 evidence, authority or completion. No automatic retry on exceptions or even when a later read suggests no visible response. This slice deliberately does not wire Issue #88 reconciliation.
+1. `codexia work start` activates one real Work with a pinned workflow/Pack (the existing DW1 CLI; a trusted host factory is required).
+2. Bootstrap reads the current Work status, checks the objective/work digest/revision, pinned workflow and no active roles, effects or live child Work.
+3. The operator chooses 1–12 regular handoff / decisions / project-plan files, with a total preflight read budget of 6 MB. The default is read-only `DRY_RUN`.
+4. Opt-in `--commit` writes `codexia.chat.bootstrap.claimed.v0` into the **same Gen2 WorkStore** using `append(expected_revision=...)` (SQLite `BEGIN IMMEDIATE`). This event is the durable, atomic **dispatch-attempt fence**, not a record that the model executed.
+5. Only after the atomic claim, make **one** CWA `send_text_observed(..., media=[...])` to a *new* ChatGPT conversation. Exact return requires `browser-owned` transport and nonempty response message/conversation ids and text.
+6. On successful CWA return, append `codexia.chat.bootstrap.captured.v0` to the exact claimed head. This is captured transport metadata only (conversation id, message id and response SHA-256). It does not admit a Gen2 CognitionOutcome, prove semantic completion, or grant actions.
 
-## Usage (Windows PowerShell)
+**No automatic retry** after claim under any circumstance, including crash after claim but before send, unknown CWA result, failed capture, or concurrent Work advancement. Future recovery must read already-completed provider evidence. The user must not use the script a second time with the same Work.
 
-First activate one real Work using the existing `codexia work start` product surface and a trusted local `--host-factory`/Pack. Then:
+This avoids the original file-based receipt's POSIX directory durability hole and reuses the canonical SQLite transaction. It does **not** turn SQLite durability into a guarantee against every disk/power failure, nor prove the exact bytes the browser uploaded. In particular, the file manifest is a pre-send observation; file content could change between hashing and CWA's upload.
+
+## Windows dry run
+
+In `W:\dev\codexia-m66-pilot` (or another verified Codexia checkout), first activate the Work through the existing DW1 CLI using its pinned workflow and host factory, then replace the example paths:
 
 ```powershell
 python tools/dw_chatgpt_bootstrap_v0.py `
@@ -22,7 +27,7 @@ python tools/dw_chatgpt_bootstrap_v0.py `
   --file W:\dev\project\new_chat_handoff.md
 ```
 
-Review the dry-run manifest. Only when ready to create one ChatGPT conversation:
+After inspecting Work status and the dry-run manifest, explicitly opt in to the external message:
 
 ```powershell
 python tools/dw_chatgpt_bootstrap_v0.py `
@@ -33,13 +38,13 @@ python tools/dw_chatgpt_bootstrap_v0.py `
   --auth-file auth_data.json --profile DEEP --commit
 ```
 
-CWA must already be installed and authenticated independently in the Python environment. Do not reinstall or overwrite the globally installed CWA browser-native host. One Work id is intentionally limited to one initial bootstrap attempt in this pilot.
+Do **not** execute the commit command until the final branch revision has passed independent review and local tests. CWA must remain independently managed (do not reinstall its native host from Codexia's venv). The default browser-owned rich-input path requires an authenticated Chrome/Chromium ChatGPT session.
 
-## Known gaps / next useful slice
+## Future verticals
 
-1. Canonical CWA readback/correlation and Issue #88 admission before treating the result as durable Work evidence.
-2. One bounded continuation-decision loop based on exact chat/Work frontier, not free-form automatic `continue`.
-3. Local-gate AttentionNeed and response handling; then only later a context rollover.
-4. Concurrent file modification and Windows power-loss durability are **not** proven by the hash manifest or this host-only receipt. The manifest is pre-submit observation, not a cryptographic attestation of the bytes uploaded by the browser.
+- Read back the newly created conversation and reconcile exact message/provenance before admitting a cognition outcome via Issue #88.
+- Implement bounded Codexia-side continuation decisions using canonical Work and chat evidence.
+- Add a Work AttentionNeed path for Windows-only local test gates.
+- Add handoff/context rollover only after the first real multi-turn product proof.
 
-No HDE, IRR, Runplane, generic scheduler, or Gen2 Core change is involved.
+This slice deliberately makes **no** HDE, IRR, Runplane, generic scheduler, UI, or Gen2 Core modification. The two application-specific WorkEvents only record this pilot's transport attempt and observed result.
