@@ -7,7 +7,9 @@ import pytest
 from codexia_manual_agent.domain.errors import ProviderError, ProviderUnavailableError
 from codexia_manual_agent.domain.models import ProviderConversation, ProviderRequest
 from codexia_manual_agent.providers.chatgpt_http import ChatGPTHttpProvider
-from codexia_manual_agent.providers.model_provider_cognition import ModelProviderCognitionPort
+from codexia_manual_agent.providers.model_provider_cognition import (
+    ModelProviderCognitionPort,
+)
 
 
 class FakeHTTPClient:
@@ -69,7 +71,9 @@ def test_http_send_preserves_system_as_visible_text_not_hidden_authority() -> No
     client = FakeHTTPClient()
     provider = ChatGPTHttpProvider(client=client)
 
-    result = provider.send(ProviderRequest("Inspect this.", system="Act as a reviewer."))
+    result = provider.send(
+        ProviderRequest("Inspect this.", system="Act as a reviewer.")
+    )
 
     assert provider.provider_id == "chatgpt-http"
     assert ModelProviderCognitionPort(provider).port_id == "model-provider:chatgpt-http"
