@@ -42,7 +42,7 @@ def case(tmp_path: Path):
         },
     }
     file_path = tmp_path / "handoff.md"
-    file_path.write_text("Initial bounded handoff.\n", encoding="utf-8")
+    file_path.write_bytes(b"Initial bounded handoff.\n")
     progress = StringIO()
     reporter = HttpProgressConsole(progress_output=progress, text_output=StringIO())
     return store, status, file_path, reporter, progress
