@@ -67,6 +67,10 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                 raise ProviderError(
                     "ChatGPT HTTP client initialization failed; no message was sent"
                 ) from exc
+        if not callable(getattr(client, "send", None)):
+            raise ProviderUnavailableError(
+                "ChatGPT HTTP client missing callable send(); no browser fallback"
+            )
         # Deliberately do NOT call the browser-owned provider constructor:
         # its falsy-runtime fallback can instantiate a Chrome-backed transport.
         # These are exactly the fields its inherited normalization/read methods use.
