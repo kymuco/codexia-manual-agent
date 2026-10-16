@@ -115,12 +115,12 @@ def test_http_model_slug_and_reasoning_forwarded_without_profile_translation() -
     provider = ChatGPTHttpProvider(
         client=client,
         model="gpt-6-instant",
-        reasoning_effort="low",
+        reasoning_effort="high",
     )
 
     provider.send(ProviderRequest(prompt="Hi"))
     assert client.calls[0][1]["model"] == "gpt-6-instant"
-    assert client.calls[0][1]["reasoning_effort"] == "low"
+    assert client.calls[0][1]["reasoning_effort"] == "high"
 
 
 def test_http_ambiguous_error_has_no_fallback_retry_or_secret_leak() -> None:
@@ -187,6 +187,8 @@ def test_http_missing_or_conflicting_client_fails_before_write() -> None:
         ChatGPTHttpProvider(client=client, model=" ")
     with pytest.raises(ValueError, match="timeout"):
         ChatGPTHttpProvider(client=client, timeout=0)
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        ChatGPTHttpProvider(client=client, reasoning_effort="low")
     assert client.calls == []
 
 
