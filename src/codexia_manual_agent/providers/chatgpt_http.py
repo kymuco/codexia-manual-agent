@@ -138,7 +138,9 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
 
         return {"on_event": on_event, "on_token": on_token}
 
-    def send(self, request: ProviderRequest) -> ProviderResponse:
+    def send(
+        self, request: ProviderRequest, *, media: list[tuple[bytes, str]] | None = None
+    ) -> ProviderResponse:
         if not isinstance(request, ProviderRequest):
             raise TypeError("request must be ProviderRequest")
         if not isinstance(request.prompt, str) or not request.prompt.strip():
@@ -165,6 +167,7 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                 reasoning_effort=self.reasoning_effort,
                 conversation=conversation_id,
                 temporary=False,
+                **({"media": media} if media is not None else {}),
                 **self._callbacks(mode="normal"),
             )
         except KeyboardInterrupt:
