@@ -188,6 +188,19 @@ def test_http_missing_or_conflicting_client_fails_before_write() -> None:
     assert client.calls == []
 
 
+def test_http_invalid_continuation_is_rejected_without_a_new_chat() -> None:
+    client = FakeHTTPClient()
+    provider = ChatGPTHttpProvider(client=client)
+    with pytest.raises(ValueError, match="exact nonempty conversation_id"):
+        provider.send(
+            ProviderRequest(
+                prompt="This must not start another chat",
+                conversation=ProviderConversation(conversation_id=None),
+            )
+        )
+    assert client.calls == []
+
+
 def test_http_temporary_turn_and_unsupported_browser_features() -> None:
     client = FakeHTTPClient()
     provider = ChatGPTHttpProvider(client=client)
