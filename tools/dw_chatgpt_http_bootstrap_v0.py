@@ -131,9 +131,12 @@ def bootstrap_http_once(
     client: ChatGPTHttpProvider | None = None,
     commit: bool = False,
     model: str = "gpt-6-instant",
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Safe offline preflight or exactly one CAS-fenced HTTP bootstrap."""
 
+    if reasoning_effort not in {None, "instant", "medium", "high", "standard", "extended"}:
+        raise ValueError("unsupported reasoning effort before Work claim")
     work = _validate_work(status)
     reporter.emit("WORK", {"work_id": work["work_id"], "revision": work["revision"]})
     evidence, _ = _file_evidence(files)
@@ -164,6 +167,7 @@ def bootstrap_http_once(
         "work": work,
         "files": evidence,
         "model": model,
+        "reasoning_effort": reasoning_effort,
         "prompt_sha256": _sha(prompt.encode("utf-8")),
     }
     if not commit:
@@ -211,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", action="append", required=True, dest="files")
     parser.add_argument("--auth-file", default="auth_data.json")
     parser.add_argument("--model", default="gpt-6-instant")
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("instant", "medium", "high", "standard", "extended"),
+        default=None,
+        help="ChatGPT web thinking effort; high is sent as extended",
+    )
     parser.add_argument("--cwa-root", type=Path)
     parser.add_argument("--stream", action="store_true")
     parser.add_argument("--commit", action="store_true")
@@ -224,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             result = bootstrap_http_once(
                 status=status, files=args.files, store=store,
                 reporter=reporter, model=args.model,
+                reasoning_effort=args.reasoning_effort,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
@@ -237,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         provider = ChatGPTHttpProvider(
             auth_file=args.auth_file,
             model=args.model,
+            reasoning_effort=args.reasoning_effort,
             progress=reporter.emit,
             on_token=reporter.token if args.stream else None,
         )
@@ -246,7 +258,9 @@ def main(argv: list[str] | None = None) -> int:
         _freeze_files(evidence)
         print(
             f"Work={work['work_id']} rev={work['revision']} "
-            f"files={len(evidence)} model={args.model} transport=HTTP",
+            f"files={len(evidence)} model={args.model} "
+            f"reasoning_effort={args.reasoning_effort or 'default'} "
+            "transport=HTTP",
             file=sys.stderr,
             flush=True,
         )
@@ -267,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         result = bootstrap_http_once(
             status=status, files=args.files, store=store, reporter=reporter,
             client=provider, commit=True, model=args.model,
+            reasoning_effort=args.reasoning_effort,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
