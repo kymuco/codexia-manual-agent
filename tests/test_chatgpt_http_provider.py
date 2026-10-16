@@ -173,7 +173,7 @@ def test_http_explicit_factory_cannot_assemble_browser_runtime() -> None:
     )
     assert provider.provider_id == "chatgpt-http"
     assert len(arguments) == 1
-    assert arguments[0]["auth_file"].replace("\\\\", "/") == "C:/private/auth_data.json"
+    assert arguments[0]["auth_file"].replace(chr(92), "/") == "C:/private/auth_data.json"
     assert arguments[0]["timeout"] == 120
 
 
