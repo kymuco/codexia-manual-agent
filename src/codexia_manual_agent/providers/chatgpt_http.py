@@ -49,7 +49,9 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
         if client is None:
             if client_factory is None:
                 try:
-                    from chatgpt_web_adapter.browserless_http import BrowserlessHTTPClient
+                    from chatgpt_web_adapter.browserless_http import (
+                        BrowserlessHTTPClient,
+                    )
                 except ImportError as exc:
                     raise ProviderUnavailableError(
                         "CWA PR #212 BrowserlessHTTPClient is not installed; "
@@ -83,10 +85,15 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
     @staticmethod
     def _ambiguous_failure(exc: Exception) -> ProviderError:
         stage = getattr(exc, "request_stage", None)
-        safe_stage = stage if isinstance(stage, str) and _SAFE_STAGE.fullmatch(stage) else "unknown"
+        safe_stage = (
+            stage
+            if isinstance(stage, str) and _SAFE_STAGE.fullmatch(stage)
+            else "unknown"
+        )
         return ProviderError(
             f"ChatGPT HTTP call failed ({type(exc).__name__}; stage={safe_stage}); "
-            "write outcome may be ambiguous; do not retry without read-only reconciliation"
+            "write outcome may be ambiguous; do not retry without read-only "
+            "reconciliation"
         )
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
@@ -111,9 +118,16 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             raise self._ambiguous_failure(exc) from exc
         response = self._normalize_response(raw)
         if not response.text.strip() or response.conversation is None:
-            raise ProviderError("ChatGPT HTTP returned incomplete response; do not retry")
-        if not response.conversation.conversation_id or not response.conversation.message_id:
-            raise ProviderError("ChatGPT HTTP response lacks canonical IDs; do not retry")
+            raise ProviderError(
+                "ChatGPT HTTP returned incomplete response; do not retry"
+            )
+        if (
+            not response.conversation.conversation_id
+            or not response.conversation.message_id
+        ):
+            raise ProviderError(
+                "ChatGPT HTTP response lacks canonical IDs; do not retry"
+            )
         if conversation_id and response.conversation.conversation_id != conversation_id:
             raise ProviderError(
                 "ChatGPT HTTP continuation switched conversation identity; do not retry"
