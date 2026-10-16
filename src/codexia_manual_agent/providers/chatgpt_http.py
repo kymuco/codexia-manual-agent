@@ -35,6 +35,8 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
         timeout: float = 120.0,
         client: Any | None = None,
         client_factory: Callable[..., Any] | None = None,
+        progress: Callable[[str, dict[str, object]], None] | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> None:
         if client is not None and client_factory is not None:
             raise ValueError("choose client or client_factory, not both")
@@ -80,6 +82,8 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
         self.timeout = float(timeout)
         self._client = None
         self._runtime = client
+        self._progress = progress
+        self._on_token = on_token
 
     @property
     def provider_id(self) -> str:
@@ -101,6 +105,39 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             "reconciliation"
         )
 
+    def _report(self, stage: str, **fields: object) -> None:
+        if self._progress is not None:
+            # Instrumentation has no right to cancel or replay a model write.
+            try:
+                self._progress(stage, fields)
+            except Exception:
+                pass
+
+    def _callbacks(self, *, mode: str) -> dict[str, Any]:
+        if self._progress is None and self._on_token is None:
+            return {}
+        first_token = False
+
+        def on_event(event: Any) -> None:
+            if isinstance(event, dict) and event.get("type") == "stream_started":
+                self._report("STREAM_OPEN", mode=mode)
+
+        def on_token(text: str) -> None:
+            nonlocal first_token
+            if not isinstance(text, str) or not text:
+                return
+            if not first_token:
+                first_token = True
+                self._report("FIRST_TOKEN", mode=mode)
+            if self._on_token is not None:
+                try:
+                    self._on_token(text)
+                except Exception:
+                    # Console errors must never induce another remote write.
+                    pass
+
+        return {"on_event": on_event, "on_token": on_token}
+
     def send(self, request: ProviderRequest) -> ProviderResponse:
         if not isinstance(request, ProviderRequest):
             raise TypeError("request must be ProviderRequest")
@@ -115,6 +152,12 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             not isinstance(conversation_id, str) or not conversation_id.strip()
         ):
             raise ValueError("continuation requires an exact nonempty conversation_id")
+        self._report(
+            "HTTP_CALL",
+            mode="normal",
+            model=self.model,
+            status="attempt_started_not_receipt",
+        )
         try:
             raw = self._runtime.send(
                 self._product_prompt(request),
@@ -122,9 +165,23 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                 reasoning_effort=self.reasoning_effort,
                 conversation=conversation_id,
                 temporary=False,
+                **self._callbacks(mode="normal"),
             )
+        except KeyboardInterrupt:
+            self._report(
+                "OUTCOME_UNKNOWN", error_type="KeyboardInterrupt", retry="forbidden"
+            )
+            raise
         except Exception as exc:
+            self._report(
+                "OUTCOME_UNKNOWN",
+                error_type=type(exc).__name__,
+                retry="forbidden",
+            )
             raise self._ambiguous_failure(exc) from exc
+        self._report(
+            "HTTP_RETURN", response_chars=len(getattr(raw, "text", "") or "")
+        )
         response = self._normalize_response(raw)
         if not response.text.strip() or response.conversation is None:
             raise ProviderError(
@@ -141,6 +198,12 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             raise ProviderError(
                 "ChatGPT HTTP continuation switched conversation identity; do not retry"
             )
+        self._report(
+            "HTTP_IDENTITY",
+            conversation_id=response.conversation.conversation_id,
+            message_id=response.conversation.message_id,
+            status="ids_observed_not_work_admitted",
+        )
         return response
 
     def send_temporary(self, prompt: str) -> ProviderResponse:
@@ -148,18 +211,45 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
 
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be nonempty")
+        self._report(
+            "HTTP_CALL",
+            mode="temporary",
+            model=self.model,
+            status="attempt_started_not_receipt",
+        )
         try:
             raw = self._runtime.send(
                 prompt,
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
                 temporary=True,
+                **self._callbacks(mode="temporary"),
             )
+        except KeyboardInterrupt:
+            self._report(
+                "OUTCOME_UNKNOWN", error_type="KeyboardInterrupt", retry="forbidden"
+            )
+            raise
         except Exception as exc:
+            self._report(
+                "OUTCOME_UNKNOWN",
+                error_type=type(exc).__name__,
+                retry="forbidden",
+            )
             raise self._ambiguous_failure(exc) from exc
+        self._report(
+            "HTTP_RETURN", response_chars=len(getattr(raw, "text", "") or "")
+        )
         response = self._normalize_response(raw)
         if not response.text.strip():
             raise ProviderError("ChatGPT HTTP temporary response empty; do not retry")
+        if response.conversation is not None:
+            self._report(
+                "HTTP_IDENTITY",
+                conversation_id=response.conversation.conversation_id,
+                message_id=response.conversation.message_id,
+                status="ids_observed_not_work_admitted",
+            )
         return response
 
     def end_temporary_chat(self) -> bool:
