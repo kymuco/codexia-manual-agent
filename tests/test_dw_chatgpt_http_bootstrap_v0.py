@@ -97,6 +97,50 @@ def test_dry_run_does_not_send_or_modify_work(tmp_path) -> None:
     assert store.events(status["work"]["work_id"]) == ()
 
 
+def test_gpt6_high_mode_is_pinned_before_http_write(tmp_path) -> None:
+    store, status, file_path, reporter, _ = case(tmp_path)
+    http = HTTP()
+    configured = dict(
+        status=status,
+        files=[str(file_path)],
+        store=store,
+        reporter=reporter,
+        client=http,
+        model="gpt-6",
+        reasoning_effort="high",
+    )
+    preview = runner.bootstrap_http_once(commit=False, **configured)
+    assert preview["status"] == "DRY_RUN"
+    assert preview["model"] == "gpt-6"
+    assert preview["reasoning_effort"] == "high"
+    assert http.calls == []
+    assert store.events(status["work"]["work_id"]) == ()
+
+    result = runner.bootstrap_http_once(commit=True, **configured)
+    assert result["status"] == "CAPTURED_UNADMITTED"
+    events = store.events(status["work"]["work_id"])
+    assert events[0].payload["plan"]["model"] == "gpt-6"
+    assert events[0].payload["plan"]["reasoning_effort"] == "high"
+    assert len(http.calls) == 1
+
+
+def test_invalid_effort_never_claims_or_sends(tmp_path) -> None:
+    store, status, file_path, reporter, _ = case(tmp_path)
+    http = HTTP()
+    with pytest.raises(ValueError, match="reasoning effort"):
+        runner.bootstrap_http_once(
+            status=status,
+            files=[str(file_path)],
+            store=store,
+            reporter=reporter,
+            client=http,
+            commit=True,
+            reasoning_effort="low",
+        )
+    assert store.events(status["work"]["work_id"]) == ()
+    assert not http.calls
+
+
 def test_exact_frozen_file_bytes_and_capture_with_readback(tmp_path) -> None:
     store, status, file_path, reporter, progress = case(tmp_path)
     http = HTTP()
