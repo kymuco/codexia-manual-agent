@@ -256,7 +256,12 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
             flush=True,
         )
-        if input("Type SEND to commit, anything else to cancel: ").strip() != "SEND":
+        try:
+            confirmation = input("Type SEND to commit, anything else to cancel: ")
+        except (KeyboardInterrupt, EOFError):
+            reporter.emit("RESULT", {"status": "cancelled_before_claim"})
+            return 130
+        if confirmation.strip() != "SEND":
             reporter.emit("RESULT", {"status": "cancelled_before_claim"})
             return 1
         result = bootstrap_http_once(
