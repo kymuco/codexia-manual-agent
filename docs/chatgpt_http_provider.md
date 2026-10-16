@@ -119,3 +119,41 @@ Developers can reuse `HttpProgressConsole(stream_text=True)` by injecting
 `progress=observer.emit, on_token=observer.token` into
 `ChatGPTHttpProvider`. No new Gen2 Core runtime or permission authority
 has been added, and Qwen/browser-owned remain unchanged.
+
+## Model selection and thinking effort
+
+The browserless SDK accepts an explicit model slug and a thinking effort.
+Codexia forwards them without silent browser-owned fallback:
+
+```powershell
+# First run with a NEW, never-claimed Work (no external write):
+python -m tools.dw_chatgpt_http_bootstrap_v0 `
+  --work-id "<new-work-id>" `
+  --file docs\gen2_product_baseline.md `
+  --model gpt-6 `
+  --reasoning-effort high
+
+# On a separately approved real E2E, additionally supply:
+# --commit --stream --cwa-root W:\dev\chatgpt-web-adapter-http
+# --auth-file W:\dev\chatgpt-web-adapter\auth_data.json
+```
+
+The CLI defaults remain `gpt-6-instant` and unspecified reasoning effort
+for compatibility. It accepts `instant`, `medium`, `high`,
+`standard`, or `extended`. The CWA legacy request serializer maps
+`high` to the web protocol's `extended`; this is **not proof** that
+the remote model honored the requested mode.
+
+The `MODEL_ROUTE` progress event distinguishes `requested_model` /
+`requested_reasoning_effort`, `sent_model` / `sent_reasoning_effort`,
+and `observed_model` / `observed_reasoning_effort` when CWA exposes
+these diagnostics. Missing observed metadata must remain visibly unknown,
+never be filled in with requested values.
+
+The durable one-shot claim records the requested `model` and
+`reasoning_effort` alongside the existing SHA and Work binding.
+**Never reuse** a Work that reached a claim or capture event to compare
+models. Run separate Work IDs for Instant and High, preferably on identical
+input documents/tasks. High thinking can change both first-token latency
+and total runtime; quality gains must be measured on the same evaluation
+set, not assumed.
