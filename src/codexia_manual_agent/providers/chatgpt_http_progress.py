@@ -16,6 +16,7 @@ _STAGE = frozenset(
         "WORK",
         "INPUT",
         "HANDOFF",
+        "CLAIM",
         "HTTP_CALL",
         "STREAM_OPEN",
         "FIRST_TOKEN",
