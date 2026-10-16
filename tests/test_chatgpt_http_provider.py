@@ -188,6 +188,17 @@ def test_http_missing_or_conflicting_client_fails_before_write() -> None:
     assert client.calls == []
 
 
+def test_falsy_injected_http_client_never_activates_browser_factory() -> None:
+    class FalsyHTTP(FakeHTTPClient):
+        def __bool__(self):
+            return False
+
+    client = FalsyHTTP()
+    provider = ChatGPTHttpProvider(client=client)
+    assert provider.send(ProviderRequest(prompt="direct only")).text == "HTTP response"
+    assert len(client.calls) == 1
+
+
 def test_http_invalid_continuation_is_rejected_without_a_new_chat() -> None:
     client = FakeHTTPClient()
     provider = ChatGPTHttpProvider(client=client)
