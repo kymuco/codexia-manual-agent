@@ -176,7 +176,7 @@ def bootstrap_http_once(
     # never re-dispatch an existing claimed or uncertain Work by switching transport.
     claimed = _claim_once(store=store, work=work, plan=plan)
     reporter.emit(
-        "HANDOFF",
+        "CLAIM",
         {"work_id": claimed.work.work_id, "revision": claimed.revision,
          "status": "claim_committed"},
     )
