@@ -106,6 +106,10 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             if request.conversation is not None
             else None
         )
+        if request.conversation is not None and (
+            not isinstance(conversation_id, str) or not conversation_id.strip()
+        ):
+            raise ValueError("continuation requires an exact nonempty conversation_id")
         try:
             raw = self._runtime.send(
                 self._product_prompt(request),
