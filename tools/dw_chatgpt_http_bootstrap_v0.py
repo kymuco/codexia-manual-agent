@@ -135,7 +135,14 @@ def bootstrap_http_once(
 ) -> dict[str, Any]:
     """Safe offline preflight or exactly one CAS-fenced HTTP bootstrap."""
 
-    if reasoning_effort not in {None, "instant", "medium", "high", "standard", "extended"}:
+    if reasoning_effort not in {
+        None,
+        "instant",
+        "medium",
+        "high",
+        "standard",
+        "extended",
+    }:
         raise ValueError("unsupported reasoning effort before Work claim")
     work = _validate_work(status)
     reporter.emit("WORK", {"work_id": work["work_id"], "revision": work["revision"]})
