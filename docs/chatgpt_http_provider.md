@@ -43,15 +43,15 @@ inherits read-only status and history APIs for future reconciliation, but
 the proof/index/admission obligations of Codexia Issue #88 remain separate
 and are not implemented by this initial transport adapter.
 
-## Planned interactive E2E observability (not implemented in this PR)
+## Human-visible HTTP E2E observability (initial implementation)
 
-The future single live E2E entry point should optionally display ordered,
+The new one-shot HTTP bootstrap entry point can display ordered,
 human-readable, sanitized progress events, with optional streaming of model
 text into stdout:
 
   [01] WORK       new Work ID, canonical revision
   [02] INPUT      file count, total bytes and hashes, no private file content
-  [03] HANDOFF    one durable claim/handoff admitted
+  [03] CLAIM      one durable bootstrap claim admitted (not CognitionHandoff)
   [04] HTTP       one direct send attempt started, no Chrome
   [05] STREAM     first token received, live output if explicitly requested
   [06] READBACK   canonical conversation/message IDs and evidence checked
@@ -65,3 +65,57 @@ state, not permission to retry; older claimed Work IDs must remain untouched.
 
 No Codexia Work was created and no external ChatGPT request was sent
 to prepare this code.
+
+### Running the new HTTP bootstrap
+
+Use `tools/dw_chatgpt_http_bootstrap_v0.py` **on a new, previously unclaimed
+activated Gen2 Work**. It is a separate entry point from the old browser
+bootstrap. It reuses the same one-shot claim event kind; an old browser
+claim can never be resent through this new HTTP script.
+
+From a separate Codexia worktree (illustrative path), use:
+
+```powershell
+Set-Location W:\dev\codexia-http-observable
+$env:PYTHONPATH = "W:\dev\codexia-http-observable\src;W:\dev\chatgpt-web-adapter-http\src"
+& "W:\dev\chatgpt-web-adapter\.venv\Scripts\python.exe" `
+  -m tools.dw_chatgpt_http_bootstrap_v0 `
+  --store .codexia\dw-chat-v0.sqlite3 `
+  --work-id "<new-unclaimed-work-id>" `
+  --file docs\gen2_product_baseline.md
+```
+
+This is a zero-write dry-run. The script prints Work identity and revision,
+file count, total bytes, aggregate digest and the exact preview manifest.
+Do not run on any older Work already carrying a bootstrap claim.
+
+Only for a separately authorized real E2E, additionally supply
+`--commit --stream --cwa-root W:\dev\chatgpt-web-adapter-http` and
+`--auth-file W:\dev\chatgpt-web-adapter\auth_data.json`.
+It checks the imported CWA module is from this exact source tree, creates
+the client **before** the claim, and requires typing `SEND` at the terminal.
+Anything else cancels before the Work is claimed.
+
+Before claiming, it freezes byte-accurate Markdown/TXT attachment snapshots
+(1..12 files, total 6 MB, unique basenames) so the HTTP upload does not
+re-read a changing filesystem file after the claim.
+
+The terminal stages are WORK, INPUT, CLAIM, HTTP_CALL, STREAM_OPEN,
+FIRST_TOKEN, HTTP_RETURN, HTTP_IDENTITY, READBACK, ADMISSION and RESULT.
+`HTTP_CALL` is a local attempt, not a remote receipt.
+`FIRST_TOKEN` is provisional, not completion. READBACK checks the exact
+assistant message ID and text against canonical read-only history.
+ADMISSION always says `not_admitted` for this bootstrap; it does not
+pretend to complete a Gen2 RoleRun or Work. A successful capture is
+`CAPTURED_UNADMITTED`.
+
+For an HTTP error, Ctrl+C after the claim, mismatched canonical history,
+or failure to append the capture, the Work remains claimed and the progress
+reports `OUTCOME_UNKNOWN`, `retry=forbidden`. Reconcile read-only;
+never resend the same Work. Progress is printed to stderr, streamed
+model text to stdout only with explicit `--stream`.
+
+Developers can reuse `HttpProgressConsole(stream_text=True)` by injecting
+`progress=observer.emit, on_token=observer.token` into
+`ChatGPTHttpProvider`. No new Gen2 Core runtime or permission authority
+has been added, and Qwen/browser-owned remain unchanged.
