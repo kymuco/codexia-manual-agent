@@ -37,7 +37,9 @@ class StreamingHTTP:
             ),
             request=SimpleNamespace(
                 observed_model="gpt-6",
-                sent_model="gpt-6-instant",
+                sent_model="gpt-6",
+                observed_reasoning_effort="extended",
+                sent_reasoning_effort="extended",
             ),
             metrics=None,
         )
@@ -53,6 +55,8 @@ def test_operator_sees_ordered_stages_and_opt_in_text() -> None:
     http = StreamingHTTP()
     provider = ChatGPTHttpProvider(
         client=http,
+        model="gpt-6",
+        reasoning_effort="high",
         progress=reporter.emit,
         on_token=reporter.token,
     )
@@ -70,6 +74,11 @@ def test_operator_sees_ordered_stages_and_opt_in_text() -> None:
     assert "WORK" in out and "HANDOFF" in out
     assert "HTTP_CALL" in out and "FIRST_TOKEN" in out
     assert "HTTP_RETURN" in out and "HTTP_IDENTITY" in out
+    assert "MODEL_ROUTE" in out
+    assert "requested_model=gpt-6" in out
+    assert "requested_reasoning_effort=high" in out
+    assert "sent_reasoning_effort=extended" in out
+    assert "observed_reasoning_effort=extended" in out
     assert "message_id=message-2" in out and "RESULT" in out
     assert "attempt_started_not_receipt" in out
     assert "PRIVATE PROMPT" not in out
