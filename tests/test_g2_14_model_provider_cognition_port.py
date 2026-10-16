@@ -18,6 +18,7 @@ from codexia_manual_agent.pack_core import (
     PackMemberKind,
     PackWorkflowBinding,
 )
+from codexia_manual_agent.providers.chatgpt_http import ChatGPTHttpProvider
 from codexia_manual_agent.providers.chatgpt_web import ChatGPTWebProvider
 from codexia_manual_agent.providers.model_provider_cognition import (
     ModelProviderCognitionPort,
@@ -288,3 +289,41 @@ def test_existing_chatgpt_web_provider_is_a_concrete_gen2_cognition_port(
         f"{CONTEXT}"
     )
     assert kwargs["conversation"] is None
+
+
+def test_chatgpt_http_provider_composes_with_existing_gen2_handoff(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "http-work.sqlite")
+    work, _, request = _requested(store, source_id="chatgpt-http")
+
+    class _DirectHTTP:
+        def __init__(self):
+            self.calls = []
+
+        def send(self, text, **kwargs):
+            self.calls.append((text, kwargs))
+            return SimpleNamespace(
+                text="HTTP-only bounded answer",
+                conversation=SimpleNamespace(
+                    conversation_id="new-chat",
+                    message_id="assistant-msg",
+                    parent_message_id="assistant-msg",
+                    finish_reason="stop",
+                ),
+                request=None,
+                metrics=None,
+            )
+
+    client = _DirectHTTP()
+    port = ModelProviderCognitionPort(ChatGPTHttpProvider(client=client))
+    completed = CognitionTransportBridge(store).dispatch_once(request, port)
+
+    assert completed.state is RoleRunState.COMPLETED
+    assert completed.output_text == "HTTP-only bounded answer"
+    assert port.port_id == "model-provider:chatgpt-http"
+    assert len(client.calls) == 1
+    assert client.calls[0][1]["conversation"] is None
+    assert client.calls[0][1]["temporary"] is False
+    handoff = project_cognition_handoff(store.events(work.work_id), request.request_id)
+    assert handoff.port_id == port.port_id
+
+
