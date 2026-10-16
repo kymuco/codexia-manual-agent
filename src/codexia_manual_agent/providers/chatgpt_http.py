@@ -42,10 +42,17 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             raise ValueError("choose client or client_factory, not both")
         if not isinstance(model, str) or not model.strip():
             raise ValueError("an explicit nonempty ChatGPT model slug is required")
-        if reasoning_effort is not None and (
-            not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
-        ):
-            raise ValueError("reasoning_effort must be a nonempty string or None")
+        if reasoning_effort is not None and reasoning_effort not in {
+            "instant",
+            "medium",
+            "high",
+            "standard",
+            "extended",
+        }:
+            raise ValueError(
+                "reasoning_effort must be instant, medium, high, "
+                "standard, extended or None"
+            )
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         if client is None:
@@ -158,6 +165,7 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             "HTTP_CALL",
             mode="normal",
             model=self.model,
+            reasoning_effort=self.reasoning_effort or "default",
             status="attempt_started_not_receipt",
         )
         try:
@@ -184,6 +192,18 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             raise self._ambiguous_failure(exc) from exc
         self._report(
             "HTTP_RETURN", response_chars=len(getattr(raw, "text", "") or "")
+        )
+        diagnostics = getattr(raw, "request", None)
+        self._report(
+            "MODEL_ROUTE",
+            requested_model=self.model,
+            requested_reasoning_effort=self.reasoning_effort or "default",
+            sent_model=getattr(diagnostics, "sent_model", None),
+            sent_reasoning_effort=getattr(diagnostics, "sent_reasoning_effort", None),
+            observed_model=getattr(diagnostics, "observed_model", None),
+            observed_reasoning_effort=getattr(
+                diagnostics, "observed_reasoning_effort", None
+            ),
         )
         response = self._normalize_response(raw)
         if not response.text.strip() or response.conversation is None:
@@ -218,6 +238,7 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             "HTTP_CALL",
             mode="temporary",
             model=self.model,
+            reasoning_effort=self.reasoning_effort or "default",
             status="attempt_started_not_receipt",
         )
         try:
@@ -242,6 +263,18 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             raise self._ambiguous_failure(exc) from exc
         self._report(
             "HTTP_RETURN", response_chars=len(getattr(raw, "text", "") or "")
+        )
+        diagnostics = getattr(raw, "request", None)
+        self._report(
+            "MODEL_ROUTE",
+            requested_model=self.model,
+            requested_reasoning_effort=self.reasoning_effort or "default",
+            sent_model=getattr(diagnostics, "sent_model", None),
+            sent_reasoning_effort=getattr(diagnostics, "sent_reasoning_effort", None),
+            observed_model=getattr(diagnostics, "observed_model", None),
+            observed_reasoning_effort=getattr(
+                diagnostics, "observed_reasoning_effort", None
+            ),
         )
         response = self._normalize_response(raw)
         if not response.text.strip():
