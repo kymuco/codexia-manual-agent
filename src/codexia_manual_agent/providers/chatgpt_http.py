@@ -67,14 +67,15 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                 raise ProviderError(
                     "ChatGPT HTTP client initialization failed; no message was sent"
                 ) from exc
-        # Supplying runtime= avoids ChatGPTWebProvider's browser-owned factory.
-        super().__init__(
-            auth_file=auth_file,
-            model=model.strip(),
-            reasoning_effort=reasoning_effort,
-            timeout=timeout,
-            runtime=client,
-        )
+        # Deliberately do NOT call the browser-owned provider constructor:
+        # its falsy-runtime fallback can instantiate a Chrome-backed transport.
+        # These are exactly the fields its inherited normalization/read methods use.
+        self.auth_file = str(Path(auth_file).expanduser())
+        self.model = model.strip()
+        self.reasoning_effort = reasoning_effort
+        self.timeout = float(timeout)
+        self._client = None
+        self._runtime = client
 
     @property
     def provider_id(self) -> str:
