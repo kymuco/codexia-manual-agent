@@ -23,6 +23,18 @@ $cwaRoot = "W:\dev\chatgpt-web-adapter"
 $env:PYTHONPATH = (Resolve-Path .\src).Path + ";" + (Resolve-Path "$cwaRoot\src").Path
 ~~~
 
+For the fastest one-command pilot, use one invocation with **two** separate
+interactive confirmations (EXECUTE then POST). The Work ID and local outcome
+are printed before posting, so you can inspect what is about to be uploaded:
+
+~~~powershell
+& $python -m tools.dw_chat_command_v0 run --conversation "<conversation-UUID>" --project hde-home --repo kymuco/hde-home --workspace W:\dev\hde\hde-home --auth-file "$cwaRoot\auth_data.json"
+~~~
+
+This is intentionally noninteractive at the process level: it does **not**
+yet work with the long-running Kaguya terminal. To inspect/approve each
+phase on separate commands, use the three-stage route below instead.
+
 Capture the latest assistant command. No execution or conversation POST:
 
 ~~~powershell
