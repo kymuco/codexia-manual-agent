@@ -247,7 +247,7 @@ def test_same_chat_result_post_readback_and_no_replay(tmp_path, monkeypatch) -> 
     sender = _PostClient(original)
     monkeypatch.setattr(
         "builtins.input",
-        lambda prompt: "POST " + prompt.rsplit(" ", 1)[1].split(":")[0],
+        lambda prompt: "POST " + prompt.strip().split()[2].rstrip(":"),
     )
     # Match the digest exactly, not the proposed text of the model.
     # The prompted token includes the exact first 12 SHA-256 hex characters.
