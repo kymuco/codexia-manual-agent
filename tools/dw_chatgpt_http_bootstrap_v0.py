@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 130
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - scrub secrets at CLI boundary
         reporter.finish_stream()
         # Do not render the exception message: it may contain product payloads.
         reporter.emit(
