@@ -128,10 +128,28 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                     "HTTP_PREFLIGHT_FAILED: Node 24+ required before claim"
                 )
 
-        if getattr(self._runtime, "curl_bin", None) == "":
-            raise ProviderUnavailableError(
-                "HTTP_PREFLIGHT_FAILED: curl unavailable before claim"
-            )
+        curl_bin = getattr(self._runtime, "curl_bin", None)
+        if curl_bin is not None:
+            if not isinstance(curl_bin, str) or not curl_bin.strip():
+                raise ProviderUnavailableError(
+                    "HTTP_PREFLIGHT_FAILED: curl unavailable before claim"
+                )
+            try:
+                process = subprocess.run(
+                    [curl_bin, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                raise ProviderUnavailableError(
+                    "HTTP_PREFLIGHT_FAILED: curl unavailable before claim"
+                ) from None
+            if process.returncode != 0 or not process.stdout.startswith("curl "):
+                raise ProviderUnavailableError(
+                    "HTTP_PREFLIGHT_FAILED: curl unavailable before claim"
+                )
 
         refresh = getattr(self._runtime, "refresh_auth", None)
         if not callable(refresh):
