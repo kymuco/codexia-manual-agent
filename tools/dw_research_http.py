@@ -177,7 +177,11 @@ def _execute(store, work_id: str, port, *, out: Path | None = None) -> dict:
         max_steps=8,
     )
     roles = project_role_runs(store.events(work_id))
-    if len(roles) == 4 and all(role.state is RoleRunState.COMPLETED for role in roles):
+    if (
+        surface.status(work_id)["work"]["state"] == "active"
+        and len(roles) == 4
+        and all(role.state is RoleRunState.COMPLETED for role in roles)
+    ):
         # Materialization is a normal deterministic Gen2 Work admission, not
         # a file write; only a complete four-role result reaches this branch.
         ResearchWorkMaterializer(store).materialize(work_id)
