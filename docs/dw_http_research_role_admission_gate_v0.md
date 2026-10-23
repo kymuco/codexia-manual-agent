@@ -75,8 +75,10 @@ provider dispatch receipt. Retrying the same REQUESTED Role is safe only
 while the exact Work chronology proves **no handoff exists**.
 
 An existing handoff is checked **before** the readiness hook, so restart
-cannot regenerate authorization or dispatch authority. A successful
-preflight is not proof of eventual POST success. An ambiguous error after
+cannot regenerate authorization or dispatch authority. After readiness,
+the bridge compares the exact Work revision and last-event digest to its
+precheck chronology; concurrent Work advancement fails closed without a
+handoff or POST. A successful preflight is not proof of eventual POST success. An ambiguous error after
 the handoff still forbids replay, including across process restarts.
 
 The gate does not add a provider-result claim index, retroactively admit
