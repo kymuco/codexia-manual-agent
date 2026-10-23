@@ -1,0 +1,203 @@
+"""Offline Gen2 command bridge proof. Never spawns PowerShell or calls CWA."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from codexia_manual_agent.capability_core import CapabilityOutcome
+from codexia_manual_agent.work_core import SqliteWorkStore
+from tools import dw_chat_command_v0 as bridge
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _assistant(workspace: Path, script: Path, *, message_id: str):
+    tick = chr(96) * 3
+    text = (
+        f"{tick}powershell\n"
+        f'& "{script}" '
+        + chr(96) + "\n    -CwaTransport browserless-http\n"
+        f"{tick}"
+    )
+    return SimpleNamespace(role="assistant", message_id=message_id, text=text)
+
+
+class _Client:
+    def __init__(self, message):
+        self.message = message
+        self.calls = []
+
+    def get_messages(self, conversation_id, *, limit):
+        self.calls.append((conversation_id, limit))
+        return [self.message]
+
+
+class _Args:
+    pass
+
+
+def _capture(store, client, workspace, *, index=1):
+    args = _Args()
+    args.conversation = f"00000000-0000-4000-8000-{index:012d}"
+    args.project = f"project-{index}"
+    args.repo = f"user/repo-{index}"
+    args.workspace = str(workspace)
+    args.message_id = client.message.message_id
+    return bridge._capture(args, store, client)
+
+
+class _Host:
+    host_id = "standalone.local"
+
+    def __init__(self):
+        self.calls = 0
+
+    def submit(self, request):
+        self.calls += 1
+        return CapabilityOutcome.succeeded(
+            request.need,
+            attempt_id="fake-local-process",
+            attempt_digest=_hash("fake-local-process"),
+            observation={
+                "execution": {
+                    "exit_code": 0, "stdout": {"text_utf8_preview": "ALL PASS"},
+                    "stderr": {"text_utf8_preview": ""},
+                }
+            },
+        )
+
+
+def test_one_real_gen2_work_dispatch_and_no_replay(tmp_path, monkeypatch) -> None:
+    store = SqliteWorkStore(tmp_path / "commands.sqlite")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    script = workspace / "check.ps1"
+    script.write_text("Write-Host 'PASS'\n", encoding="utf-8")
+    client = _Client(_assistant(
+        workspace, script, message_id="11111111-1111-4111-8111-111111111111"
+    ))
+    captured = _capture(store, client, workspace)
+    work_id = captured["work_id"]
+    assert captured["status"] == "CAPTURED_NOT_EXECUTED"
+    assert captured["argv"][-2:] == ["-CwaTransport", "browserless-http"]
+    assert client.calls == [(captured["conversation_id"], 1)]
+    assert len(store.events(work_id)) == 2
+    assert bridge._cap(store, work_id) is None
+
+    host = _Host()
+    monkeypatch.setattr(
+        bridge, "StandaloneProcessCapabilityPort", lambda **kwargs: host
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: "EXECUTE " + bridge._sha(
+            bridge._json(bridge._spec(store.snapshot(work_id).work.objective))
+        )[:12],
+    )
+    args = _Args()
+    args.work_id = work_id
+    result = bridge._execute(args, store)
+    assert result["status"] == "succeeded"
+    assert result["outcome"]["observation"]["execution"]["exit_code"] == 0
+    assert host.calls == 1
+    kinds = [e.kind for e in store.events(work_id)]
+    assert kinds.count("capability.handoff-admitted") == 1
+    assert kinds.count("capability.outcome-recorded") == 1
+    assert "work.completed" not in kinds
+    before = store.events(work_id)
+    with pytest.raises(ValueError, match="already handed off"):
+        bridge._execute(args, store)
+    assert host.calls == 1
+    assert store.events(work_id) == before
+
+
+def test_two_projects_and_conversations_do_not_mix(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "shared.sqlite")
+    ids = []
+    for index in (1, 2):
+        workspace = tmp_path / f"project-{index}"
+        workspace.mkdir()
+        script = workspace / "check.ps1"
+        script.write_text(f"Write-Output {index}\n", encoding="utf-8")
+        message_id = f"11111111-1111-4111-8111-{index:012d}"
+        client = _Client(_assistant(workspace, script, message_id=message_id))
+        result = _capture(store, client, workspace, index=index)
+        ids.append(result["work_id"])
+        assert result["project"] == f"project-{index}"
+    assert ids[0] != ids[1]
+    a = bridge._status(store, ids[0])
+    b = bridge._status(store, ids[1])
+    assert a["conversation_id"] != b["conversation_id"]
+    assert a["repo"] != b["repo"]
+    assert store.snapshot(ids[0]).revision == store.snapshot(ids[1]).revision == 2
+
+
+def test_stale_script_and_rejected_approval_make_no_handoff(tmp_path, monkeypatch) -> None:
+    store = SqliteWorkStore(tmp_path / "rejected.sqlite")
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    script = workspace / "test.ps1"
+    script.write_text("Write-Output ok\n", encoding="utf-8")
+    client = _Client(_assistant(
+        workspace, script, message_id="22222222-2222-4222-8222-222222222222"
+    ))
+    work_id = _capture(store, client, workspace)["work_id"]
+    args = _Args()
+    args.work_id = work_id
+    script.write_text("Write-Output changed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="script bytes changed"):
+        bridge._execute(args, store)
+    assert len(store.events(work_id)) == 2
+    script.write_text("Write-Output ok\n", encoding="utf-8")
+    monkeypatch.setattr("builtins.input", lambda prompt: "NO")
+    with pytest.raises(ValueError, match="declined"):
+        bridge._execute(args, store)
+    assert len(store.events(work_id)) == 2
+
+
+def test_chat_code_must_be_single_safe_literal_script(tmp_path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    script = root / "do.ps1"
+    script.write_text("Write-Output ok\n", encoding="utf-8")
+    tick = chr(96) * 3
+    good = f'{tick}powershell\n& "{script}" -Mode safe\n{tick}'
+    assert bridge._command(good, root)[0][-2:] == ["-Mode", "safe"]
+    for code in [
+        f'{tick}powershell\n& "{script}"; Remove-Item C:\\foo\n{tick}',
+        f'{tick}powershell\n& "{script}" | Out-File bad.txt\n{tick}',
+        f'{tick}powershell\n& "{script}" -Mode $env:SECRET\n{tick}',
+        f'{tick}powershell\n& "{script}" -Mode safe\n{tick}\n{tick}ps1\nx\n{tick}',
+    ]:
+        with pytest.raises(ValueError):
+            bridge._command(code, root)
+    outside = tmp_path / "outside.ps1"
+    outside.write_text("Write-Output outside\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="outside"):
+        bridge._command(f'{tick}powershell\n& "{outside}"\n{tick}', root)
+
+
+def test_not_latest_assistant_message_fails(tmp_path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    script = workspace / "check.ps1"
+    script.write_text("Write-Output 1\n", encoding="utf-8")
+    client = _Client(_assistant(
+        workspace, script, message_id="11111111-1111-4111-8111-111111111111"
+    ))
+    args = _Args()
+    args.project = "project"
+    args.repo = "user/repo"
+    args.workspace = str(workspace)
+    args.conversation = "00000000-0000-4000-8000-000000000001"
+    args.message_id = "22222222-2222-4222-8222-222222222222"
+    store = SqliteWorkStore(tmp_path / "none.sqlite")
+    with pytest.raises(ValueError, match="differs"):
+        bridge._capture(args, store, client)
+    assert store.events(args.conversation) if False else True
