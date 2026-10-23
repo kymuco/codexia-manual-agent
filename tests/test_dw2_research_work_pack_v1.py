@@ -563,6 +563,13 @@ def test_direct_http_provider_admits_research_role_cognition_not_work_completion
     class _FakeHTTP:
         def __init__(self) -> None:
             self.calls = []
+            self.auth_gets = []
+
+        def refresh_auth(self, *, persist):
+            self.auth_gets.append(persist)
+            return SimpleNamespace(
+                status_code=200, access_token_present=True, persisted=False
+            )
 
         def send(self, prompt, **kwargs):
             self.calls.append((prompt, kwargs))
@@ -594,6 +601,7 @@ def test_direct_http_provider_admits_research_role_cognition_not_work_completion
     assert progressed["progression"]["yield"]["kind"] == "attention"
     assert progressed["status"]["work"]["state"] == "active"
     assert len(http.calls) == 1
+    assert http.auth_gets == [False]
     prompt, kwargs = http.calls[0]
     assert "[Codexia product-runtime system context]" in prompt
     assert kwargs["model"] == "gpt-6"
@@ -623,6 +631,7 @@ def test_direct_http_provider_admits_research_role_cognition_not_work_completion
     )
     assert resumed["progression"]["yield"]["kind"] == "attention"
     assert len(http.calls) == 1
+    assert http.auth_gets == [False]
     assert reopened.events(work_id) == before
 
 
