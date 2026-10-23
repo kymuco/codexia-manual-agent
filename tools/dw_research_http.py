@@ -14,6 +14,7 @@ from pathlib import Path
 
 from codexia_manual_agent.artifact_core import project_artifact_refs
 from codexia_manual_agent.providers.chatgpt_http import ChatGPTHttpProvider
+from codexia_manual_agent.providers.chatgpt_http_progress import HttpProgressConsole
 from codexia_manual_agent.providers.model_provider_cognition import (
     ModelProviderCognitionPort,
 )
@@ -137,7 +138,7 @@ def _report(status: dict, *, progression: dict | None = None) -> dict:
         "state": work["state"],
         "yield": yield_data["kind"],
         "human_question": attention.get("question"),
-        "roles_total": len(status.get("unresolved", {}).get("roles", [])),
+        "unresolved_roles": status.get("unresolved", {}).get("roles_total", 0),
         "progression": progression["status"] if progression else None,
     }
 
@@ -226,11 +227,14 @@ def _http_port(args):
     _assert_cwa_source(Path(args.cwa_root))
     if not Path(args.auth_file).is_file():
         raise ValueError("auth file missing before any handoff")
+    reporter = HttpProgressConsole(stream_text=args.stream)
     provider = _VerifiedHTTPProvider(
         auth_file=args.auth_file,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
         timeout=240.0,
+        progress=reporter.emit,
+        on_token=reporter.token if args.stream else None,
     )
     return ModelProviderCognitionPort(provider)
 
@@ -242,6 +246,7 @@ def _parser() -> argparse.ArgumentParser:
 
     def send_options(p):
         p.add_argument("--send", action="store_true")
+        p.add_argument("--stream", action="store_true", help="Show model tokens in terminal")
         p.add_argument("--cwa-root")
         p.add_argument("--auth-file")
         p.add_argument("--model", default="gpt-6")
