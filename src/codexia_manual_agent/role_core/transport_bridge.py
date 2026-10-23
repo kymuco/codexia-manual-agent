@@ -108,6 +108,13 @@ class CognitionTransportBridge:
                 "CognitionRequest changed WorkflowRun binding"
             )
 
+        # Optional read-only transport readiness is checked only for a NEW
+        # handoff. Failure must not consume durable dispatch authority.
+        # An existing handoff returned above must never be retried.
+        readiness = getattr(port, "preflight_read_only", None)
+        if callable(readiness):
+            readiness()
+
         current = self._store.snapshot(request.work_id)
         handoff = CognitionHandoff.create(
             role=recovered,
