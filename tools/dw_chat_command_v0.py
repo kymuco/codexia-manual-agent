@@ -76,7 +76,7 @@ def _check_file(workspace: Path, script: Path, expected_hash: str | None = None)
 
 def _command(message: str, workspace: Path) -> tuple[list[str], str, str]:
     fence = re.escape(chr(96) * 3)
-    blocks = re.findall(fence + r"(?:powershell|ps1)\s*\n(.*?)\n" + fence, message, re.I | re.S)
+    blocks = re.findall(fence + r"(?:powershell|ps1)?[ \t]*\r?\n(.*?)\r?\n" + fence, message, re.I | re.S)
     if len(blocks) != 1:
         raise ValueError("exactly one fenced PowerShell script invocation required")
     body = re.sub(re.escape(chr(96)) + r"\s*\r?\n\s*", " ", blocks[0]).strip()
