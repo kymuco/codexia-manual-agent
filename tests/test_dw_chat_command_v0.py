@@ -326,7 +326,7 @@ def test_one_command_run_with_two_approvals(tmp_path, monkeypatch, capsys) -> No
     )
     monkeypatch.setattr(
         "builtins.input",
-        lambda prompt: prompt.strip().replace("Type ", "").rstrip(" to approve:")
+        lambda prompt: " ".join(prompt.strip().split()[1:3])
         if prompt.startswith("Type EXECUTE ")
         else "POST " + prompt.strip().split()[2].rstrip(":"),
     )
