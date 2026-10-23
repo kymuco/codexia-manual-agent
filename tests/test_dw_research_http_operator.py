@@ -52,6 +52,7 @@ class FakeHTTP:
             _output(STAGE_SYNTHESIS, "# Final useful report", synthesis=True),
         ]
         self.calls = 0
+        self.prompts = []
         self.auth_reads = 0
         self.reads = 0
         self.changed_readback = False
@@ -84,6 +85,7 @@ class FakeHTTP:
         )
 
     def send(self, prompt, **kwargs):
+        self.prompts.append(prompt)
         index = self.calls
         self.calls += 1
         assert kwargs["model"] == "gpt-6"
@@ -188,6 +190,81 @@ def test_verified_http_adapter_requires_exact_readback() -> None:
         provider.send(ProviderRequest(prompt="Different new step"))
     assert http.calls == 2
     assert http.reads == 2
+
+
+
+def test_malformed_role_output_is_preserved_and_exported_without_replay(
+    tmp_path: Path, capsys
+) -> None:
+    path = tmp_path / "malformed.sqlite"
+    store = SqliteWorkStore(path)
+    work_id = _start(store)
+    http = FakeHTTP()
+    raw = "# Useful software work analysis\n\nOne bounded patch is proposed."
+    http.turns[0] = raw
+    result = operator._execute(store, work_id, _port(http))
+
+    assert result["status"] == "INVALID_ROLE_OUTPUT_PRESERVED"
+    assert result["invalid_roles"][0]["stage"] == "initial"
+    assert result["invalid_roles"][0]["chars"] == len(raw)
+    assert "research role output is not valid JSON" in (
+        result["invalid_roles"][0]["validation_error"]
+    )
+    assert result["recovery"] == "export-role"
+    assert http.calls == 1
+    assert http.auth_reads == 1
+
+    before = store.events(work_id)
+    assert before[-1].kind == "role.completed"
+    roles = operator.project_role_runs(before)
+    assert len(roles) == 1
+    assert roles[0].output_text == raw
+
+    # No SEND even if the caller explicitly requests resume with --send.
+    rc = operator.main([
+        "--store", str(path), "resume", work_id, "--send",
+    ])
+    assert rc == 3
+    assert "INVALID_ROLE_OUTPUT_PRESERVED" in capsys.readouterr().out
+    assert store.events(work_id) == before
+
+    rc = operator.main(["--store", str(path), "status", work_id])
+    assert rc == 0
+    assert '"invalid_roles"' in capsys.readouterr().out
+
+    output = tmp_path / "recovered-report.md"
+    rc = operator.main([
+        "--store", str(path), "export-role", work_id,
+        "--stage", "initial", "--out", str(output),
+    ])
+    assert rc == 0
+    assert '"RAW_ROLE_EXPORT_ONLY"' in capsys.readouterr().out
+    assert output.read_bytes() == raw.encode("utf-8")
+    assert store.events(work_id) == before
+    with pytest.raises(FileExistsError):
+        operator._export_role(
+            store, work_id, stage="initial", destination=output
+        )
+
+
+def test_research_format_guidance_is_in_provider_prompt_not_role_binding(
+    tmp_path: Path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "schema.sqlite")
+    work_id = _start(store)
+    http = FakeHTTP()
+    operator._execute(store, work_id, operator._ResearchCognitionPort(
+        ChatGPTHttpProvider(client=http, model="gpt-6", reasoning_effort="high")
+    ))
+    assert len(http.prompts) == 4
+    assert "[Research output serialization; transport formatting only]" in (
+        http.prompts[0]
+    )
+    assert '"schema_version": 1' in http.prompts[0]
+    assert '"stage": "initial"' in http.prompts[0]
+    assert '"objective_coverage": null' in http.prompts[0]
+    assert '"stage": "synthesis"' in http.prompts[3]
+    assert '"material_unresolved_uncertainty": true' in http.prompts[3]
 
 
 def test_objective_snapshots_only_named_text_files(tmp_path: Path) -> None:
