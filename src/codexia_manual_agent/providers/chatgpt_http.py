@@ -122,7 +122,7 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
                 raise ProviderUnavailableError(
                     "HTTP_PREFLIGHT_FAILED: Node runtime unavailable before claim"
                 ) from None
-            version = re.fullmatch(r"v(\\d+)\\.\\d+\\.\\d+", process.stdout.strip())
+            version = re.fullmatch(r"v(\d+)\.\d+\.\d+", process.stdout.strip())
             if process.returncode != 0 or version is None or int(version.group(1)) < 24:
                 raise ProviderUnavailableError(
                     "HTTP_PREFLIGHT_FAILED: Node 24+ required before claim"
