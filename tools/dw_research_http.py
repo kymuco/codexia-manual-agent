@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from codexia_manual_agent.artifact_core import project_artifact_refs
+from codexia_manual_agent.domain.models import ProviderRequest
 from codexia_manual_agent.providers.chatgpt_http import ChatGPTHttpProvider
 from codexia_manual_agent.providers.chatgpt_http_progress import HttpProgressConsole
 from codexia_manual_agent.providers.model_provider_cognition import (
@@ -42,9 +43,13 @@ from codexia_manual_agent.workflow_runtime.research_v1 import (
     research_role_bindings,
     research_workflow_binding,
 )
+from codexia_manual_agent.workflow_runtime.boundary import (
+    WorkflowImplementationStateError,
+)
 
 PROVIDER_REF = "codexia:research-http-operator@0.1.0"
 MAX_OBJECTIVE_CHARS = 16_384
+_RESEARCH_STAGES = ("initial", "critique", "revision", "synthesis")
 
 
 class _ResearchProvider:
@@ -143,6 +148,58 @@ def _report(status: dict, *, progression: dict | None = None) -> dict:
     }
 
 
+def _invalid_role_outputs(store, work_id: str) -> list[dict]:
+    """Inspect completed roles without reading or rewriting external model history."""
+    role_stages = {
+        binding.role_id: stage
+        for binding, stage in zip(
+            research_role_bindings(), _RESEARCH_STAGES, strict=True
+        )
+    }
+    issues = []
+    for role in project_role_runs(store.events(work_id)):
+        if role.state is not RoleRunState.COMPLETED:
+            continue
+        stage = role_stages.get(role.run.binding.role_id)
+        if stage is None:
+            raise ValueError("Work contains a Role outside Research Pack")
+        if role.output_text is None:
+            raise ValueError("completed Research Role has no output")
+        try:
+            ResearchRoleOutput.parse(role.output_text, expected_stage=stage)
+        except (ValueError, TypeError) as exc:
+            issues.append({
+                "stage": stage,
+                "role_run_id": role.run.role_run_id,
+                "chars": len(role.output_text),
+                "validation_error": str(exc),
+            })
+    return issues
+
+
+def _export_role(store, work_id: str, *, stage: str, destination: Path) -> str:
+    """Export exact already-durable text, never treating it as approved research."""
+    if stage not in _RESEARCH_STAGES:
+        raise ValueError("invalid research stage")
+    status = StandaloneWorkSurface(store).status(work_id)
+    workflows = status["workflow"]
+    if len(workflows) != 1 or workflows[0]["pack"] != research_pack_binding().to_dict():
+        raise ValueError("Work is not bound to exact Research Work Pack")
+    expected = research_role_bindings()[_RESEARCH_STAGES.index(stage)]
+    matching = [
+        role for role in project_role_runs(store.events(work_id))
+        if role.run.binding == expected and role.state is RoleRunState.COMPLETED
+    ]
+    if len(matching) != 1 or matching[0].output_text is None:
+        raise ValueError("no exact completed Research Role output for this stage")
+    raw = matching[0].output_text
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("x", encoding="utf-8", newline="") as output:
+        output.write(raw)
+    return digest
+
+
 def _export(store, work_id: str, destination: Path) -> str:
     events = store.events(work_id)
     completed = [
@@ -170,12 +227,31 @@ def _export(store, work_id: str, destination: Path) -> str:
 
 def _execute(store, work_id: str, port, *, out: Path | None = None) -> dict:
     surface = StandaloneWorkSurface(store)
-    result = surface.advance(
-        work_id,
-        selector=_selector(),
-        host_factory=lambda: _host(store, work_id, cognition_port=port),
-        max_steps=8,
-    )
+    invalid = _invalid_role_outputs(store, work_id)
+    if invalid:
+        return {
+            "status": "INVALID_ROLE_OUTPUT_PRESERVED",
+            **_report(surface.status(work_id)),
+            "invalid_roles": invalid,
+            "recovery": "export-role",
+        }
+    try:
+        result = surface.advance(
+            work_id,
+            selector=_selector(),
+            host_factory=lambda: _host(store, work_id, cognition_port=port),
+            max_steps=8,
+        )
+    except WorkflowImplementationStateError:
+        invalid = _invalid_role_outputs(store, work_id)
+        if not invalid:
+            raise
+        return {
+            "status": "INVALID_ROLE_OUTPUT_PRESERVED",
+            **_report(surface.status(work_id)),
+            "invalid_roles": invalid,
+            "recovery": "export-role",
+        }
     roles = project_role_runs(store.events(work_id))
     if (
         surface.status(work_id)["work"]["state"] == "active"
@@ -223,6 +299,48 @@ class _VerifiedHTTPProvider(ChatGPTHttpProvider):
         return response
 
 
+class _ResearchCognitionPort(ModelProviderCognitionPort):
+    """Append serialization guidance without changing pinned Role instructions."""
+
+    @staticmethod
+    def _provider_request(request):
+        base = ModelProviderCognitionPort._provider_request(request)
+        context = json.loads(request.request.context)
+        if not isinstance(context, dict) or context.get("stage") not in _RESEARCH_STAGES:
+            raise ValueError("Research stage context is not exact")
+        stage = context["stage"]
+        example = {
+            "schema_version": 1,
+            "stage": stage,
+            "content": "Replace with your actual substantive analysis.",
+            "needs_human": False,
+            "human_question": None,
+            "human_reason": None,
+            "objective_coverage": False if stage == "synthesis" else None,
+            "evidence_sufficiency": False if stage == "synthesis" else None,
+            "material_unresolved_uncertainty": True if stage == "synthesis" else None,
+        }
+        instructions = (
+            (base.system or "")
+            + "\n\n[Research output serialization; transport formatting only]\n"
+            + "Return a single valid JSON object, without Markdown, code fences, "
+            + "prefixes or suffixes. Exactly these nine keys and types:\n"
+            + json.dumps(example, ensure_ascii=False)
+            + "\nReplace content with your substantive research. Do not copy the "
+            + "example analysis or default judgments. "
+            + "For needs_human=true, supply nonempty human_question and "
+            + "human_reason; otherwise both must be null. "
+            + "For initial/critique/revision, all three completion judgments "
+            + "must be null. For synthesis, use actual JSON booleans for the "
+            + "three judgments and mark any unsupported conclusion conservatively."
+        )
+        return ProviderRequest(
+            prompt=base.prompt,
+            system=instructions,
+            conversation=base.conversation,
+        )
+
+
 def _http_port(args):
     if not args.cwa_root or not args.auth_file:
         raise ValueError("--cwa-root and --auth-file are required for sending")
@@ -240,7 +358,7 @@ def _http_port(args):
         progress=reporter.emit,
         on_token=reporter.token if args.stream else None,
     )
-    return ModelProviderCognitionPort(provider)
+    return _ResearchCognitionPort(provider)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -272,6 +390,12 @@ def _parser() -> argparse.ArgumentParser:
     export = actions.add_parser("export", help="Write validated synthesis to a new Markdown file")
     export.add_argument("work_id")
     export.add_argument("--out", type=Path, required=True)
+    export_role = actions.add_parser(
+        "export-role", help="Export original completed Role text, including invalid JSON"
+    )
+    export_role.add_argument("work_id")
+    export_role.add_argument("--stage", choices=_RESEARCH_STAGES, default="initial")
+    export_role.add_argument("--out", type=Path, required=True)
     return parser
 
 
@@ -305,7 +429,10 @@ def main(argv: list[str] | None = None) -> int:
             surface = StandaloneWorkSurface(store)
             work_id = args.work_id
             if args.action == "status":
-                result = _report(surface.status(work_id))
+                result = {
+                    **_report(surface.status(work_id)),
+                    "invalid_roles": _invalid_role_outputs(store, work_id),
+                }
             elif args.action == "answer":
                 result = _report(
                     surface.answer(work_id, response_text=args.response)["status"]
@@ -316,9 +443,27 @@ def main(argv: list[str] | None = None) -> int:
                     "output": str(args.out),
                     "export_sha256": _export(store, work_id, args.out),
                 }
+            elif args.action == "export-role":
+                result = {
+                    "status": "RAW_ROLE_EXPORT_ONLY",
+                    "work_id": work_id,
+                    "stage": args.stage,
+                    "output": str(args.out),
+                    "raw_sha256": _export_role(
+                        store, work_id, stage=args.stage, destination=args.out
+                    ),
+                }
             else:
                 status = surface.status(work_id)
-                if status["yield"]["kind"] != "none" or status["work"]["state"] != "active":
+                invalid = _invalid_role_outputs(store, work_id)
+                if invalid:
+                    result = {
+                        "status": "INVALID_ROLE_OUTPUT_PRESERVED",
+                        **_report(status),
+                        "invalid_roles": invalid,
+                        "recovery": "export-role",
+                    }
+                elif status["yield"]["kind"] != "none" or status["work"]["state"] != "active":
                     result = _report(status)
                 elif not args.send:
                     result = {"status": "NO_SEND", **_report(status)}
@@ -328,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = _execute(store, work_id, port, out=args.out)
 
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return 3 if result.get("status") == "INVALID_ROLE_OUTPUT_PRESERVED" else 0
     except (KeyboardInterrupt, EOFError):
         print("Cancelled; inspect WorkStore before any retry.", file=sys.stderr)
         return 130
