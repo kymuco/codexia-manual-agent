@@ -200,4 +200,3 @@ def test_not_latest_assistant_message_fails(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "none.sqlite")
     with pytest.raises(ValueError, match="differs"):
         bridge._capture(args, store, client)
-    assert store.events(args.conversation) if False else True
