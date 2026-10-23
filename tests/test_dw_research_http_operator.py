@@ -193,6 +193,57 @@ def test_verified_http_adapter_requires_exact_readback() -> None:
 
 
 
+def test_escaped_chatgpt_json_recovers_initial_role_without_replay(
+    tmp_path: Path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "escaped-work.sqlite")
+    work_id = _start(store)
+    http = FakeHTTP()
+    original = "<escape>" + http.turns[0] + "</escape>"
+    http.turns[0] = original
+    port = _port(http)
+
+    # A real HTTP result may be wrapped in display-only DIL escape tags.
+    # The first completion stays exact; later roles use parsed semantics.
+    result = operator._execute(
+        store, work_id, port, out=tmp_path / "summary.md"
+    )
+    assert result["yield"] == "completion"
+    assert http.calls == 4
+    assert http.auth_reads == 4
+    assert operator._invalid_role_outputs(store, work_id) == []
+    roles = operator.project_role_runs(store.events(work_id))
+    assert len(roles) == 4
+    assert roles[0].output_text == original
+    assert (tmp_path / "summary.md").read_text(encoding="utf-8") == (
+        "# Final useful report"
+    )
+
+    # No manual replacement of the old role output or fifth send on restart.
+    before = store.events(work_id)
+    again = operator._execute(store, work_id, port)
+    assert again["yield"] == "completion"
+    assert http.calls == 4
+    assert store.events(work_id) == before
+
+
+def test_exact_escape_envelope_keeps_research_schema_strict() -> None:
+    valid = _output(STAGE_INITIAL, "Valid analysis")
+    wrapped = " <escape>" + valid + "</escape> \n"
+    assert ResearchRoleOutput.parse(
+        wrapped, expected_stage=STAGE_INITIAL
+    ).content == "Valid analysis"
+
+    for candidate in (
+        "leading text " + wrapped,
+        "<escape>" + valid + "</escape> trailing",
+        "<escape>{\"stage\": \"initial\"}</escape>",
+        "plain Markdown instead of JSON",
+    ):
+        with pytest.raises((ValueError, TypeError)):
+            ResearchRoleOutput.parse(candidate, expected_stage=STAGE_INITIAL)
+
+
 def test_malformed_role_output_is_preserved_and_exported_without_replay(
     tmp_path: Path, capsys
 ) -> None:
