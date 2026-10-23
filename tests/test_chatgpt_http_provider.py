@@ -18,6 +18,17 @@ class FakeHTTPClient:
         self.fail = False
         self.invalid_identity = False
         self.missing_ids = False
+        self.auth_refresh_calls = []
+        self.auth_refresh_error = None
+        self.auth_refresh_receipt = SimpleNamespace(
+            status_code=200, access_token_present=True, persisted=False
+        )
+
+    def refresh_auth(self, *, persist):
+        self.auth_refresh_calls.append(persist)
+        if self.auth_refresh_error is not None:
+            raise self.auth_refresh_error
+        return self.auth_refresh_receipt
 
     def send(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
@@ -65,6 +76,93 @@ class FakeHTTPClient:
                 finish_reason="stop",
             ),
         ]
+
+
+
+def test_http_preflight_auth_get_only_keeps_credentials_in_memory() -> None:
+    client = FakeHTTPClient()
+    provider = ChatGPTHttpProvider(client=client)
+    provider.preflight_read_only()
+    assert client.auth_refresh_calls == [False]
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        SimpleNamespace(status_code=401, access_token_present=False, persisted=False),
+        SimpleNamespace(status_code=200, access_token_present=False, persisted=False),
+        SimpleNamespace(status_code=200, access_token_present=True, persisted=True),
+        None,
+    ],
+)
+def test_http_preflight_rejects_unproved_or_persistent_auth(receipt) -> None:
+    client = FakeHTTPClient()
+    client.auth_refresh_receipt = receipt
+    provider = ChatGPTHttpProvider(client=client)
+    with pytest.raises(ProviderUnavailableError, match="HTTP_PREFLIGHT_FAILED"):
+        provider.preflight_read_only()
+    assert client.auth_refresh_calls == [False]
+    assert client.calls == []
+
+
+def test_http_preflight_auth_error_is_redacted_and_never_sends() -> None:
+    client = FakeHTTPClient()
+    client.auth_refresh_error = RuntimeError("401 token=PRIVATE_SECRET")
+    provider = ChatGPTHttpProvider(client=client)
+    with pytest.raises(ProviderUnavailableError, match="HTTP_PREFLIGHT_FAILED") as error:
+        provider.preflight_read_only()
+    assert "PRIVATE_SECRET" not in str(error.value)
+    assert client.calls == []
+
+
+def test_http_preflight_rejects_missing_refresh_capability() -> None:
+    class NoAuthGet:
+        def send(self, *_args, **_kwargs):
+            raise AssertionError("conversation POST is forbidden in preflight")
+
+    provider = ChatGPTHttpProvider(client=NoAuthGet())
+    with pytest.raises(ProviderUnavailableError, match="HTTP_PREFLIGHT_FAILED"):
+        provider.preflight_read_only()
+
+
+@pytest.mark.parametrize(
+    "node_version,ready",
+    [("v23.8.0", False), ("v24.0.0", True), ("v25.3.1", True), ("invalid", False)],
+)
+def test_http_preflight_checks_node_runtime_before_session_get(
+    monkeypatch, node_version, ready
+) -> None:
+    client = FakeHTTPClient()
+    client.node_bin = "node"
+    provider = ChatGPTHttpProvider(client=client)
+    checked = []
+
+    def fake_run(args, **kwargs):
+        checked.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=node_version + "\\n")
+
+    monkeypatch.setattr(
+        "codexia_manual_agent.providers.chatgpt_http.subprocess.run", fake_run
+    )
+    if ready:
+        provider.preflight_read_only()
+        assert client.auth_refresh_calls == [False]
+    else:
+        with pytest.raises(ProviderUnavailableError, match="Node 24"):
+            provider.preflight_read_only()
+        assert client.auth_refresh_calls == []
+    assert checked[0][0] == ["node", "--version"]
+    assert client.calls == []
+
+
+def test_http_preflight_fails_before_auth_get_if_curl_missing() -> None:
+    client = FakeHTTPClient()
+    client.curl_bin = ""
+    with pytest.raises(ProviderUnavailableError, match="curl unavailable"):
+        ChatGPTHttpProvider(client=client).preflight_read_only()
+    assert client.auth_refresh_calls == []
+    assert client.calls == []
 
 
 def test_http_send_preserves_system_as_visible_text_not_hidden_authority() -> None:
