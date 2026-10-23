@@ -140,7 +140,7 @@ def test_http_preflight_checks_node_runtime_before_session_get(
 
     def fake_run(args, **kwargs):
         checked.append((args, kwargs))
-        return SimpleNamespace(returncode=0, stdout=node_version + "\\n")
+        return SimpleNamespace(returncode=0, stdout=node_version + "\n")
 
     monkeypatch.setattr(
         "codexia_manual_agent.providers.chatgpt_http.subprocess.run", fake_run
