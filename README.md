@@ -153,6 +153,69 @@ real vertical
 
 Major integrations such as HDE or a Runplane-backed technical host are intentionally deferred until the standalone Gen2 product proof is complete.
 
+## Try Codexia on real Research Work (opt-in alpha)
+
+There is now an operator-facing command built on **existing Gen2 Work,
+Research Work Pack v1, and CWA Direct HTTP**. It handles up to four bounded
+research/critique/revision/synthesis model turns, returns for genuine human
+attention, and can materialize the resulting Markdown report. It does **not**
+edit a project, run tests, commit Git changes, or grant model-selected effects.
+
+On Windows, from a Codexia checkout containing
+`tools/dw_research_http.py`, using the existing CWA Python environment:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path .\src).Path + ";" + "W:\dev\chatgpt-web-adapter\src"
+$cwaPython = "W:\dev\chatgpt-web-adapter\.venv\Scripts\python.exe"
+$cwaRoot = "W:\dev\chatgpt-web-adapter"
+
+& $cwaPython -m tools.dw_research_http run `
+  "Review the project state and propose the next bounded improvement" `
+  --file docs\gen2_product_baseline.md `
+  --send --cwa-root $cwaRoot `
+  --auth-file W:\dev\chatgpt-web-adapter\auth_data.json `
+  --out .\artifacts\research-summary.md
+```
+
+The command prints a durable `WORK_ID` before any model dispatch. Typing
+`SEND` authorizes **up to four** model messages for that one Research Work;
+without `--send`, `run` only creates a local Work. Explicit Markdown/TXT
+files are embedded as *untrusted reference content* within the immutable
+Work objective (16,384-character total limit), kept in the local SQLite
+WorkStore, and sent to ChatGPT when you authorize the run. Choose files
+without secrets you do not want to send.
+
+If it yields `attention`, answer the displayed `human_question` and
+explicitly resume the **same** Work:
+
+```powershell
+& $cwaPython -m tools.dw_research_http answer <WORK_ID> "Prioritize reliability"
+& $cwaPython -m tools.dw_research_http resume <WORK_ID> `
+  --send --cwa-root $cwaRoot `
+  --auth-file W:\dev\chatgpt-web-adapter\auth_data.json `
+  --out .\artifacts\research-summary.md
+```
+
+Read-only status and explicit report export are also available:
+
+```powershell
+& $cwaPython -m tools.dw_research_http status <WORK_ID>
+& $cwaPython -m tools.dw_research_http export <WORK_ID> `
+  --out .\artifacts\summary-copy.md
+```
+
+Use `--store <sqlite-path>` **before** the subcommand for a custom local
+WorkStore. Output creation is explicit and will never overwrite an existing
+file. No HTTP POST is retried when a durable CognitionHandoff exists, even
+after a crash. The CLI requires exact canonical assistant-message readback
+before a successful cognition result can be admitted. Unknown outcomes
+remain unresolved under Issue #88; neither the readback nor the model's
+completion claim grants execution authority.
+
+This is the first useful **research/reporting workflow**, not yet the
+DW5 software-maintenance automation product. Local code editing, tests and
+Git changes continue to require their separate human-governed authority.
+
 ## Existing governed local execution surfaces
 
 The older local-runtime surfaces remain available for bounded, explicitly governed work.
