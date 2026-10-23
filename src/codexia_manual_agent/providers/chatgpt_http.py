@@ -8,6 +8,7 @@ holds no WorkStore, process execution authority or permission policy.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -97,6 +98,61 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
         # Distinct identity keeps pre-existing browser handoffs from being
         # redispatched under another transport after a restart.
         return "chatgpt-http"
+
+    def preflight_read_only(self) -> None:
+        """Verify the actual HTTP session before a Work dispatch claim.
+
+        CWA's refresh_auth(persist=False) performs an authenticated session GET
+        and updates the bearer in memory; it does not submit a conversation,
+        upload media or persist credentials. This is not a guarantee that a
+        subsequent protected conversation POST will succeed.
+        """
+
+        node_bin = getattr(self._runtime, "node_bin", None)
+        if node_bin is not None:
+            try:
+                process = subprocess.run(
+                    [str(node_bin), "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                raise ProviderUnavailableError(
+                    "HTTP_PREFLIGHT_FAILED: Node runtime unavailable before claim"
+                ) from None
+            version = re.fullmatch(r"v(\\d+)\\.\\d+\\.\\d+", process.stdout.strip())
+            if process.returncode != 0 or version is None or int(version.group(1)) < 24:
+                raise ProviderUnavailableError(
+                    "HTTP_PREFLIGHT_FAILED: Node 24+ required before claim"
+                )
+
+        if getattr(self._runtime, "curl_bin", None) == "":
+            raise ProviderUnavailableError(
+                "HTTP_PREFLIGHT_FAILED: curl unavailable before claim"
+            )
+
+        refresh = getattr(self._runtime, "refresh_auth", None)
+        if not callable(refresh):
+            raise ProviderUnavailableError(
+                "HTTP_PREFLIGHT_FAILED: CWA session GET unavailable before claim"
+            )
+        try:
+            receipt = refresh(persist=False)
+        except Exception:
+            # Auth or HTTP exceptions may contain sensitive response material.
+            raise ProviderUnavailableError(
+                "HTTP_PREFLIGHT_FAILED: ChatGPT session GET failed before claim"
+            ) from None
+        if (
+            getattr(receipt, "status_code", None) != 200
+            or getattr(receipt, "access_token_present", None) is not True
+            or getattr(receipt, "persisted", None) is not False
+        ):
+            raise ProviderUnavailableError(
+                "HTTP_PREFLIGHT_FAILED: invalid session receipt before claim"
+            )
 
     @staticmethod
     def _ambiguous_failure(exc: Exception) -> ProviderError:
