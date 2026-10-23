@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,6 +53,28 @@ class FakeHTTP:
         ]
         self.calls = 0
         self.auth_reads = 0
+        self.reads = 0
+        self.changed_readback = False
+
+    def get_messages(self, conversation_id, **kwargs):
+        self.reads += 1
+        index = int(conversation_id.split("-")[-1])
+        return [
+            SimpleNamespace(
+                node_id=f"n-{index}",
+                message_id=f"m-{index}",
+                role="assistant",
+                text=(
+                    "TAMPERED"
+                    if self.changed_readback
+                    else self.turns[index]
+                ),
+                create_time=None,
+                recipient="all",
+                model="gpt-6",
+                finish_reason="stop",
+            )
+        ]
 
     def refresh_auth(self, *, persist):
         assert persist is False
@@ -148,6 +169,25 @@ def test_human_attention_stops_and_resumes_without_replay(tmp_path: Path) -> Non
     assert final["yield"] == "completion"
     assert http.calls == 4
     assert http.auth_reads == 4
+
+
+def test_verified_http_adapter_requires_exact_readback() -> None:
+    from codexia_manual_agent.domain.models import ProviderRequest
+
+    http = FakeHTTP()
+    provider = operator._VerifiedHTTPProvider(
+        client=http, model="gpt-6", reasoning_effort="high"
+    )
+    result = provider.send(ProviderRequest(prompt="Research one step"))
+    assert result.text == http.turns[0]
+    assert http.calls == 1
+    assert http.reads == 1
+
+    http.changed_readback = True
+    with pytest.raises(ValueError, match="read-only ChatGPT history"):
+        provider.send(ProviderRequest(prompt="Different new step"))
+    assert http.calls == 2
+    assert http.reads == 2
 
 
 def test_objective_snapshots_only_named_text_files(tmp_path: Path) -> None:
