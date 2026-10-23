@@ -207,6 +207,17 @@ def _authorize() -> None:
         raise ValueError("cancelled before any HTTP send")
 
 
+class _VerifiedHTTPProvider(ChatGPTHttpProvider):
+    """Require exact canonical assistant readback before role admission."""
+
+    def send(self, request, *, media=None):
+        from tools.dw_chatgpt_http_bootstrap_v0 import _verify_canonical
+
+        response = super().send(request, media=media)
+        _verify_canonical(self, response)
+        return response
+
+
 def _http_port(args):
     if not args.cwa_root or not args.auth_file:
         raise ValueError("--cwa-root and --auth-file are required for sending")
@@ -215,7 +226,7 @@ def _http_port(args):
     _assert_cwa_source(Path(args.cwa_root))
     if not Path(args.auth_file).is_file():
         raise ValueError("auth file missing before any handoff")
-    provider = ChatGPTHttpProvider(
+    provider = _VerifiedHTTPProvider(
         auth_file=args.auth_file,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
