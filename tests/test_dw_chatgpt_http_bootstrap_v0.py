@@ -11,7 +11,7 @@ import pytest
 from codexia_manual_agent.providers.chatgpt_http_progress import HttpProgressConsole
 from codexia_manual_agent.work_core import SqliteWorkStore, Work, WorkIngressBinding
 from tools import dw_chatgpt_http_bootstrap_v0 as runner
-from tools.dw_chatgpt_bootstrap_v0 import CLAIM_KIND, CAPTURE_KIND, _claim_once
+from tools.dw_chatgpt_bootstrap_v0 import CAPTURE_KIND, CLAIM_KIND, _claim_once
 
 
 def case(tmp_path: Path):
@@ -109,15 +109,15 @@ def test_dry_run_does_not_send_or_modify_work(tmp_path) -> None:
 def test_gpt6_high_mode_is_pinned_before_http_write(tmp_path) -> None:
     store, status, file_path, reporter, _ = case(tmp_path)
     http = HTTP()
-    configured = dict(
-        status=status,
-        files=[str(file_path)],
-        store=store,
-        reporter=reporter,
-        client=http,
-        model="gpt-6",
-        reasoning_effort="high",
-    )
+    configured = {
+        "status": status,
+        "files": [str(file_path)],
+        "store": store,
+        "reporter": reporter,
+        "client": http,
+        "model": "gpt-6",
+        "reasoning_effort": "high",
+    }
     preview = runner.bootstrap_http_once(commit=False, **configured)
     assert preview["status"] == "DRY_RUN"
     assert preview["model"] == "gpt-6"
@@ -261,7 +261,7 @@ def test_canonical_mismatch_holds_durable_claim_and_no_capture(tmp_path) -> None
 
 
 def test_file_change_or_duplicate_name_rejected_before_claim(tmp_path) -> None:
-    store, status, file_path, reporter, progress = case(tmp_path)
+    store, status, file_path, _, _ = case(tmp_path)
     from tools.dw_chatgpt_bootstrap_v0 import _file_evidence
 
     evidence, _ = _file_evidence([str(file_path)])
@@ -284,7 +284,7 @@ def test_file_change_or_duplicate_name_rejected_before_claim(tmp_path) -> None:
 
 
 def test_previous_browser_claim_cannot_be_redispatched_over_http(tmp_path) -> None:
-    store, status, file_path, reporter, progress = case(tmp_path)
+    store, status, file_path, reporter, _ = case(tmp_path)
     _claim_once(
         store=store,
         work={
