@@ -200,3 +200,92 @@ def test_not_latest_assistant_message_fails(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "none.sqlite")
     with pytest.raises(ValueError, match="differs"):
         bridge._capture(args, store, client)
+
+
+def test_same_chat_result_post_readback_and_no_replay(tmp_path, monkeypatch) -> None:
+    store = SqliteWorkStore(tmp_path / "post.sqlite")
+    root = tmp_path / "project"
+    root.mkdir()
+    script = root / "check.ps1"
+    script.write_text("Write-Output 'PASS'\n", encoding="utf-8")
+    original = _assistant(
+        root, script, message_id="33333333-3333-4333-8333-333333333333"
+    )
+    client = _Client(original)
+    info = _capture(store, client, root)
+    work_id = info["work_id"]
+    fake = _Host()
+    monkeypatch.setattr(bridge, "StandaloneProcessCapabilityPort", lambda **k: fake)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: "EXECUTE " + bridge._sha(
+            bridge._json(bridge._spec(store.snapshot(work_id).work.objective))
+        )[:12],
+    )
+    args = _Args()
+    args.work_id = work_id
+    assert bridge._execute(args, store)["status"] == "succeeded"
+
+    class _PostClient(_Client):
+        def __init__(self, initial):
+            super().__init__(initial)
+            self.sends = []
+            self.response_id = "44444444-4444-4444-8444-444444444444"
+
+        def send(self, body, *, conversation, model):
+            self.sends.append((body, conversation, model))
+            self.message = SimpleNamespace(
+                role="assistant", message_id=self.response_id, text="Acknowledged PASS"
+            )
+            return SimpleNamespace(
+                text="Acknowledged PASS",
+                conversation=SimpleNamespace(
+                    conversation_id=conversation, message_id=self.response_id
+                ),
+            )
+
+    sender = _PostClient(original)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: "POST " + prompt.rsplit(" ", 1)[1].split(":")[0],
+    )
+    # Match the digest exactly, not the proposed text of the model.
+    # The prompted token includes the exact first 12 SHA-256 hex characters.
+    args.model = "gpt-6-instant"
+    result = bridge._post(args, store, sender)
+    assert result["status"] == "SAME_CHAT_READBACK_VERIFIED"
+    assert result["conversation_id"] == info["conversation_id"]
+    assert len(sender.sends) == 1
+    body, conv, model = sender.sends[0]
+    assert conv == info["conversation_id"]
+    assert model == "gpt-6-instant"
+    assert "ALL PASS" in body
+    assert "project-1" in body
+    assert bridge._status(store, work_id)["post_handoff"]
+    assert bridge._status(store, work_id)["post_readback"]
+
+    before = store.events(work_id)
+    with pytest.raises(ValueError, match="never POST twice"):
+        bridge._post(args, store, sender)
+    assert len(sender.sends) == 1
+    assert store.events(work_id) == before
+
+
+def test_post_chat_frontier_change_is_fail_closed(tmp_path) -> None:
+    store = SqliteWorkStore(tmp_path / "frontier.sqlite")
+    root = tmp_path / "project"
+    root.mkdir()
+    script = root / "check.ps1"
+    script.write_text("Write-Output 'PASS'\n", encoding="utf-8")
+    original = _assistant(
+        root, script, message_id="55555555-5555-4555-8555-555555555555"
+    )
+    info = _capture(store, _Client(original), root)
+    work_id = info["work_id"]
+    # No outcome is available yet: POST must fail even with a valid conversation.
+    args = _Args()
+    args.work_id = work_id
+    args.model = "gpt-6-instant"
+    with pytest.raises(ValueError, match="no terminal"):
+        bridge._post(args, store, _Client(original))
+    assert not bridge._status(store, work_id)["post_handoff"]
