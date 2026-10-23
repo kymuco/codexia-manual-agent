@@ -47,6 +47,20 @@ class ModelProviderCognitionPort:
     def provider_id(self) -> str:
         return self._provider_id
 
+    def preflight_read_only(self) -> None:
+        """Delegate optional provider readiness before a NEW cognition handoff.
+
+        No WorkStore or dispatch authority is exposed to the provider.
+        Providers without an explicit preflight retain the existing behavior.
+        """
+        if _provider_id(self._provider) != self._provider_id:
+            raise ModelProviderCognitionPortError(
+                "ModelProvider identity changed before cognition preflight"
+            )
+        readiness = getattr(self._provider, "preflight_read_only", None)
+        if callable(readiness):
+            readiness()
+
     def complete(self, request: CognitionPortRequest) -> CognitionOutcome:
         if not isinstance(request, CognitionPortRequest):
             raise TypeError("request must be CognitionPortRequest")

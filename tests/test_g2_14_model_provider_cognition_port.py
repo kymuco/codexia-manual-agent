@@ -26,6 +26,7 @@ from codexia_manual_agent.providers.model_provider_cognition import (
 from codexia_manual_agent.role_core import (
     CognitionRequest,
     CognitionTransportBridge,
+    CognitionTransportBridgeError,
     CognitionTransportPortError,
     ContextProjection,
     RoleAdmission,
@@ -298,6 +299,17 @@ def test_chatgpt_http_provider_composes_with_existing_gen2_handoff(tmp_path) -> 
     class _DirectHTTP:
         def __init__(self):
             self.calls = []
+            self.auth_gets = []
+
+        def refresh_auth(self, *, persist):
+            self.auth_gets.append(persist)
+            assert not any(
+                e.kind == "role.cognition-handoff-admitted"
+                for e in store.events(work.work_id)
+            )
+            return SimpleNamespace(
+                status_code=200, access_token_present=True, persisted=False
+            )
 
         def send(self, text, **kwargs):
             self.calls.append((text, kwargs))
@@ -321,9 +333,118 @@ def test_chatgpt_http_provider_composes_with_existing_gen2_handoff(tmp_path) -> 
     assert completed.output_text == "HTTP-only bounded answer"
     assert port.port_id == "model-provider:chatgpt-http"
     assert len(client.calls) == 1
+    assert client.auth_gets == [False]
     assert client.calls[0][1]["conversation"] is None
     assert client.calls[0][1]["temporary"] is False
     handoff = project_cognition_handoff(store.events(work.work_id), request.request_id)
     assert handoff.port_id == port.port_id
 
 
+
+
+def test_http_auth_preflight_failure_does_not_consume_cognition_handoff(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "preflight.sqlite")
+    work, _, request = _requested(store, source_id="preflight-retry-safe")
+
+    class _AuthGatedHTTP:
+        def __init__(self):
+            self.authorized = False
+            self.auth_gets = []
+            self.sends = 0
+
+        def refresh_auth(self, *, persist):
+            self.auth_gets.append(persist)
+            if not self.authorized:
+                raise RuntimeError("401 token=PRIVATE_SECRET")
+            return SimpleNamespace(
+                status_code=200, access_token_present=True, persisted=False
+            )
+
+        def send(self, prompt, **kwargs):
+            self.sends += 1
+            return SimpleNamespace(
+                text="Single safe response",
+                conversation=SimpleNamespace(
+                    conversation_id="http-c", message_id="http-m",
+                    parent_message_id="http-m", finish_reason="stop",
+                ),
+                request=None,
+                metrics=None,
+            )
+
+    http = _AuthGatedHTTP()
+    port = ModelProviderCognitionPort(ChatGPTHttpProvider(client=http))
+    bridge = CognitionTransportBridge(store)
+    before = store.events(work.work_id)
+
+    with pytest.raises(ProviderError, match="HTTP_PREFLIGHT_FAILED") as error:
+        bridge.dispatch_once(request, port)
+
+    assert "PRIVATE_SECRET" not in str(error.value)
+    assert store.events(work.work_id) == before
+    assert not any(
+        event.kind == "role.cognition-handoff-admitted"
+        for event in store.events(work.work_id)
+    )
+    assert http.sends == 0
+    assert http.auth_gets == [False]
+
+    # Only a proved pre-handoff failure may be tried again, with no prior POST.
+    http.authorized = True
+    recovered = bridge.dispatch_once(request, port)
+    assert recovered.state is RoleRunState.COMPLETED
+    assert recovered.output_text == "Single safe response"
+    assert http.sends == 1
+    assert http.auth_gets == [False, False]
+
+    # Existing handoff suppresses both readiness and redispatch on restart.
+    reopened = CognitionTransportBridge(SqliteWorkStore(store.path))
+    assert reopened.dispatch_once(request, port).state is RoleRunState.COMPLETED
+    assert http.sends == 1
+    assert http.auth_gets == [False, False]
+
+
+def test_http_preflight_concurrent_work_advance_fails_before_handoff(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "preflight-concurrent.sqlite")
+    work, _, request = _requested(store, source_id="preflight-concurrent")
+
+    class _ConcurrentHTTP:
+        def __init__(self):
+            self.sends = 0
+
+        def refresh_auth(self, *, persist):
+            current = store.snapshot(work.work_id)
+            store.append(
+                work.work_id,
+                expected_revision=current.revision,
+                event=current.next_event(
+                    kind="work.external-observation",
+                    payload={"origin": "concurrent"},
+                ),
+            )
+            return SimpleNamespace(
+                status_code=200, access_token_present=True, persisted=False
+            )
+
+        def send(self, prompt, **kwargs):
+            self.sends += 1
+            raise AssertionError("stale Work must never reach HTTP send")
+
+    http = _ConcurrentHTTP()
+    port = ModelProviderCognitionPort(ChatGPTHttpProvider(client=http))
+    before = store.events(work.work_id)
+
+    with pytest.raises(CognitionTransportBridgeError, match="frontier changed"):
+        CognitionTransportBridge(store).dispatch_once(request, port)
+
+    after = store.events(work.work_id)
+    assert len(after) == len(before) + 1  # external mutation only
+    assert after[-1].kind == "work.external-observation"
+    assert not any(
+        event.kind == "role.cognition-handoff-admitted" for event in after
+    )
+    assert http.sends == 0
