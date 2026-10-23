@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from codexia_manual_agent.pack_core import PackMemberBinding, PackMemberKind
 from codexia_manual_agent.role_core import (
     CognitionOutcome,
     RoleRunState,
@@ -253,8 +254,8 @@ def test_exact_source_preconditions_and_patch_limits(mutation) -> None:
     source = _source()
     raw = _proposal(source).to_dict()
     raw.update(mutation(source, raw))
-    candidate = SoftwarePatchProposal.parse(json.dumps(raw))
     with pytest.raises(ValueError):
+        candidate = SoftwarePatchProposal.parse(json.dumps(raw))
         candidate.review_diff(source)
 
 
@@ -285,12 +286,8 @@ def test_snapshot_digest_and_exact_schemas() -> None:
         )
     )
     assert software_pack_binding().contains(
-        __import__(
-            "codexia_manual_agent.pack_core", fromlist=["PackMemberBinding"]
-        ).PackMemberBinding.create(
-            kind=__import__(
-                "codexia_manual_agent.pack_core", fromlist=["PackMemberKind"]
-            ).PackMemberKind.ROLE,
+        PackMemberBinding.create(
+            kind=PackMemberKind.ROLE,
             semantic_id=software_role_binding().role_id,
             version=software_role_binding().version,
             binding_digest=software_role_binding().binding_digest,
