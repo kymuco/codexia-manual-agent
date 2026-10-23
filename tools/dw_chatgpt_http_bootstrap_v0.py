@@ -183,6 +183,15 @@ def bootstrap_http_once(
     if client is None or client.provider_id != "chatgpt-http":
         raise ValueError("explicit HTTP-only provider required before claim")
 
+    # Only an authenticated read-only CWA session GET is allowed here.
+    # A failed preflight must never consume a one-shot Work claim. HTTP send()
+    # itself has no automatic bearer refresh or retry permission.
+    try:
+        client.preflight_read_only()
+    except Exception:
+        reporter.emit("RESULT", {"status": "http_preflight_failed_no_claim"})
+        raise
+
     # Exactly the same durable CLAIM_KIND as the original browser pilot:
     # never re-dispatch an existing claimed or uncertain Work by switching transport.
     claimed = _claim_once(store=store, work=work, plan=plan)
