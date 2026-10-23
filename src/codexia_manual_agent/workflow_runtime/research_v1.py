@@ -207,6 +207,13 @@ class ResearchRoleOutput:
         *,
         expected_stage: str | None = None,
     ) -> ResearchRoleOutput:
+        # ChatGPT may wrap an otherwise exact JSON object in one display-only
+        # <escape> envelope. Interpret that envelope without altering the
+        # original durable RoleRun.output_text or relaxing the nine-key schema.
+        if isinstance(text, str):
+            stripped = text.strip()
+            if stripped.startswith("<escape>") and stripped.endswith("</escape>"):
+                text = stripped[len("<escape>") : -len("</escape>")]
         try:
             value = json.loads(text)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
