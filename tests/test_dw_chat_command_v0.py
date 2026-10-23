@@ -117,10 +117,10 @@ def test_one_real_gen2_work_dispatch_and_no_replay(tmp_path, monkeypatch) -> Non
     assert store.events(work_id) == before
 
 
-def test_two_projects_and_conversations_do_not_mix(tmp_path) -> None:
+def test_five_projects_and_conversations_do_not_mix(tmp_path) -> None:
     store = SqliteWorkStore(tmp_path / "shared.sqlite")
     ids = []
-    for index in (1, 2):
+    for index in range(1, 6):
         workspace = tmp_path / f"project-{index}"
         workspace.mkdir()
         script = workspace / "check.ps1"
@@ -130,12 +130,12 @@ def test_two_projects_and_conversations_do_not_mix(tmp_path) -> None:
         result = _capture(store, client, workspace, index=index)
         ids.append(result["work_id"])
         assert result["project"] == f"project-{index}"
-    assert ids[0] != ids[1]
-    a = bridge._status(store, ids[0])
-    b = bridge._status(store, ids[1])
-    assert a["conversation_id"] != b["conversation_id"]
-    assert a["repo"] != b["repo"]
-    assert store.snapshot(ids[0]).revision == store.snapshot(ids[1]).revision == 2
+    assert len(set(ids)) == 5
+    views = [bridge._status(store, item) for item in ids]
+    assert len({item["conversation_id"] for item in views}) == 5
+    assert len({item["repo"] for item in views}) == 5
+    assert all(item["revision"] == 2 for item in views)
+    assert all(item["outcome"] is None for item in views)
 
 
 def test_stale_script_and_rejected_approval_make_no_handoff(tmp_path, monkeypatch) -> None:
@@ -289,3 +289,56 @@ def test_post_chat_frontier_change_is_fail_closed(tmp_path) -> None:
     with pytest.raises(ValueError, match="no terminal"):
         bridge._post(args, store, _Client(original))
     assert not bridge._status(store, work_id)["post_handoff"]
+
+
+def test_one_command_run_with_two_approvals(tmp_path, monkeypatch, capsys) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    script = root / "test.ps1"
+    script.write_text("Write-Output ok\n", encoding="utf-8")
+    source = _assistant(
+        root, script, message_id="66666666-6666-4666-8666-666666666666"
+    )
+    class Sender(_Client):
+        def __init__(self, original):
+            super().__init__(original)
+            self.posts = []
+
+        def send(self, text, *, conversation, model):
+            self.posts.append((text, conversation, model))
+            self.message = SimpleNamespace(
+                role="assistant",
+                message_id="77777777-7777-4777-8777-777777777777",
+                text="Result accepted",
+            )
+            return SimpleNamespace(
+                text="Result accepted",
+                conversation=SimpleNamespace(
+                    conversation_id=conversation,
+                    message_id=self.message.message_id,
+                ),
+            )
+    client = Sender(source)
+    host = _Host()
+    monkeypatch.setattr(bridge, "_client", lambda auth: client)
+    monkeypatch.setattr(
+        bridge, "StandaloneProcessCapabilityPort", lambda **kwargs: host
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: prompt.strip().replace("Type ", "").rstrip(" to approve:")
+        if prompt.startswith("Type EXECUTE ")
+        else "POST " + prompt.strip().split()[2].rstrip(":"),
+    )
+    args = [
+        "--store", str(tmp_path / "pilot.sqlite"), "run",
+        "--conversation", "00000000-0000-4000-8000-000000000001",
+        "--project", "project-1", "--repo", "user/repo-1",
+        "--workspace", str(root), "--auth-file", "unused-test-auth.json",
+    ]
+    assert bridge.main(args) == 0
+    assert len(client.posts) == 1
+    assert host.calls == 1
+    output = capsys.readouterr().out
+    assert "CAPTURED_NOT_EXECUTED" in output
+    assert "SAME_CHAT_READBACK_VERIFIED" in output
