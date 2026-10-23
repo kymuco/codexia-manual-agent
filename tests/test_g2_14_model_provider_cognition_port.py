@@ -26,6 +26,7 @@ from codexia_manual_agent.providers.model_provider_cognition import (
 from codexia_manual_agent.role_core import (
     CognitionRequest,
     CognitionTransportBridge,
+    CognitionTransportBridgeError,
     CognitionTransportPortError,
     ContextProjection,
     RoleAdmission,
@@ -403,3 +404,47 @@ def test_http_auth_preflight_failure_does_not_consume_cognition_handoff(
     assert reopened.dispatch_once(request, port).state is RoleRunState.COMPLETED
     assert http.sends == 1
     assert http.auth_gets == [False, False]
+
+
+def test_http_preflight_concurrent_work_advance_fails_before_handoff(
+    tmp_path,
+) -> None:
+    store = SqliteWorkStore(tmp_path / "preflight-concurrent.sqlite")
+    work, _, request = _requested(store, source_id="preflight-concurrent")
+
+    class _ConcurrentHTTP:
+        def __init__(self):
+            self.sends = 0
+
+        def refresh_auth(self, *, persist):
+            current = store.snapshot(work.work_id)
+            store.append(
+                work.work_id,
+                expected_revision=current.revision,
+                event=current.next_event(
+                    kind="work.external-observation",
+                    payload={"origin": "concurrent"},
+                ),
+            )
+            return SimpleNamespace(
+                status_code=200, access_token_present=True, persisted=False
+            )
+
+        def send(self, prompt, **kwargs):
+            self.sends += 1
+            raise AssertionError("stale Work must never reach HTTP send")
+
+    http = _ConcurrentHTTP()
+    port = ModelProviderCognitionPort(ChatGPTHttpProvider(client=http))
+    before = store.events(work.work_id)
+
+    with pytest.raises(CognitionTransportBridgeError, match="frontier changed"):
+        CognitionTransportBridge(store).dispatch_once(request, port)
+
+    after = store.events(work.work_id)
+    assert len(after) == len(before) + 1  # external mutation only
+    assert after[-1].kind == "work.external-observation"
+    assert not any(
+        event.kind == "role.cognition-handoff-admitted" for event in after
+    )
+    assert http.sends == 0
