@@ -56,3 +56,28 @@ role outcome admission. Provider-neutral reconciliation and global deduplication
 remain governed by Issue #88. A future operator-authorized **new Work** may
 exercise the same Research Role route live after separate preclaim readiness,
 one-shot provider dispatch, and explicit review of the semantic result.
+
+
+## New HTTP pre-handoff readiness gate (follow-up)
+
+For a **new** `CognitionHandoff`, `CognitionTransportBridge.dispatch_once()`
+now calls the selected cognition port's *optional*
+`preflight_read_only()` hook immediately before constructing and persisting
+that handoff. The existing `ModelProviderCognitionPort` delegates the hook
+to the selected provider only if supported; other providers retain their
+previous behavior. For `ChatGPTHttpProvider`, the existing readiness check
+requires local Node/curl and CWA's authenticated
+`refresh_auth(persist=False)` session GET.
+
+If this check fails, it cannot create the handoff or send to the model.
+A `CognitionRequest` may already be durably admitted; that is **not** a
+provider dispatch receipt. Retrying the same REQUESTED Role is safe only
+while the exact Work chronology proves **no handoff exists**.
+
+An existing handoff is checked **before** the readiness hook, so restart
+cannot regenerate authorization or dispatch authority. A successful
+preflight is not proof of eventual POST success. An ambiguous error after
+the handoff still forbids replay, including across process restarts.
+
+The gate does not add a provider-result claim index, retroactively admit
+bootstrap capture, guarantee session longevity, or solve Issue #88.
