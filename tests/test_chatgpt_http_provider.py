@@ -156,6 +156,25 @@ def test_http_preflight_checks_node_runtime_before_session_get(
     assert client.calls == []
 
 
+def test_http_preflight_rejects_failing_curl_before_auth_get(monkeypatch) -> None:
+    client = FakeHTTPClient()
+    client.curl_bin = "curl.exe"
+    checked = []
+
+    def failing_run(args, **kwargs):
+        checked.append(args)
+        return SimpleNamespace(returncode=1, stdout="")
+
+    monkeypatch.setattr(
+        "codexia_manual_agent.providers.chatgpt_http.subprocess.run", failing_run
+    )
+    with pytest.raises(ProviderUnavailableError, match="curl unavailable"):
+        ChatGPTHttpProvider(client=client).preflight_read_only()
+    assert checked == [["curl.exe", "--version"]]
+    assert client.auth_refresh_calls == []
+    assert client.calls == []
+
+
 def test_http_preflight_fails_before_auth_get_if_curl_missing() -> None:
     client = FakeHTTPClient()
     client.curl_bin = ""
