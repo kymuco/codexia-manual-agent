@@ -31,6 +31,9 @@ from codexia_manual_agent.standalone_work import (
     StandaloneWorkSurface,
 )
 from codexia_manual_agent.work_core import SqliteWorkStore
+from codexia_manual_agent.workflow_runtime.boundary import (
+    WorkflowImplementationStateError,
+)
 from codexia_manual_agent.workflow_runtime.research_v1 import (
     RESEARCH_WORKFLOW_ID,
     RESEARCH_WORKFLOW_VERSION,
@@ -42,9 +45,6 @@ from codexia_manual_agent.workflow_runtime.research_v1 import (
     research_pack_binding,
     research_role_bindings,
     research_workflow_binding,
-)
-from codexia_manual_agent.workflow_runtime.boundary import (
-    WorkflowImplementationStateError,
 )
 
 PROVIDER_REF = "codexia:research-http-operator@0.1.0"
