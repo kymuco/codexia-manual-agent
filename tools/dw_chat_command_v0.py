@@ -455,6 +455,14 @@ def main(argv=None):
     capture.add_argument("--repo", required=True)
     capture.add_argument("--workspace", required=True)
     capture.add_argument("--auth-file", required=True)
+    run = sub.add_parser("run", help="Capture, approve once, then POST result")
+    run.add_argument("--conversation", required=True)
+    run.add_argument("--message-id")
+    run.add_argument("--project", required=True)
+    run.add_argument("--repo", required=True)
+    run.add_argument("--workspace", required=True)
+    run.add_argument("--auth-file", required=True)
+    run.add_argument("--model", default="gpt-6-instant")
     execute = sub.add_parser("execute")
     execute.add_argument("work_id")
     post = sub.add_parser("post")
@@ -466,10 +474,23 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         path = Path(args.store)
-        if args.action == "capture":
+        if args.action in {"capture", "run"}:
             path.parent.mkdir(parents=True, exist_ok=True)
         store = SqliteWorkStore(path)
-        if args.action == "capture":
+        if args.action == "run":
+            client = _client(args.auth_file)
+            captured = _capture(args, store, client)
+            print(json.dumps(captured, ensure_ascii=False, indent=2), flush=True)
+            bound_work_id = captured["work_id"]
+            command_result = _execute(
+                argparse.Namespace(work_id=bound_work_id), store
+            )
+            print(json.dumps(command_result, ensure_ascii=False, indent=2), flush=True)
+            result = _post(
+                argparse.Namespace(work_id=bound_work_id, model=args.model),
+                store, client,
+            )
+        elif args.action == "capture":
             result = _capture(args, store, _client(args.auth_file))
         elif args.action == "execute":
             result = _execute(args, store)
