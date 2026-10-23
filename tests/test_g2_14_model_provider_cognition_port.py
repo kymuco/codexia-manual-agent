@@ -383,9 +383,10 @@ def test_http_auth_preflight_failure_does_not_consume_cognition_handoff(
 
     assert "PRIVATE_SECRET" not in str(error.value)
     assert store.events(work.work_id) == before
-    assert project_cognition_handoff(
-        store.events(work.work_id), request.request_id
-    ) is None
+    assert not any(
+        event.kind == "role.cognition-handoff-admitted"
+        for event in store.events(work.work_id)
+    )
     assert http.sends == 0
     assert http.auth_gets == [False]
 
