@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from codexia_manual_agent.domain.errors import ProviderError, ProviderUnavailableError
 from codexia_manual_agent.domain.models import ProviderRequest, ProviderResponse
@@ -158,7 +159,7 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             )
         try:
             receipt = refresh(persist=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 - CWA auth exceptions must be redacted
             # Auth or HTTP exceptions may contain sensitive response material.
             raise ProviderUnavailableError(
                 "HTTP_PREFLIGHT_FAILED: ChatGPT session GET failed before claim"
@@ -191,8 +192,8 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             # Instrumentation has no right to cancel or replay a model write.
             try:
                 self._progress(stage, fields)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - reporting must not change send outcome
+                return
 
     def _callbacks(self, *, mode: str) -> dict[str, Any]:
         if self._progress is None and self._on_token is None:
@@ -213,9 +214,9 @@ class ChatGPTHttpProvider(ChatGPTWebProvider):
             if self._on_token is not None:
                 try:
                     self._on_token(text)
-                except Exception:
+                except Exception:  # noqa: BLE001 - optional callback cannot fail send
                     # Console errors must never induce another remote write.
-                    pass
+                    return
 
         return {"on_event": on_event, "on_token": on_token}
 
