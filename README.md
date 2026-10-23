@@ -213,6 +213,28 @@ before a successful cognition result can be admitted. Unknown outcomes
 remain unresolved under Issue #88; neither the readback nor the model's
 completion claim grants execution authority.
 
+If the first response was a **plain report instead of exact Research Role
+JSON**, Codexia preserves the original `role.completed` event and does not
+retry the admitted handoff. The operator now reports
+`INVALID_ROLE_OUTPUT_PRESERVED` and offers a read-only extraction of the
+exact original text:
+
+```powershell
+& $cwaPython -m tools.dw_research_http status $workId
+& $cwaPython -m tools.dw_research_http export-role $workId `
+  --stage initial --out .\artifacts\first-role-raw.md
+```
+
+`export-role` creates a **new** file (never overwrites) and prints the
+raw SHA-256. This is **not** a valid synthesis artifact, a repaired RoleRun,
+or WorkCompletion; it is a salvageable human-readable model response.
+Ordinary `resume --send` detects this state **before confirmation** and
+does not make another HTTP request. The operator also supplies the full
+nine-key JSON serialization schema to subsequent new Research Role prompts
+without modifying the pinned role/Pack semantics. These instructions
+improve compliance but cannot guarantee it; noncompliant outputs still fail
+closed and are exportable. Existing Work chronology is never rewritten.
+
 This is the first useful **research/reporting workflow**, not yet the
 DW5 software-maintenance automation product. Local code editing, tests and
 Git changes continue to require their separate human-governed authority.
