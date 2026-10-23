@@ -116,6 +116,14 @@ class CognitionTransportBridge:
             readiness()
 
         current = self._store.snapshot(request.work_id)
+        if (
+            current.revision != len(events)
+            or current.last_event_digest
+            != (events[-1].event_digest if events else None)
+        ):
+            raise CognitionTransportBridgeError(
+                "Work frontier changed before cognition handoff; no dispatch"
+            )
         handoff = CognitionHandoff.create(
             role=recovered,
             snapshot=current,
