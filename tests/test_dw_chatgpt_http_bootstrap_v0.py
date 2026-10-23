@@ -51,10 +51,19 @@ def case(tmp_path: Path):
 class HTTP:
     provider_id = "chatgpt-http"
 
-    def __init__(self, *, error=None, canonical="Right answer") -> None:
+    def __init__(
+        self, *, error=None, canonical="Right answer", preflight_error=None
+    ) -> None:
         self.calls = []
+        self.preflight_calls = 0
+        self.preflight_error = preflight_error
         self.error = error
         self.canonical = canonical
+
+    def preflight_read_only(self):
+        self.preflight_calls += 1
+        if self.preflight_error is not None:
+            raise self.preflight_error
 
     def send(self, request, *, media):
         self.calls.append((request, media))
@@ -154,6 +163,7 @@ def test_exact_frozen_file_bytes_and_capture_with_readback(tmp_path) -> None:
     )
     assert result["status"] == "CAPTURED_UNADMITTED"
     assert result["conversation_id"] == "conversation-1"
+    assert http.preflight_calls == 1
     assert len(http.calls) == 1
     sent_request, media = http.calls[0]
     assert "transport role is not human authorship" in sent_request.prompt
@@ -175,6 +185,47 @@ def test_exact_frozen_file_bytes_and_capture_with_readback(tmp_path) -> None:
             store=SqliteWorkStore(store.path), reporter=reporter,
             client=http, commit=True,
         )
+    assert len(http.calls) == 1
+
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("HTTP session timed out: token=PRIVATE"),
+        RuntimeError("401 token_expired: token=PRIVATE"),
+        OSError("HTTP session worker unavailable"),
+    ],
+)
+def test_http_preflight_failure_before_claim_is_not_a_send(tmp_path, error) -> None:
+    store, status, file_path, reporter, progress = case(tmp_path)
+    http = HTTP(preflight_error=error)
+    with pytest.raises(type(error)):
+        runner.bootstrap_http_once(
+            status=status, files=[str(file_path)], store=store,
+            reporter=reporter, client=http, commit=True,
+        )
+    assert http.preflight_calls == 1
+    assert http.calls == []
+    assert store.events(status["work"]["work_id"]) == ()
+    assert "http_preflight_failed_no_claim" in progress.getvalue()
+    assert "PRIVATE" not in progress.getvalue()
+
+
+def test_read_only_preflight_is_before_claim_not_before_dry_run(tmp_path) -> None:
+    store, status, file_path, reporter, _ = case(tmp_path)
+    http = HTTP()
+    runner.bootstrap_http_once(
+        status=status, files=[str(file_path)], store=store,
+        reporter=reporter, client=http, commit=False,
+    )
+    assert http.preflight_calls == 0
+    assert store.events(status["work"]["work_id"]) == ()
+    runner.bootstrap_http_once(
+        status=status, files=[str(file_path)], store=store,
+        reporter=reporter, client=http, commit=True,
+    )
+    assert http.preflight_calls == 1
     assert len(http.calls) == 1
 
 
