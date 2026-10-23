@@ -189,8 +189,9 @@ If it yields `attention`, answer the displayed `human_question` and
 explicitly resume the **same** Work:
 
 ```powershell
-& $cwaPython -m tools.dw_research_http answer <WORK_ID> "Prioritize reliability"
-& $cwaPython -m tools.dw_research_http resume <WORK_ID> `
+$workId = "<UUID printed as WORK_ID>"
+& $cwaPython -m tools.dw_research_http answer $workId "Prioritize reliability"
+& $cwaPython -m tools.dw_research_http resume $workId `
   --send --cwa-root $cwaRoot `
   --auth-file W:\dev\chatgpt-web-adapter\auth_data.json `
   --out .\artifacts\research-summary.md
@@ -199,8 +200,8 @@ explicitly resume the **same** Work:
 Read-only status and explicit report export are also available:
 
 ```powershell
-& $cwaPython -m tools.dw_research_http status <WORK_ID>
-& $cwaPython -m tools.dw_research_http export <WORK_ID> `
+& $cwaPython -m tools.dw_research_http status $workId
+& $cwaPython -m tools.dw_research_http export $workId `
   --out .\artifacts\summary-copy.md
 ```
 
