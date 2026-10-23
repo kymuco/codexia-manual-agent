@@ -6,9 +6,14 @@ import json
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 from codexia_manual_agent.completion_core import (
     project_admitted_completion_claim,
+)
+from codexia_manual_agent.providers.chatgpt_http import ChatGPTHttpProvider
+from codexia_manual_agent.providers.model_provider_cognition import (
+    ModelProviderCognitionPort,
 )
 from codexia_manual_agent.research_work import (
     ResearchContextMaterialPort,
@@ -18,6 +23,8 @@ from codexia_manual_agent.research_work import (
 from codexia_manual_agent.role_core import (
     CognitionOutcome,
     CognitionPortRequest,
+    RoleRunState,
+    project_cognition_handoff,
     project_role_runs,
 )
 from codexia_manual_agent.standalone_work import (
@@ -527,6 +534,96 @@ def test_incomplete_synthesis_cannot_reach_completion(tmp_path) -> None:
     )
     assert result["progression"]["status"] == "quiescent"
     assert result["status"]["yield"]["kind"] == "none"
+
+
+def test_direct_http_provider_admits_research_role_cognition_not_work_completion(
+    tmp_path,
+) -> None:
+    """The real Gen2 Research Pack uses HTTP as a port, never as Work authority."""
+
+    path = tmp_path / "http-role.sqlite"
+    store = SqliteWorkStore(path)
+    service = _PluginService()
+    surface = StandaloneWorkSurface(store)
+    started = surface.start(
+        objective="Review two bounded designs; ask a human before choosing.",
+        selector=_selector(),
+        host_factory=_activation_host(service),
+        source_id="dw-http-research-role",
+    )
+    work_id = started["work"]["work_id"]
+    role_text = _output(
+        STAGE_INITIAL,
+        "Two plausible designs; the choice requires the operator's priority.",
+        needs_human=True,
+        question="Prioritize simplicity or failure isolation?",
+        reason="The delegated objective does not decide the tradeoff.",
+    )
+
+    class _FakeHTTP:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def send(self, prompt, **kwargs):
+            self.calls.append((prompt, kwargs))
+            return SimpleNamespace(
+                text=role_text,
+                conversation=SimpleNamespace(
+                    conversation_id="http-research-conversation",
+                    message_id="http-research-message",
+                    parent_message_id="http-research-message",
+                    finish_reason="stop",
+                ),
+                request=None,
+                metrics=None,
+            )
+
+    http = _FakeHTTP()
+    port = ModelProviderCognitionPort(
+        ChatGPTHttpProvider(client=http, model="gpt-6", reasoning_effort="high")
+    )
+    progressed = surface.advance(
+        work_id,
+        selector=_selector(),
+        host_factory=_progress_host(
+            service=service, store=store, work_id=work_id, port=port
+        ),
+        max_steps=3,
+    )
+    assert progressed["progression"]["status"] == "yielded"
+    assert progressed["progression"]["yield"]["kind"] == "attention"
+    assert progressed["status"]["work"]["state"] == "active"
+    assert len(http.calls) == 1
+    prompt, kwargs = http.calls[0]
+    assert "[Codexia product-runtime system context]" in prompt
+    assert kwargs["model"] == "gpt-6"
+    assert kwargs["reasoning_effort"] == "high"
+    assert kwargs["temporary"] is False
+
+    events = store.events(work_id)
+    roles = project_role_runs(events)
+    assert len(roles) == 1
+    assert roles[0].state is RoleRunState.COMPLETED
+    assert roles[0].output_text == role_text
+    handoff = project_cognition_handoff(events, roles[0].request_id)
+    assert handoff.port_id == "model-provider:chatgpt-http"
+    assert any(event.kind == "role.completed" for event in events)
+    assert not any(event.kind == "work.completed" for event in events)
+
+    # An unanswered AttentionNeed must not cause another model call on restart.
+    reopened = SqliteWorkStore(path)
+    before = reopened.events(work_id)
+    resumed = StandaloneWorkSurface(reopened).advance(
+        work_id,
+        selector=_selector(),
+        host_factory=_progress_host(
+            service=service, store=reopened, work_id=work_id, port=port
+        ),
+        max_steps=3,
+    )
+    assert resumed["progression"]["yield"]["kind"] == "attention"
+    assert len(http.calls) == 1
+    assert reopened.events(work_id) == before
 
 
 def test_research_pack_has_no_hde_irr_or_scheduler_ownership() -> None:
