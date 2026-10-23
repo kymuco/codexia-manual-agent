@@ -66,6 +66,27 @@ state, not permission to retry; older claimed Work IDs must remain untouched.
 No Codexia Work was created and no external ChatGPT request was sent
 to prepare this code.
 
+### Pre-claim HTTP session gate
+
+For an explicitly confirmed `--commit`, Codexia now checks the selected CWA
+HTTP client's Node.js (24+) and curl executables using bounded local
+`--version` commands. It then requires CWA's
+`refresh_auth(persist=False)`: a session **GET** at
+`/api/auth/session` that updates the client's bearer in memory but does not
+persist credentials. Only an explicit status-200, token-present,
+not-persisted receipt permits the existing SQLite CAS `claimed.v0` event.
+
+Failure is reported as `HTTP_PREFLIGHT_FAILED` and must leave Work unclaimed:
+no conversation POST, no file upload and no browser-owned fallback.
+The dry-run remains offline and never performs this network gate.
+
+This is session evidence, **not** proof that the eventual conversation POST will
+succeed or that the short-lived server state cannot change between checks.
+Once claimed, any ambiguous POST/stream/readback outcome still forbids a retry.
+An operator can separately synchronize an expired `auth_data.json` through
+the existing CWA auth tools **before** trying a new Work. Codexia never
+implicitly launches a browser or performs browser auth sync.
+
 ### Running the new HTTP bootstrap
 
 Use `tools/dw_chatgpt_http_bootstrap_v0.py` **on a new, previously unclaimed
