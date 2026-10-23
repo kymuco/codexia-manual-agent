@@ -235,6 +235,16 @@ without modifying the pinned role/Pack semantics. These instructions
 improve compliance but cannot guarantee it; noncompliant outputs still fail
 closed and are exportable. Existing Work chronology is never rewritten.
 
+For some ChatGPT responses, the product renders a valid Research Role JSON
+as one outer `<escape>...</escape>` block. `ResearchRoleOutput.parse()` now
+accepts **only** that complete display envelope around an otherwise exact
+nine-key valid JSON object. The immutable `RoleRun.output_text` is not
+changed and `resume` on such a Work can continue from the next stage after
+a fresh explicit `SEND`, without replaying the already admitted handoff.
+Free-form Markdown, arbitrary HTML, multiple JSON objects, wrong stage,
+extra fields and unsupported schemas remain invalid and exportable with
+`export-role`. The wrapper does **not** grant effect authority.
+
 This is the first useful **research/reporting workflow**, not yet the
 DW5 software-maintenance automation product. Local code editing, tests and
 Git changes continue to require their separate human-governed authority.
