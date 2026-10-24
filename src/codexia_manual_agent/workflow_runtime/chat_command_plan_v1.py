@@ -144,7 +144,8 @@ class ChatCommandSource:
             "schema_version", "project", "repo", "conversation_id",
             "source_message_id", "source_text", "source_sha256", "workspace",
         })
-        if type(value.pop("schema_version")) is not int:
+        version = value.pop("schema_version")
+        if type(version) is not int or version != 1:
             raise ValueError("source schema must be exact integer 1")
         return cls(**value)
 
