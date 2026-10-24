@@ -59,6 +59,7 @@ class ExecuteProcessService:
         reason: str | None = None,
         limits: ProcessLimits | None = None,
         summary: str | None = None,
+        shell_profile: str | None = None,
     ) -> ProcessExecutionResult:
         mode = ApprovalMode(mode)
         proposal = prepare_process_proposal(
@@ -67,6 +68,7 @@ class ExecuteProcessService:
             cwd=cwd,
             limits=limits,
             summary=summary,
+            **({"shell_profile": shell_profile} if shell_profile is not None else {}),
         )
         receipt = self._authority.decide(
             proposal,

@@ -26,6 +26,7 @@ from codexia_manual_agent.standalone_host.process_capability import (
     PROCESS_OPERATION,
     STANDALONE_PROCESS_HOST_ID,
     StandaloneProcessCapabilityPort,
+    StandalonePowerShellCapabilityPort,
     StandaloneProcessHostError,
     translate_standalone_process_request,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "StandaloneProcessAttemptSnapshot",
     "StandaloneProcessAttemptState",
     "StandaloneProcessCapabilityPort",
+    "StandalonePowerShellCapabilityPort",
     "StandaloneProcessHostError",
     "StandaloneProcessRunnerOwnership",
     "StandaloneProcessRunnerOwnershipError",
