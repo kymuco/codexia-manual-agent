@@ -26,7 +26,7 @@ from codexia_manual_agent.domain.errors import (
     ProcessWorkspaceBoundaryError,
 )
 from codexia_manual_agent.execution import ProcessLimits, ProcessTerminationReason
-from codexia_manual_agent.execution.process import POWERSHELL_PROFILE
+from codexia_manual_agent.execution.process_contained import POWERSHELL_PROFILE
 
 STANDALONE_PROCESS_HOST_ID = "standalone.local"
 PROCESS_CAPABILITY_ID = "process"
