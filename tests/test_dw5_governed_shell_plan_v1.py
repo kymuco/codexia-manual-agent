@@ -11,7 +11,7 @@ import pytest
 from codexia_manual_agent.application.execute_process import ExecuteProcessService
 from codexia_manual_agent.capability_core import CapabilityOutcome
 from codexia_manual_agent.domain.errors import InvalidProcessSpecError
-from codexia_manual_agent.execution.process import (
+from codexia_manual_agent.execution.process_contained import (
     POWERSHELL_PROFILE, prepare_process_proposal,
 )
 from codexia_manual_agent.standalone_work import StandaloneWorkSurface
