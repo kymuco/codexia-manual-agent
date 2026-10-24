@@ -13,7 +13,7 @@ does not affect ChatGPT's existing GitHub plugin.
    `CommandPlan` with at most eight ordered steps.
 2. Create one immutable Gen2 Work scoped to project, repo, workspace, worker
    conversation, controller conversation, both assistant messages, plan digest.
-   A SQLite append-only, hash-chained Work chronology records every transition.
+   A SQLite append-only, hash-chained Work chronology records every transition; `inspect` prints exact per-event timestamps, event kinds, digests and payloads without spawning commands.
 3. Show the complete exact commands, their hashes, cwd and workspace. Require
    an explicit human `APPROVE <plan-digest>` for the bounded plan. This
    AttentionResponse is **not** process authority.
@@ -86,6 +86,7 @@ $workId = "<returned Work ID>"
 & $python -m tools.dw_codexia_shell_plan_v1 approve $workId
 & $python -m tools.dw_codexia_shell_plan_v1 run $workId --auth-file "$cwaRoot\auth_data.json"
 & $python -m tools.dw_codexia_shell_plan_v1 status $workId
+& $python -m tools.dw_codexia_shell_plan_v1 inspect $workId
 ```
 
 The terminal prints exact plan and command digests **before** any PowerShell
