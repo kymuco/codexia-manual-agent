@@ -265,7 +265,7 @@ def test_explicit_host_profile_executes_real_powershell_with_logs(tmp_path):
         shell_profile=POWERSHELL_PROFILE,
     )
     assert result.observation.started
-    assert result.observation.exit_code == 0, result.observation.to_dict()
+    assert result.observation.exit_code == 0, (result.observation.stderr.text_utf8, result.observation.stdout.text_utf8, result.observation.termination_reason)
     assert "DW5_REAL_POWERSHELL_PASS" in result.observation.stdout.text_utf8
     assert result.authorization.receipt_id
     assert result.observation.observation_digest
@@ -286,7 +286,7 @@ def test_explicit_host_profile_executes_real_powershell_with_logs(tmp_path):
         approved=True, actor="ci-human-approval-fixture",
         shell_profile=POWERSHELL_PROFILE,
     )
-    assert second.observation.exit_code == 0, second.observation.to_dict()
+    assert second.observation.exit_code == 0, (second.observation.stderr.text_utf8, second.observation.stdout.text_utf8, second.observation.termination_reason)
     assert (tmp_path / "pi-15.md").read_text(encoding="utf-8") == "DW5_HERE_STRING_PASS"
     assert second.authorization.receipt_id
     assert second.observation.observation_digest
