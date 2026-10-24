@@ -26,6 +26,7 @@ from codexia_manual_agent.domain.errors import (
     ProcessWorkspaceBoundaryError,
 )
 from codexia_manual_agent.execution import ProcessLimits, ProcessTerminationReason
+from codexia_manual_agent.execution.process import POWERSHELL_PROFILE
 
 STANDALONE_PROCESS_HOST_ID = "standalone.local"
 PROCESS_CAPABILITY_ID = "process"
@@ -202,6 +203,7 @@ class StandaloneProcessCapabilityPort:
         self._actor = actor
         self._reason = reason
         self._service = service or ExecuteProcessService()
+        self._shell_profile: str | None = None
 
     @property
     def binding(self) -> CapabilityBinding:
@@ -240,6 +242,7 @@ class StandaloneProcessCapabilityPort:
                 reason=self._reason,
                 limits=limits,
                 summary=f"Gen2 CapabilityNeed {need.need_id}",
+                shell_profile=self._shell_profile,
             )
         except (
             ApprovalRequiredError,
@@ -352,3 +355,39 @@ class StandaloneProcessCapabilityPort:
                 ),
             },
         }
+
+
+class StandalonePowerShellCapabilityPort(StandaloneProcessCapabilityPort):
+    """Explicit distinct host for one human-approved noninteractive shell step.
+
+    The standard StandaloneProcessCapabilityPort stays deny-by-default.
+    A controller may request this host, but approval is independently supplied
+    by a local person; model proposals never grant shell authority.
+    """
+
+    host_id = "standalone.local.powershell.v1"
+
+    def __init__(self, *, workspace: str | Path, binding: CapabilityBinding,
+                 approved: bool, actor: str = "local-human",
+                 reason: str | None = None,
+                 service: ExecuteProcessService | None = None) -> None:
+        super().__init__(
+            workspace=workspace, binding=binding, approved=approved,
+            actor=actor, reason=reason, service=service,
+        )
+        self._shell_profile = POWERSHELL_PROFILE
+
+    def _translate_request(
+        self, request: CapabilityHostRequest
+    ) -> tuple[list[str], str, ProcessLimits]:
+        argv, cwd, limits = super()._translate_request(request)
+        if (
+            len(argv) != 5
+            or argv[0].lower() not in ("powershell.exe", "powershell")
+            or argv[1:4] != ["-NoProfile", "-NonInteractive", "-Command"]
+            or not argv[4].strip() or len(argv[4]) > 12000
+        ):
+            raise StandaloneProcessHostError(
+                "PowerShell host requires an exact noninteractive -Command request"
+            )
+        return argv, cwd, limits
