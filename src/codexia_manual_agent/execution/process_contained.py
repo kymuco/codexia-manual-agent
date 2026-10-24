@@ -110,7 +110,17 @@ def _shell_argv(argv: Sequence[str]) -> None:
 def _environment(root: Path, shell_profile: str | None) -> dict[str, str]:
     environment = _base._minimal_environment()
     if shell_profile:
+        # WinPS initializes .NET and built-in module paths even under -NoProfile.
+        # Keep normal M2.1 processes on the original minimal environment.
         environment["PATH"] = _base._filtered_search_path(root)
+        for name in (
+            "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+            "APPDATA", "LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)",
+            "ProgramData", "PSModulePath", "TEMP", "TMP",
+        ):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
     return dict(sorted(environment.items()))
 
 
