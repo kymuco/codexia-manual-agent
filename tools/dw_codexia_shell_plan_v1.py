@@ -417,7 +417,7 @@ def main(argv=None):
     capture.add_argument("--worker-message-id")
     capture.add_argument("--codexia-message-id")
     capture.add_argument("--auth-file", required=True)
-    for name in ("review", "approve", "reject", "run", "post", "status"):
+    for name in ("review", "approve", "reject", "run", "post", "status", "inspect"):
         selected = sub.add_parser(name)
         selected.add_argument("work_id")
         if name in ("run", "post"):
@@ -441,6 +441,9 @@ def main(argv=None):
             result = _post(
                 store, args.work_id, _client(args.auth_file), args.model
             )
+        elif args.action == "inspect":
+            _decision(store, args.work_id)
+            result = StandaloneWorkSurface(store).inspect(args.work_id, limit=100)
         else:
             result = _status(store, args.work_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
