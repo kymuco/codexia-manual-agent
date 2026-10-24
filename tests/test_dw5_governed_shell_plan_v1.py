@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -91,8 +90,6 @@ class _Process:
     def submit(self, request):
         index = len(self.calls) + 1
         self.calls.append(request)
-        from codexia_manual_agent.workflow_runtime.controller_shell_execution_v1 import parameters
-
         assert request.need.need.to_dict()["parameters"]["argv"][:4] == [
             "powershell.exe", "-NoProfile", "-NonInteractive", "-Command"
         ]
@@ -246,7 +243,7 @@ def test_five_project_scope_isolation(tmp_path):
 
 
 def test_m2_1_default_shell_denial_unchanged(tmp_path):
-    with pytest.raises((InvalidProcessSpecError, Exception)) as caught:
+    with pytest.raises(Exception) as caught:
         prepare_process_proposal(
             workspace=tmp_path,
             argv=["powershell.exe", "-NoProfile", "-NonInteractive",
