@@ -270,6 +270,27 @@ def test_explicit_host_profile_executes_real_powershell_with_logs(tmp_path):
     assert result.authorization.receipt_id
     assert result.observation.observation_digest
 
+    # The operator's real requested shape: PowerShell here-string piped to Python.
+    # Verify effects stay in the explicitly selected workspace and are observable.
+    multiline = (
+        "@'\nfrom pathlib import Path\n"
+        "Path('pi-15.md').write_text('DW5_HERE_STRING_PASS', encoding='utf-8')\n"
+        "'@ | python -"
+    )
+    second = service.run(
+        workspace=tmp_path,
+        argv=[
+            "powershell.exe", "-NoProfile", "-NonInteractive",
+            "-Command", multiline,
+        ],
+        approved=True, actor="ci-human-approval-fixture",
+        shell_profile=POWERSHELL_PROFILE,
+    )
+    assert second.observation.exit_code == 0
+    assert (tmp_path / "pi-15.md").read_text(encoding="utf-8") == "DW5_HERE_STRING_PASS"
+    assert second.authorization.receipt_id
+    assert second.observation.observation_digest
+
 
 def test_unknown_shell_policy_or_noninteractive_shape_rejected(tmp_path):
     with pytest.raises(InvalidProcessSpecError, match="unknown shell"):
