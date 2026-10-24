@@ -151,7 +151,6 @@ def test_changed_worker_or_controller_head_fails_closed(tmp_path):
     )
     with pytest.raises(ValueError, match="different assistant message"):
         tool._capture(args, client, store)
-    assert not list(store.events(args.worker_message_id)) if False else True
 
     args, client = _args(1)
     client.pairs[args.codexia_conversation] = SimpleNamespace(
