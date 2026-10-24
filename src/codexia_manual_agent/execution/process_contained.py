@@ -40,6 +40,7 @@ from codexia_manual_agent.execution.windows_job import WindowsJobObject
 
 
 PROCESS_ACTION = _base.PROCESS_ACTION
+POWERSHELL_PROFILE = "powershell-explicit-noninteractive-v1"
 _BWRAP_PATH = Path("/usr/bin/bwrap")
 _TREE_SHUTDOWN_GRACE_SECONDS = 5.0
 _LINUX_STARTUP_MAX_SECONDS = 5.0
@@ -47,7 +48,10 @@ _EXEC_READY = b"READY"
 _EXEC_ERROR_PREFIX = b"ERROR "
 
 
-def _resolve_executable(command: str, root: Path, cwd: Path) -> Path:
+def _resolve_executable(
+    command: str, root: Path, cwd: Path, *,
+    powershell_profile: bool = False,
+) -> Path:
     """Resolve explicit relative paths from process cwd, like the OS does."""
 
     explicit = _base._is_explicit_executable(command)
@@ -79,10 +83,35 @@ def _resolve_executable(command: str, root: Path, cwd: Path) -> Path:
             f"Executable is not a regular file: {resolved}"
         )
     if resolved.name.lower() in _base._SHELL_INTERPRETERS:
-        raise InvalidProcessSpecError(
-            f"Shell interpreters are not admitted in M2.1: {resolved.name}"
-        )
+        if not (
+            powershell_profile
+            and os.name == "nt"
+            and resolved.name.lower() == "powershell.exe"
+        ):
+            raise InvalidProcessSpecError(
+                f"Shell interpreters are not admitted in M2.1: {resolved.name}"
+            )
     return resolved
+
+
+def _shell_argv(argv: Sequence[str]) -> None:
+    if (
+        len(argv) != 5
+        or argv[0].lower() not in ("powershell.exe", "powershell")
+        or list(argv[1:4]) != ["-NoProfile", "-NonInteractive", "-Command"]
+        or not argv[4].strip()
+        or len(argv[4]) > 12_000
+    ):
+        raise InvalidProcessSpecError(
+            "PowerShell profile requires exact noninteractive -Command"
+        )
+
+
+def _environment(root: Path, shell_profile: str | None) -> dict[str, str]:
+    environment = _base._minimal_environment()
+    if shell_profile:
+        environment["PATH"] = _base._filtered_search_path(root)
+    return dict(sorted(environment.items()))
 
 
 def prepare_process_proposal(
@@ -92,20 +121,29 @@ def prepare_process_proposal(
     cwd: str | Path = ".",
     limits: ProcessLimits | None = None,
     summary: str | None = None,
+    shell_profile: str | None = None,
 ) -> ActionProposal:
     root = _base._workspace_root(workspace)
     normalized_argv = _base._validate_argv(argv)
     resolved_cwd, cwd_relative = _base._resolve_cwd(root, cwd)
-    executable = _resolve_executable(normalized_argv[0], root, resolved_cwd)
+    if shell_profile not in (None, POWERSHELL_PROFILE):
+        raise InvalidProcessSpecError("unknown shell execution profile")
+    if shell_profile is not None:
+        _shell_argv(normalized_argv)
+    executable = _resolve_executable(
+        normalized_argv[0], root, resolved_cwd,
+        powershell_profile=shell_profile is not None,
+    )
     executable_size, executable_sha256 = _base._file_identity(executable)
     process_limits = limits or ProcessLimits()
-    environment = _base._minimal_environment()
+    environment = _environment(root, shell_profile)
 
     return ActionProposal.create(
         capability=Capability.EXECUTE_PROCESS,
         action=PROCESS_ACTION,
         workspace_root=str(root),
         parameters={
+            **({"shell_profile": shell_profile} if shell_profile else {}),
             "argv": list(normalized_argv),
             "resolved_executable": str(executable),
             "executable_size": executable_size,
@@ -136,6 +174,11 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
         "environment",
         "limits",
     }
+    profile = params.get("shell_profile")
+    if profile is not None:
+        if profile != POWERSHELL_PROFILE:
+            raise InvalidProcessSpecError("unknown explicit PowerShell profile")
+        expected_keys.add("shell_profile")
     if set(params) != expected_keys:
         raise InvalidProcessSpecError("Process proposal parameters do not match M2.1 schema")
 
@@ -144,6 +187,8 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
         raise ProcessWorkspaceBoundaryError("Proposal workspace root is not canonical")
 
     argv = _base._validate_argv(params["argv"])
+    if profile is not None:
+        _shell_argv(argv)
     cwd, cwd_relative = _base._resolve_cwd(root, params["cwd"])
     if cwd_relative != params["cwd"]:
         raise ProcessWorkspaceBoundaryError("Proposal cwd is not canonical")
@@ -156,7 +201,7 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
         for key, value in environment.items()
     ):
         raise InvalidProcessSpecError("Process environment must be a string mapping")
-    if environment != _base._minimal_environment():
+    if environment != _environment(root, profile):
         raise InvalidProcessSpecError(
             "Process environment differs from the local minimal environment profile"
         )
@@ -173,7 +218,9 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
 
     if type(params["resolved_executable"]) is not str:
         raise InvalidProcessSpecError("resolved_executable must be a string")
-    freshly_resolved = _resolve_executable(argv[0], root, cwd)
+    freshly_resolved = _resolve_executable(
+        argv[0], root, cwd, powershell_profile=profile is not None
+    )
     try:
         recorded_executable = Path(params["resolved_executable"]).resolve(strict=True)
     except OSError as exc:
