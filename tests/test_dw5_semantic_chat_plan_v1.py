@@ -35,7 +35,7 @@ def _reply():
     )
 
 
-def _source(index=1, root="/work/project"):
+def _source(index=1, root="W:\\dev\\project"):
     text = _reply()
     return ChatCommandSource(
         project=f"project-{index}",
