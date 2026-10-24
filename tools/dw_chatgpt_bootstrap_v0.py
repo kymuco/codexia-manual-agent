@@ -203,7 +203,8 @@ def bootstrap_once(
     # This SQLite CAS is deliberately after CWA initialization, but before the
     # remote effect. A failed or ambiguous send must not be replayed.
     claimed = _claim_once(store=store, work=work, plan=plan)
-    execution = runtime.send_text_observed(prompt, media=media)
+    # Match the live-proven public CWA SDK rich-input E2E budget (PR #211).
+    execution = runtime.send_text_observed(prompt, media=media, timeout=240.0)
     # A failed capture still leaves CLAIM_KIND durably visible. An already
     # completed response may be recovered later, but never resent here.
     return _capture_response(store=store, claimed=claimed, execution=execution)
