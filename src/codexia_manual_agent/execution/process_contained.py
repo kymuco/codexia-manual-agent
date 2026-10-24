@@ -132,7 +132,7 @@ def prepare_process_proposal(
         _shell_argv(normalized_argv)
     executable = _resolve_executable(
         normalized_argv[0], root, resolved_cwd,
-        powershell_profile=shell_profile is not None,
+        **({"powershell_profile": True} if shell_profile else {}),
     )
     executable_size, executable_sha256 = _base._file_identity(executable)
     process_limits = limits or ProcessLimits()
@@ -219,7 +219,8 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
     if type(params["resolved_executable"]) is not str:
         raise InvalidProcessSpecError("resolved_executable must be a string")
     freshly_resolved = _resolve_executable(
-        argv[0], root, cwd, powershell_profile=profile is not None
+        argv[0], root, cwd,
+        **({"powershell_profile": True} if profile else {}),
     )
     try:
         recorded_executable = Path(params["resolved_executable"]).resolve(strict=True)
