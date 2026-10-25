@@ -112,7 +112,29 @@ def _environment(root: Path, shell_profile: str | None) -> dict[str, str]:
     if shell_profile:
         # WinPS initializes .NET and built-in module paths even under -NoProfile.
         # Keep normal M2.1 processes on the original minimal environment.
-        environment["PATH"] = _base._filtered_search_path(root)
+        # The controller may run from an explicit venv/python.exe path even
+        # when its Scripts directory is absent from the host PATH. Bind the
+        # opt-in shell to that same interpreter so literal approved commands
+        # like "@' ... '@ | python -" work without rewriting their text.
+        interpreter = Path(sys.executable)
+        if (
+            not interpreter.is_absolute()
+            or interpreter.name.lower() != "python.exe"
+            or not interpreter.is_file()
+        ):
+            raise InvalidProcessSpecError(
+                "PowerShell profile requires Codexia to run with python.exe"
+            )
+        python_dir = interpreter.parent.resolve(strict=True)
+        filtered_path = _base._filtered_search_path(root)
+        environment["PATH"] = os.pathsep.join(
+            part for part in (str(python_dir), filtered_path) if part
+        )
+        if os.name == "nt":
+            # Windows PowerShell resolves a bare `python` using PATHEXT.
+            # Keep command discovery narrow; never inherit arbitrary executable
+            # extension mappings into this explicit shell capability.
+            environment["PATHEXT"] = ".EXE"
         for name in (
             "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
             "APPDATA", "LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)",
