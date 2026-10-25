@@ -107,6 +107,29 @@ def _shell_argv(argv: Sequence[str]) -> None:
         )
 
 
+def _shell_python(root: Path, *, windows: bool | None = None) -> Path:
+    """Prefer the checked project venv, never a random Python from PATH.
+
+    This executable is bound by size and SHA-256 in the process proposal.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    if windows and (root / ".venv").exists():
+        candidate = root / ".venv" / "Scripts" / "python.exe"
+        if candidate.is_symlink() or not candidate.is_file():
+            raise InvalidProcessSpecError("project .venv has no regular Windows python.exe")
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_relative_to(root.resolve(strict=True)):
+            raise InvalidProcessSpecError("project Python escapes the workspace")
+        return resolved
+    interpreter = Path(sys.executable)
+    if not interpreter.is_absolute() or not interpreter.is_file():
+        raise InvalidProcessSpecError("Codexia Python executable cannot be resolved")
+    if windows and interpreter.name.lower() != "python.exe":
+        raise InvalidProcessSpecError("PowerShell requires a python.exe runtime")
+    return interpreter.resolve(strict=True)
+
+
 def _environment(root: Path, shell_profile: str | None) -> dict[str, str]:
     environment = _base._minimal_environment()
     if shell_profile:
@@ -116,16 +139,7 @@ def _environment(root: Path, shell_profile: str | None) -> dict[str, str]:
         # when its Scripts directory is absent from the host PATH. Bind the
         # opt-in shell to that same interpreter so literal approved commands
         # like "@' ... '@ | python -" work without rewriting their text.
-        interpreter = Path(sys.executable)
-        if (
-            not interpreter.is_absolute()
-            or interpreter.name.lower() != "python.exe"
-            or not interpreter.is_file()
-        ):
-            raise InvalidProcessSpecError(
-                "PowerShell profile requires Codexia to run with python.exe"
-            )
-        python_dir = interpreter.parent.resolve(strict=True)
+        python_dir = _shell_python(root).parent
         filtered_path = _base._filtered_search_path(root)
         environment["PATH"] = os.pathsep.join(
             part for part in (str(python_dir), filtered_path) if part
@@ -169,6 +183,10 @@ def prepare_process_proposal(
     executable_size, executable_sha256 = _base._file_identity(executable)
     process_limits = limits or ProcessLimits()
     environment = _environment(root, shell_profile)
+    shell_python = _shell_python(root) if shell_profile else None
+    shell_python_identity = (
+        _base._file_identity(shell_python) if shell_python is not None else None
+    )
 
     return ActionProposal.create(
         capability=Capability.EXECUTE_PROCESS,
@@ -176,6 +194,11 @@ def prepare_process_proposal(
         workspace_root=str(root),
         parameters={
             **({"shell_profile": shell_profile} if shell_profile else {}),
+            **({
+                "shell_python": str(shell_python),
+                "shell_python_size": shell_python_identity[0],
+                "shell_python_sha256": shell_python_identity[1],
+            } if shell_python is not None else {}),
             "argv": list(normalized_argv),
             "resolved_executable": str(executable),
             "executable_size": executable_size,
@@ -210,7 +233,10 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
     if profile is not None:
         if profile != POWERSHELL_PROFILE:
             raise InvalidProcessSpecError("unknown explicit PowerShell profile")
-        expected_keys.add("shell_profile")
+        expected_keys.update((
+            "shell_profile", "shell_python", "shell_python_size",
+            "shell_python_sha256",
+        ))
     if set(params) != expected_keys:
         raise InvalidProcessSpecError("Process proposal parameters do not match M2.1 schema")
 
@@ -237,6 +263,20 @@ def _validate_process_proposal(proposal: ActionProposal) -> _base._ValidatedPlan
         raise InvalidProcessSpecError(
             "Process environment differs from the local minimal environment profile"
         )
+    if profile is not None:
+        expected_python = _shell_python(root)
+        if (
+            type(params["shell_python"]) is not str
+            or type(params["shell_python_size"]) is not int
+            or type(params["shell_python_sha256"]) is not str
+            or params["shell_python"] != str(expected_python)
+        ):
+            raise InvalidProcessSpecError("project Python binding differs")
+        py_size, py_digest = _base._file_identity(expected_python)
+        if (py_size, py_digest) != (
+            params["shell_python_size"], params["shell_python_sha256"]
+        ):
+            raise ProcessExecutableChangedError("project Python bytes changed after approval")
 
     limits_data = params["limits"]
     if not isinstance(limits_data, dict):
@@ -546,6 +586,7 @@ class ProcessExecutor:
         lifecycle: ActionLifecycle,
         *,
         authority: LocalApprovalAuthority,
+        stdin_bytes: bytes | None = None,
     ) -> ProcessExecutionObservation:
         if lifecycle.phase is not ActionPhase.AUTHORIZED:
             raise InvalidActionTransitionError(
@@ -555,6 +596,18 @@ class ProcessExecutor:
             raise InvalidActionTransitionError("Authorized process has no receipt")
 
         plan = _validate_process_proposal(lifecycle.proposal)
+        if stdin_bytes is not None:
+            profile = lifecycle.proposal.to_dict()["parameters"].get("shell_profile")
+            if (
+                os.name != "nt"
+                or profile != POWERSHELL_PROFILE
+                or type(stdin_bytes) is not bytes
+                or not 0 < len(stdin_bytes) <= 8192
+                or not stdin_bytes.endswith(b"\n")
+            ):
+                raise InvalidProcessSpecError(
+                    "bounded stdin is allowed only for the explicit Windows PowerShell profile"
+                )
         if os.name != "nt" and not sys.platform.startswith("linux"):
             raise ProcessExecutionError(
                 "M2.1 descendant-tree containment is supported only on Linux and Windows"
@@ -600,7 +653,7 @@ class ProcessExecutor:
                         list(actual_argv),
                         cwd=str(plan.cwd),
                         env=plan.environment,
-                        stdin=subprocess.DEVNULL,
+                        stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         shell=False,
@@ -613,6 +666,18 @@ class ProcessExecutor:
                     windows_job.resume(process.pid)
                     target_started = True
                     observed_pid = process.pid
+                    if stdin_bytes is not None:
+                        if process.stdin is None:  # pragma: no cover
+                            raise ProcessExecutionError("PowerShell input pipe is missing")
+                        try:
+                            process.stdin.write(stdin_bytes)
+                            process.stdin.flush()
+                        except BrokenPipeError:
+                            # The child may already have exited. Preserve its
+                            # exit status instead of replaying the input.
+                            pass
+                        finally:
+                            process.stdin.close()
                 except OSError as exc:
                     if process is not None:
                         if windows_assigned:
@@ -837,7 +902,7 @@ class ProcessExecutor:
                     except OSError:
                         pass
             if process is not None:
-                for stream in (process.stdout, process.stderr):
+                for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:
                         try:
                             stream.close()

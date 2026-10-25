@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from getpass import getpass
 from pathlib import Path
 
 from codexia_manual_agent.capability_core import (
@@ -17,6 +18,10 @@ from codexia_manual_agent.capability_core import (
     project_capability_needs,
 )
 from codexia_manual_agent.standalone_host import StandalonePowerShellCapabilityPort
+from codexia_manual_agent.execution.powershell_read_host import read_host_request, stdin_for_answer
+from codexia_manual_agent.execution.powershell_input_resolution_v1 import (
+    ProjectInputStore, sensitive_input,
+)
 from codexia_manual_agent.standalone_work import (
     StandaloneWorkHost, StandaloneWorkSelector, StandaloneWorkSurface,
 )
@@ -89,6 +94,10 @@ def _caps(store, work_id):
 
 
 def _capture(args, client, store):
+    if not args.worker_conversation or not args.codexia_conversation:
+        from tools.dw_codexia_project_bootstrap_v1 import resolve_capture_binding
+
+        resolve_capture_binding(args)
     worker = _latest(client, args.worker_conversation)
     controller = _latest(client, args.codexia_conversation)
     if (
@@ -259,8 +268,32 @@ def _run(store, work_id, client):
     ):
         raise ValueError("local process execution not authorized")
 
+    # Strictly scoped, local values: never infer a sensitive value from LLM prose.
+    # Values themselves never enter Controller chat, Work or command previews.
+    read_host_answers = {}
+    input_store = ProjectInputStore()
+    for step in decision.plan.steps:
+        request = read_host_request(step.command)
+        if request is not None:
+            if step.command in read_host_answers:
+                raise ValueError("duplicate interactive command needs a distinct input binding")
+            known = input_store.lookup(decision.source.project, request.target, request.prompt)
+            if known is not None:
+                value, source_kind = known
+                print(f"INPUT_RESOLVED target={request.target} source={source_kind}", file=sys.stderr)
+            else:
+                value = getpass(f"Read-Host [{request.prompt}] (input hidden): ")
+                stdin_for_answer(value)
+                if not sensitive_input(request.target, request.prompt):
+                    print("Optional: save this NON-SECRET value in plaintext under ~/.codexia for this exact project/prompt.", file=sys.stderr)
+                    if input("Remember for future runs? [y/N] ").strip().lower() == "y":
+                        input_store.remember(decision.source.project, request.target, request.prompt, value)
+            stdin_for_answer(value)
+            read_host_answers[step.command] = value
+
     port = StandalonePowerShellCapabilityPort(
         workspace=decision.source.workspace,
+        read_host_answers=read_host_answers,
         binding=standalone_process_v2_capability_binding(),
         approved=True, actor="local-human",
         reason=f"explicit exact plan Work {work_id} {decision.plan.digest}",
@@ -322,7 +355,7 @@ def _result_message(decision, caps, work_id):
             preview = d.get("text_utf8_preview")
             if not isinstance(preview, str):
                 preview = ""
-            clipped = preview[:1500]
+            clipped = preview[:8000]
             lines.append(
                 f"{stream}: bytes={d.get('byte_count')} sha256={d.get('sha256')} "
                 f"preview_truncated_for_chat={len(preview)>len(clipped)}\n{clipped}"
@@ -412,8 +445,9 @@ def main(argv=None):
     capture.add_argument("--project", required=True)
     capture.add_argument("--repo", required=True)
     capture.add_argument("--workspace", required=True)
-    capture.add_argument("--worker-conversation", required=True)
-    capture.add_argument("--codexia-conversation", required=True)
+    capture.add_argument("--registry", default=".codexia/simple_work_v0.sqlite3")
+    capture.add_argument("--worker-conversation")
+    capture.add_argument("--codexia-conversation")
     capture.add_argument("--worker-message-id")
     capture.add_argument("--codexia-message-id")
     capture.add_argument("--auth-file", required=True)

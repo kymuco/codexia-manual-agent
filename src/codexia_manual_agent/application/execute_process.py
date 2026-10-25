@@ -60,6 +60,7 @@ class ExecuteProcessService:
         limits: ProcessLimits | None = None,
         summary: str | None = None,
         shell_profile: str | None = None,
+        stdin_bytes: bytes | None = None,
     ) -> ProcessExecutionResult:
         mode = ApprovalMode(mode)
         proposal = prepare_process_proposal(
@@ -86,6 +87,7 @@ class ExecuteProcessService:
         observation = self._executor.execute(
             lifecycle,
             authority=self._authority,
+            **({"stdin_bytes": stdin_bytes} if stdin_bytes is not None else {}),
         )
         return ProcessExecutionResult(
             proposal=proposal,
