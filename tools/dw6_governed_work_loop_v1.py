@@ -176,6 +176,9 @@ def probe(*, project: str, registry, client, store_path: str) -> dict:
         worker_advanced=advanced, controller_decision=decision,
         work=work, review_response=response,
     )
+    if result["next_action"] == "idle":
+        from tools.dw6_worker_continuation_v1 import continuation_frontier
+        result.update(continuation_frontier(result, registry))
     return result
 
 
@@ -188,7 +191,7 @@ def advance(*, state: dict, registry, client, store_path: str,
     project = state["project"]
     privileged = {"approve": "await_approval", "reject": "await_approval",
                   "execute": "await_execution", "post": "await_post",
-                  "interpret": "interpret"}
+                  "interpret": "interpret", "continue_worker": "continue_worker"}
     if requested is not None and privileged[requested] != action:
         raise ValueError(f"{requested} does not match verified frontier {action}")
     if action.startswith("blocked_") or action == "rejected":
@@ -226,6 +229,10 @@ def advance(*, state: dict, registry, client, store_path: str,
             reason=reason or "New worker assistant reply after a verified prior handoff; interpret only current requested commands. No execution authority.",
             model=model, effort=reasoning_effort,
         )
+    if requested == "continue_worker":
+        from tools.dw6_worker_continuation_v1 import continue_worker
+        return continue_worker(state=state, registry=registry, client=client,
+                               model=model, effort=reasoning_effort)
     raise ValueError(f"unsupported DW6 transition: {action}")
 
 
@@ -240,10 +247,10 @@ def main(argv=None) -> int:
     parser.add_argument("--reasoning-effort", default="high", choices=("medium", "high"))
     parser.add_argument("--reason")
     flags = parser.add_mutually_exclusive_group()
-    for name in ("approve", "reject", "execute", "post", "interpret"):
-        flags.add_argument(f"--{name}", action="store_true")
+    for name in ("approve", "reject", "execute", "post", "interpret", "continue_worker"):
+        flags.add_argument(f"--{name.replace('_', '-')}", action="store_true")
     args = parser.parse_args(argv)
-    requested = next((name for name in ("approve", "reject", "execute", "post", "interpret")
+    requested = next((name for name in ("approve", "reject", "execute", "post", "interpret", "continue_worker")
                       if getattr(args, name)), None)
     if args.action == "status" and requested is not None:
         parser.error("status is read-only and accepts no action flags")
