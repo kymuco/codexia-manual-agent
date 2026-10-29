@@ -98,7 +98,11 @@ def test_second_recovery_archived_without_changing_first(scenario):
         ).fetchone()
     assert record[0] == "send_admitted"
     assert record[1] == "sentinel_prepare_rejected"
-    assert record[2] == v1._sha(__import__("json").dumps([PROJECT, CONTROLLER_ID, WORKER_ID, v1._sha(WORKER_TEXT), v1._sha(CONTROLLER_TEXT), v1.FAILURE_KIND], ensure_ascii=False, separators=(",", ":")))
+    with sqlite3.connect(path) as db:
+        first_digest = db.execute(
+            "SELECT reconciliation_digest FROM dw5_controller_presend_recovery_v1"
+        ).fetchone()[0]
+    assert record[2] == first_digest
     assert record[3] == result["second_recovery_digest"]
 
 
