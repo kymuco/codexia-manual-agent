@@ -26,6 +26,12 @@ from codexia_manual_agent.domain.errors import (
     ProcessWorkspaceBoundaryError,
 )
 from codexia_manual_agent.execution import ProcessLimits, ProcessTerminationReason
+from codexia_manual_agent.execution.process_contained import POWERSHELL_PROFILE
+from codexia_manual_agent.execution.powershell_read_host import (
+    read_host_prompt,
+    wrap_read_host,
+    stdin_for_answer,
+)
 
 STANDALONE_PROCESS_HOST_ID = "standalone.local"
 PROCESS_CAPABILITY_ID = "process"
@@ -202,6 +208,7 @@ class StandaloneProcessCapabilityPort:
         self._actor = actor
         self._reason = reason
         self._service = service or ExecuteProcessService()
+        self._shell_profile: str | None = None
 
     @property
     def binding(self) -> CapabilityBinding:
@@ -240,6 +247,8 @@ class StandaloneProcessCapabilityPort:
                 reason=self._reason,
                 limits=limits,
                 summary=f"Gen2 CapabilityNeed {need.need_id}",
+                shell_profile=self._shell_profile,
+                **({"stdin_bytes": self._stdin_bytes} if getattr(self, "_stdin_bytes", None) is not None else {}),
             )
         except (
             ApprovalRequiredError,
@@ -352,3 +361,60 @@ class StandaloneProcessCapabilityPort:
                 ),
             },
         }
+
+
+class StandalonePowerShellCapabilityPort(StandaloneProcessCapabilityPort):
+    """Explicit distinct host for one human-approved noninteractive shell step.
+
+    The standard StandaloneProcessCapabilityPort stays deny-by-default.
+    A controller may request this host, but approval is independently supplied
+    by a local person; model proposals never grant shell authority.
+    """
+
+    host_id = "standalone.local.powershell.v1"
+
+    def __init__(self, *, workspace: str | Path, binding: CapabilityBinding,
+                 approved: bool, actor: str = "local-human",
+                 reason: str | None = None,
+                 service: ExecuteProcessService | None = None,
+                 read_host_answers: dict[str, str] | None = None) -> None:
+        super().__init__(
+            workspace=workspace, binding=binding, approved=approved,
+            actor=actor, reason=reason, service=service,
+        )
+        self._shell_profile = POWERSHELL_PROFILE
+        self._read_host_answers = dict(read_host_answers or {})
+        self._stdin_bytes: bytes | None = None
+
+    def _translate_request(
+        self, request: CapabilityHostRequest
+    ) -> tuple[list[str], str, ProcessLimits]:
+        argv, cwd, limits = super()._translate_request(request)
+        if (
+            len(argv) != 5
+            or argv[0].lower() not in ("powershell.exe", "powershell")
+            or argv[1:4] != ["-NoProfile", "-NonInteractive", "-Command"]
+            or not argv[4].strip() or len(argv[4]) > 12000
+        ):
+            raise StandaloneProcessHostError(
+                "PowerShell host requires an exact noninteractive -Command request"
+            )
+        self._stdin_bytes = None
+        try:
+            prompt = read_host_prompt(argv[4])
+        except ValueError as exc:
+            raise StandaloneProcessHostError(str(exc)) from exc
+        if prompt is not None:
+            answer = self._read_host_answers.get(argv[4])
+            if answer is None:
+                raise StandaloneProcessHostError(
+                    "Read-Host requires explicit human input for this exact command"
+                )
+            try:
+                self._stdin_bytes = stdin_for_answer(answer)
+                argv[4] = wrap_read_host(argv[4], prompt)
+            except ValueError as exc:
+                raise StandaloneProcessHostError(str(exc)) from exc
+        elif argv[4] in self._read_host_answers:
+            raise StandaloneProcessHostError("unexpected human input for command")
+        return argv, cwd, limits
