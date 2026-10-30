@@ -87,6 +87,43 @@ def test_store_transitions_no_replay(tmp_path):
     assert store.latest("player-intelligence")["result_worker_message_id"] == "w2"
 
 
+
+def test_verified_transition_cannot_replace_admitted_worker_id(tmp_path):
+    _, store = setup(tmp_path)
+    arm(store)
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="armed", to_phase="send_admitted")
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="send_admitted", to_phase="worker_known", result_id="w2")
+
+    with pytest.raises(ValueError, match="state changed"):
+        store.transition(project="player-intelligence", controller_message_id="c1",
+                         from_phase="worker_known", to_phase="verified",
+                         result_id="another-worker")
+    row = store.latest("player-intelligence")
+    assert row["phase"] == "worker_known"
+    assert row["result_worker_message_id"] == "w2"
+
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="worker_known", to_phase="verified", result_id="w2")
+    row = store.latest("player-intelligence")
+    assert row["phase"] == "verified"
+    assert row["result_worker_message_id"] == "w2"
+
+
+@pytest.mark.parametrize("missing_id", [None, ""])
+def test_worker_known_requires_nonempty_result_identity(tmp_path, missing_id):
+    _, store = setup(tmp_path)
+    arm(store)
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="armed", to_phase="send_admitted")
+    with pytest.raises(ValueError, match="result identity"):
+        store.transition(project="player-intelligence", controller_message_id="c1",
+                         from_phase="send_admitted", to_phase="worker_known",
+                         result_id=missing_id)
+    assert store.latest("player-intelligence")["phase"] == "send_admitted"
+
+
 def test_cancel_only_before_send(tmp_path):
     _, store = setup(tmp_path)
     arm(store)
