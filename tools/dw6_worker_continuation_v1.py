@@ -95,15 +95,26 @@ class WorkerContinuationStore:
             ("worker_known", "verified"),
         }:
             raise ValueError("invalid Worker continuation transition")
-        if (to_phase in {"worker_known", "verified"}) != (result_id is not None):
+        requires_id = to_phase in {"worker_known", "verified"}
+        if requires_id != (isinstance(result_id, str) and bool(result_id)):
             raise ValueError("result identity required exactly at readback transitions")
         with self.registry._open() as db:
-            updated = db.execute(
-                "UPDATE dw6_worker_continuation_v1 SET phase=?, "
-                "result_worker_message_id=COALESCE(?, result_worker_message_id) "
-                "WHERE project=? AND controller_message_id=? AND phase=?",
-                (to_phase, result_id, project, controller_message_id, from_phase),
-            ).rowcount
+            if to_phase == "verified":
+                # The admitted send ID is durable before canonical readback.
+                # Verification must never replace it with a different ID.
+                updated = db.execute(
+                    "UPDATE dw6_worker_continuation_v1 SET phase='verified' "
+                    "WHERE project=? AND controller_message_id=? "
+                    "AND phase='worker_known' AND result_worker_message_id=?",
+                    (project, controller_message_id, result_id),
+                ).rowcount
+            else:
+                updated = db.execute(
+                    "UPDATE dw6_worker_continuation_v1 SET phase=?, "
+                    "result_worker_message_id=? "
+                    "WHERE project=? AND controller_message_id=? AND phase=?",
+                    (to_phase, result_id, project, controller_message_id, from_phase),
+                ).rowcount
             if updated != 1:
                 raise ValueError("Worker continuation state changed; no retry")
 
