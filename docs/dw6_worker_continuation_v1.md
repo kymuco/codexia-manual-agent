@@ -96,3 +96,14 @@ is armed and no Worker model call is made by this read-only determination.
 A new Worker continuation still requires a separate, explicit human task,
 exact Worker/Controller identity and confirmation. This change does not grant
 automatic sends or weaken the single-use database key.
+
+## Readback identity consistency (2026-10-30 stabilization)
+
+The durable `result_worker_message_id` is first recorded when a send returns
+and the grant reaches `worker_known`. The final transition to `verified`
+now uses an exact SQLite compare-and-set against **that same stored ID**. A
+mismatched canonical response ID must leave the grant at `worker_known` and
+block another send; it must never overwrite the previously recorded identity.
+Empty or missing result IDs are not admitted as `worker_known` or `verified`.
+Offline regression covers mismatch, recovery with the identical ID and empty
+identity denial. No online model calls are involved in these tests.
