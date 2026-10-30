@@ -11,6 +11,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +112,7 @@ def inspect_observed(
         raise ValueError("response SHA prefix must contain 16..64 hex characters")
     if any(x not in "0123456789abcdef" for x in response_sha256_prefix):
         raise ValueError("response SHA prefix must be lowercase hexadecimal")
-    with _database(registry, readonly=True) as db:
+    with closing(_database(registry, readonly=True)) as db:
         snapshot = _snapshot(db, project, predecessor)
     binding = snapshot["binding"]
     fence = snapshot["fence"]
