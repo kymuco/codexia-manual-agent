@@ -119,7 +119,12 @@ def continuation_frontier(state: dict, registry) -> dict:
         return {"next_action": "blocked_ambiguous_worker_send",
                 "worker_continuation_phase": record["phase"]}
     if record["phase"] == "verified":
-        return {"next_action": "blocked_worker_frontier_not_advanced"}
+        # A verified Worker continuation only blocks reuse of its OWN
+        # Controller grant. Once a later Controller turn has been verified,
+        # this record is historical, not an active Worker-send fence.
+        if record["controller_message_id"] == state["controller_message_id"]:
+            return {"next_action": "blocked_worker_frontier_not_advanced"}
+        return {}
     if record["phase"] == "cancelled":
         return {}
     if record["phase"] != "armed":
