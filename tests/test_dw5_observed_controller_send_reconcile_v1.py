@@ -193,8 +193,8 @@ def test_reconciliation_is_transactional_and_never_sends(scenario):
             f"FROM {TABLE}"
         ).fetchone()
         assert row == (
-            RESPONSE, kwargs["response_sha256_prefix"].ljust(64, "0")
-            if False else _sha(chat.messages["response"].text),
+            RESPONSE,
+            _sha(chat.messages["response"].text),
             result["reconciliation_digest"],
         )
         assert db.execute(
