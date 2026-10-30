@@ -124,6 +124,42 @@ def test_overlay_ambiguous_and_verified_fail_closed(tmp_path):
     assert wc.continuation_frontier(idle(), reg)["next_action"] == "blocked_worker_frontier_not_advanced"
 
 
+
+def test_verified_historical_grant_does_not_block_new_controller(tmp_path):
+    reg, store = setup(tmp_path)
+    arm(store)
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="armed", to_phase="send_admitted")
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="send_admitted", to_phase="worker_known", result_id="w2")
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="worker_known", to_phase="verified", result_id="w2")
+
+    # An ordinary verified Controller interpretation of w2 creates c2.
+    # The earlier completed grant for c1 must not block the new idle frontier.
+    later = {**idle(), "controller_message_id": "c2",
+             "worker_message_id": "w2"}
+    assert wc.continuation_frontier(later, reg) == {}
+    assert store.latest("player-intelligence")["phase"] == "verified"
+
+    # Reusing c1 remains blocked, even if a caller presents a later Worker ID.
+    same_controller = {**later, "controller_message_id": "c1"}
+    assert (wc.continuation_frontier(same_controller, reg)["next_action"]
+            == "blocked_worker_frontier_not_advanced")
+
+
+def test_historical_ambiguous_worker_grant_still_blocks_new_controller(tmp_path):
+    reg, store = setup(tmp_path)
+    arm(store)
+    store.transition(project="player-intelligence", controller_message_id="c1",
+                     from_phase="armed", to_phase="send_admitted")
+
+    later = {**idle(), "controller_message_id": "c2",
+             "worker_message_id": "w2"}
+    assert (wc.continuation_frontier(later, reg)["next_action"]
+            == "blocked_ambiguous_worker_send")
+
+
 def test_arm_requires_human_confirmation(monkeypatch, tmp_path):
     reg, store = setup(tmp_path)
     binding = reg.binding
