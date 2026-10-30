@@ -76,3 +76,23 @@ On `WORKER_CONTINUED_READBACK_VERIFIED`, inspect `DW6 status`; the next action
 is normally `interpret`. If CWA timed out or status says ambiguous, stop;
 **never replay** the `--continue-worker` command automatically. Nothing
 modifies files or executes terminal commands during the cognition step.
+
+## Verified continuation history is not an active grant (2026-10-30)
+
+After Controller observed-send reconciliation, a real DW6 status returned
+`blocked_worker_frontier_not_advanced` even though the current Controller was
+ready with a new `no_commands` decision and the Worker had not moved. The
+Worker-continuation overlay had inspected the latest historical grant; it
+blocked whenever phase was `verified` without comparing its Controller ID to
+the new ready Controller frontier.
+
+The overlay now blocks reuse of a verified grant only for the **same**
+Controller message. A verified grant for an earlier Controller is historical:
+with a different, verified current Controller, the overlay leaves the idle
+frontier untouched. In contrast, old `send_admitted` or `worker_known`
+entries continue to block because their delivery may be ambiguous. No task
+is armed and no Worker model call is made by this read-only determination.
+
+A new Worker continuation still requires a separate, explicit human task,
+exact Worker/Controller identity and confirmation. This change does not grant
+automatic sends or weaken the single-use database key.
