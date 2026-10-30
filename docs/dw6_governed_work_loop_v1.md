@@ -38,12 +38,16 @@ Only then, and only for that exact frontier, use the matching flag:
 & $python -m tools.dw6_governed_work_loop_v1 advance --project player-intelligence --auth-file $auth --interpret
 ```
 
-These flags are **not approvals by themselves**. The DW5 human prompts are
-retained: exact `APPROVE <digest>`, `EXECUTE <digest>`, or `POST <digest>` must
-still be typed. `--reject` records a human rejection in the same way. `--post`
-must be a **separate invocation after inspecting execution observations**.
-`--interpret` uses the same saved Controller conversation and DW5's durable
-pre-send fence, never an unrelated chat or an automatic retry.
+For local execution and posting, these flags are **not sufficient approval**.
+The DW5 prompts remain mandatory: exact `APPROVE <digest>`,
+`EXECUTE <digest>` and `POST <digest>` must be entered separately.
+`--reject` also requires explicit confirmation; `--post` must be a
+**separate invocation after inspecting execution observations**.
+By contrast, `--interpret` itself is the explicit Controller model-send
+action: there is **no second built-in Read-Host confirmation** inside that
+command. The operator must authorize it as one exact turn, preferably
+through a guarded outer script. The durable pre-send fence prevents
+blind retries, not the initial send.
 
 ## Recovery and stop rules
 
@@ -67,9 +71,28 @@ not a generic polling daemon, scheduler or multi-ChatGPT-account monitor.
 
 ## Evidence and limitations
 
-The pure frontier classifier and its deny-by-default cases are tested locally
-and in CI. Project-level Windows/CWA live validation is still required for this
-new one-command operator; DW5's earlier live E2E does not automatically prove
-DW6's new orchestration. The operator reuses existing DW5 APIs; there is no new
-schema or authority bypass. Known plaintext non-secret local input caching and
-single-literal `Read-Host` constraints remain DW5 limits.
+The frontier classifier and fail-closed cases are covered by CI. On
+2026-10-30, a human-approved live `player-intelligence` cycle verified one
+Worker continuation with canonical readback, then one Controller
+interpretation (decision=`no_commands`, steps=0), and finally
+`controller_phase=ready`, `worker_advanced=false`, `work_id=null`,
+`next_action=idle`. No local execution, Work post, or automatic model retry
+occurred. The CWA Direct HTTP transport fix is independently covered by CI;
+the live turns were not duration-instrumented, so there is **no claim of a
+measured stream longer than 60 seconds**.
+
+Known boundaries remain: `send_admitted` or `controller_known` after an
+ambiguous Controller write, `send_admitted` or `worker_known` after an
+ambiguous Worker write, and an unreceipted Work post all **block** subsequent
+sends. There is no generic automatic reconciliation mechanism. The narrow
+2026-10-30 observed Controller-send operator requires the exact previous
+two presend recovery archives and exact reconstructed prompt; it cannot
+reconcile arbitrary future send timeouts or `controller_known` states.
+Likewise, Worker `worker_known` is not automatically cleared merely because
+a later GET seems promising. These are deliberate stop states requiring
+new operator-reviewed tooling/evidence, never a cleared fence or blind retry.
+
+The DW6 v1 dispatch reuses existing DW5 APIs and does not create a second
+execution authority. DW6.1 separately adds a durable one-time Worker grant.
+Known plaintext non-secret local input caching and single-literal
+`Read-Host` constraints remain DW5 limitations.
