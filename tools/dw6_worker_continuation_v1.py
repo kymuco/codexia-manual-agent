@@ -202,11 +202,12 @@ def arm_worker(*, state: dict, registry, client, task: str,
     if (worker.message_id != expected_worker
             or controller.message_id != expected_controller):
         raise ValueError("expected message frontier differs; no grant")
+    brief_loaded = _project_brief(binding) is not None
     digest = _sha(json.dumps(
         [binding.project, worker.message_id, controller.message_id, task],
         ensure_ascii=False, separators=(",", ":"),
     ))
-    print(f"PROJECT={binding.project}\nWORKER={worker.message_id}\n"
+    print(f"PROJECT_GOAL_CONTEXT={'LOADED' if brief_loaded else 'ABSENT'}",\n          file=sys.stderr)\n    print(f"PROJECT={binding.project}\nWORKER={worker.message_id}\n"
           f"CONTROLLER={controller.message_id}\nTASK={task}\n"
           f"WORKER_CONTINUATION_GRANT_SHA256={digest}\n"
           "One Worker cognition turn only; no local process or shell authority.",
