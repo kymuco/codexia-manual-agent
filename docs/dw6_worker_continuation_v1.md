@@ -107,3 +107,23 @@ block another send; it must never overwrite the previously recorded identity.
 Empty or missing result IDs are not admitted as `worker_known` or `verified`.
 Offline regression covers mismatch, recovery with the identical ID and empty
 identity denial. No online model calls are involved in these tests.
+
+## DW6.1 engineering closure (2026-10-31)
+
+**Status: completed and merged as an engineering slice.** PR #107 was squash-merged
+into `main` at `3d5c6abdc0b93623cb9235894f074642d5221ea9`.
+Premerge CI passed 7/7 jobs, the pinned local DW6 regression passed 41/41,
+and the `player-intelligence` live Worker → Controller → idle cycle had
+canonical readback with no shell execution or automatic retry. Its final
+observed frontier was `controller_phase=ready`, `worker_advanced=false`,
+`work_id=null`, `next_action=idle`. A retained untracked local recovery
+artifact was hash-verified unchanged across the local fast-forward.
+
+This closes **DW6.1 governed single-turn continuation**, not the entire
+DW6 daily-use product proof described in issue #83. The full DW6 acceptance
+criteria (unattended multi-cycle research and software pilots, usable
+product surface, semantic completion, and friction metrics) have not been
+proven by this bounded slice and remain open. In particular, natural
+language interaction, concise evidence handoff, language preference and
+decision quality are independent follow-up product-design questions;
+this closure does not modify model prompts or relax authority boundaries.
