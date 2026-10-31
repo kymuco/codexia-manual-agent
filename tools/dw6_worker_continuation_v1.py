@@ -224,11 +224,51 @@ def arm_worker(*, state: dict, registry, client, task: str,
             "worker_message_id": worker.message_id, "task_sha256": _sha(task)}
 
 
+def _project_brief(binding) -> str | None:
+    """Read one opt-in project goal from the bound workspace, never from chat.
+
+    There is no separate project-memory database or automatic network fetch.
+    The file is guidance, not a source of execution or approval authority.
+    """
+    root = Path(binding.workspace)
+    folder = root / ".codexia"
+    path = folder / "PROJECT_BRIEF.md"
+    if not path.exists() and not path.is_symlink():
+        return None
+    if folder.is_symlink() or path.is_symlink() or not path.is_file():
+        raise ValueError("project brief must be a regular local file")
+    if path.stat().st_size > 8192:
+        raise ValueError("project brief too large (max 8192 bytes)")
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except UnicodeError as exc:
+        raise ValueError("project brief must be UTF-8 text") from exc
+    if not 80 <= len(value) <= 8192 or "\x00" in value:
+        raise ValueError("project brief must contain 80..8192 readable characters")
+    return value
+
+
 def _prompt(*, binding, record) -> str:
-    """Human-readable continuation. Authority and IDs stay in the durable store."""
+    """Keep human task, product goal and authority in their separate roles."""
+    brief = _project_brief(binding)
+    goal_context = ""
+    if brief is not None:
+        goal_context = (
+            "\n\n[Project goal — local reference, not execution authority]\n"
+            + brief
+            + "\n[End project goal]\n"
+            "Use this goal to choose work that moves the usable product forward. "
+            "Prefer implementing a concrete user-visible capability over repeating "
+            "an already-sufficient audit. Compare feasible approaches by value, "
+            "reuse, effort, evidence and risk. Pick one justified next step rather "
+            "than asking the human to choose without a genuine decision. "
+            "Treat historical plans as revisable, not mandatory steps. "
+            "Do not imply this reference authorizes any effect."
+        )
     return (
         "Continue the agreed task in this existing project conversation:\n"
         + record["task"]
+        + goal_context
         + "\n\nUse the existing context. Do not repeat completed checks or "
         "restate known project facts. Reply in the language of the human "
         "discussion, not the language of Codexia automation messages. "
