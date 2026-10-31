@@ -225,23 +225,18 @@ def arm_worker(*, state: dict, registry, client, task: str,
 
 
 def _prompt(*, binding, record) -> str:
+    """Human-readable continuation. Authority and IDs stay in the durable store."""
     return (
-        "[Codexia DW6.1 / authorized single Worker cognition continuation]\n"
-        "Continue work in this SAME existing project conversation. This is one"
-        " new cognition turn, NOT permission to execute terminal commands,"
-        " modify local files, invoke mutating tools, commit, or post externally.\n"
-        "Only work within the human-authorized bounded task below. Review the"
-        " existing chat context; do not repeat completed steps. If the task"
-        " is already done or cannot proceed with current evidence, say so"
-        " clearly rather than inventing actions or results.\n"
-        f"Project: {binding.project}\nRepository: {binding.repo}\n"
-        f"Workspace: {binding.workspace}\n"
-        f"Previous Worker assistant message: {record['worker_message_id']}\n"
-        f"Task SHA-256: {record['task_sha256']}\n"
-        "[Human-authorized task; not terminal authorization]\n"
-        + record["task"] + "\n[End task]\n"
-        "If local actions are needed, propose the exact necessary commands"
-        " for separate Controller interpretation and human approval."
+        "Continue the agreed task in this existing project conversation:\n"
+        + record["task"]
+        + "\n\nUse the existing context. Do not repeat completed checks or "
+        "restate known project facts. Reply in the language of the human "
+        "discussion, not the language of Codexia automation messages. "
+        "Give the result and next useful decision briefly; expand only "
+        "when the task genuinely needs detail.\n"
+        "This is a reasoning turn, not permission to execute commands, "
+        "edit files, commit, or post externally. Propose exact local commands "
+        "only if needed; they require separate human approval."
     )
 
 
